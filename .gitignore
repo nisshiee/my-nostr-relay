@@ -1,0 +1,43 @@
+# General
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfplan
+
+# Rust
+/services/relay/target/
+/services/relay/**/*.rs.bk
+
+# Node.js / Next.js
+node_modules/
+/apps/web/.next/
+/apps/web/out/
+/apps/web/build/
+/apps/web/dist/
+/apps/web/.vercel/
+/apps/web/*.tsbuildinfo
+/apps/web/next-env.d.ts
+/apps/web/coverage/
+
+# AWS Lambda
+dist/
