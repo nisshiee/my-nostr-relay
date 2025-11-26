@@ -23,7 +23,7 @@
 
 ## Task 2: Domain Layer Implementation
 
-- [ ] 2.1 (P) Kind分類ヘルパー実装
+- [x] 2.1 (P) Kind分類ヘルパー実装
   - イベントKindを4種類（Regular, Replaceable, Ephemeral, Addressable）に分類する機能を実装
   - Regular: kind 1, 2, 4-44, 1000-9999
   - Replaceable: kind 0, 3, 10000-19999
@@ -31,7 +31,7 @@
   - Addressable: kind 30000-39999
   - _Requirements: 9.1, 10.1, 11.1, 12.1_
 
-- [ ] 2.2 (P) イベント検証機能実装
+- [x] 2.2 (P) イベント検証機能実装
   - 受信したJSONに必須フィールド（id, pubkey, created_at, kind, tags, content, sig）が存在することを検証
   - idが64文字の小文字16進数文字列であることを検証
   - pubkeyが64文字の小文字16進数文字列であることを検証
@@ -45,7 +45,7 @@
   - 検証失敗時に適切なエラーメッセージを生成
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2_
 
-- [ ] 2.3 (P) フィルター評価機能実装
+- [x] 2.3 (P) フィルター評価機能実装
   - nostr crateのFilter型を活用してフィルター条件をパース
   - idsフィルター：イベントIDの前方一致または完全一致を評価
   - authorsフィルター：pubkeyの前方一致または完全一致を評価
@@ -58,7 +58,7 @@
   - ids, authors, #e, #pフィルター値が64文字16進数であることを検証
   - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.11_
 
-- [ ] 2.4 (P) Relayメッセージ型定義
+- [x] 2.4 (P) Relayメッセージ型定義
   - EVENT応答メッセージ（subscription_id + イベント）の型とJSON変換を実装
   - OK応答メッセージ（event_id + 成否 + メッセージ）の型とJSON変換を実装
   - EOSE応答メッセージ（subscription_id）の型とJSON変換を実装
