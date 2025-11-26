@@ -64,6 +64,7 @@ Client <--WebSocket--> API Gateway v2 <---> Lambda (Rust)
 - Node.js 20+
 - Terraform
 - direnv (.envrc による環境変数管理)
+- aws-vault (AWS認証情報管理、プロファイル名: `nostr-relay`)
 
 ### Common Commands
 
@@ -74,9 +75,9 @@ cd services/relay && cargo lambda build --release
 # Web Dev
 cd apps/web && npm run dev
 
-# Infrastructure
-cd terraform && terraform plan
-cd terraform && terraform apply
+# Infrastructure (aws-vault経由でAWS認証)
+cd terraform && aws-vault exec nostr-relay -- terraform plan
+cd terraform && aws-vault exec nostr-relay -- terraform apply
 ```
 
 ## Key Technical Decisions

@@ -70,7 +70,7 @@
 
 ## Task 3: Infrastructure Layer Implementation
 
-- [ ] 3.1 DynamoDB接続設定
+- [x] 3.1 DynamoDB接続設定
   - aws-configを使用してAWS認証情報を環境変数から自動取得
   - DynamoDBクライアントの初期化処理を実装
   - テーブル名を環境変数から取得する設定を実装
