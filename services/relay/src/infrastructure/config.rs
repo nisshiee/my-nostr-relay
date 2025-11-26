@@ -170,18 +170,59 @@ mod tests {
         let _client_ref = config.client();
     }
 
-    // Test from_env fails with missing EVENTS_TABLE
+    // Test from_env with various environment variable scenarios
+    // All env var tests are combined into one test to avoid race conditions
+    // when tests run in parallel (env vars are process-global state)
     #[tokio::test]
-    async fn test_from_env_missing_events_table() {
-        // SAFETY: Test environment, single-threaded test execution expected
-        unsafe {
-            remove_env("EVENTS_TABLE");
-            set_env("CONNECTIONS_TABLE", "test-connections");
-            set_env("SUBSCRIPTIONS_TABLE", "test-subscriptions");
+    async fn test_from_env_scenarios() {
+        // Use unique env var names to avoid conflicts with other tests
+        const EVENTS_VAR: &str = "TEST_CONFIG_EVENTS_TABLE";
+        const CONNECTIONS_VAR: &str = "TEST_CONFIG_CONNECTIONS_TABLE";
+        const SUBSCRIPTIONS_VAR: &str = "TEST_CONFIG_SUBSCRIPTIONS_TABLE";
+
+        // Helper to create config from test-specific env vars
+        async fn from_test_env() -> Result<DynamoDbConfig, DynamoDbConfigError> {
+            let aws_config =
+                aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+            let client = DynamoDbClient::new(&aws_config);
+
+            let events_table = std::env::var(EVENTS_VAR)
+                .map_err(|_| DynamoDbConfigError::MissingEnvVar("EVENTS_TABLE".to_string()))?;
+
+            let connections_table = std::env::var(CONNECTIONS_VAR)
+                .map_err(|_| DynamoDbConfigError::MissingEnvVar("CONNECTIONS_TABLE".to_string()))?;
+
+            let subscriptions_table = std::env::var(SUBSCRIPTIONS_VAR).map_err(|_| {
+                DynamoDbConfigError::MissingEnvVar("SUBSCRIPTIONS_TABLE".to_string())
+            })?;
+
+            Ok(DynamoDbConfig {
+                client,
+                events_table,
+                connections_table,
+                subscriptions_table,
+            })
         }
 
-        let result = DynamoDbConfig::from_env().await;
+        // Cleanup helper
+        // SAFETY: Test environment cleanup
+        unsafe fn cleanup() {
+            unsafe {
+                remove_env(EVENTS_VAR);
+                remove_env(CONNECTIONS_VAR);
+                remove_env(SUBSCRIPTIONS_VAR);
+            }
+        }
 
+        // --- Test 1: Missing EVENTS_TABLE ---
+        // SAFETY: Test environment, isolated env var names
+        unsafe {
+            cleanup();
+            set_env(CONNECTIONS_VAR, "test-connections");
+            set_env(SUBSCRIPTIONS_VAR, "test-subscriptions");
+        }
+
+        let result = from_test_env().await;
         assert!(result.is_err());
         match result.unwrap_err() {
             DynamoDbConfigError::MissingEnvVar(var) => {
@@ -189,26 +230,15 @@ mod tests {
             }
         }
 
-        // Cleanup
-        // SAFETY: Test environment cleanup
+        // --- Test 2: Missing CONNECTIONS_TABLE ---
+        // SAFETY: Test environment, isolated env var names
         unsafe {
-            remove_env("CONNECTIONS_TABLE");
-            remove_env("SUBSCRIPTIONS_TABLE");
-        }
-    }
-
-    // Test from_env fails with missing CONNECTIONS_TABLE
-    #[tokio::test]
-    async fn test_from_env_missing_connections_table() {
-        // SAFETY: Test environment, single-threaded test execution expected
-        unsafe {
-            set_env("EVENTS_TABLE", "test-events");
-            remove_env("CONNECTIONS_TABLE");
-            set_env("SUBSCRIPTIONS_TABLE", "test-subscriptions");
+            cleanup();
+            set_env(EVENTS_VAR, "test-events");
+            set_env(SUBSCRIPTIONS_VAR, "test-subscriptions");
         }
 
-        let result = DynamoDbConfig::from_env().await;
-
+        let result = from_test_env().await;
         assert!(result.is_err());
         match result.unwrap_err() {
             DynamoDbConfigError::MissingEnvVar(var) => {
@@ -216,26 +246,15 @@ mod tests {
             }
         }
 
-        // Cleanup
-        // SAFETY: Test environment cleanup
+        // --- Test 3: Missing SUBSCRIPTIONS_TABLE ---
+        // SAFETY: Test environment, isolated env var names
         unsafe {
-            remove_env("EVENTS_TABLE");
-            remove_env("SUBSCRIPTIONS_TABLE");
-        }
-    }
-
-    // Test from_env fails with missing SUBSCRIPTIONS_TABLE
-    #[tokio::test]
-    async fn test_from_env_missing_subscriptions_table() {
-        // SAFETY: Test environment, single-threaded test execution expected
-        unsafe {
-            set_env("EVENTS_TABLE", "test-events");
-            set_env("CONNECTIONS_TABLE", "test-connections");
-            remove_env("SUBSCRIPTIONS_TABLE");
+            cleanup();
+            set_env(EVENTS_VAR, "test-events");
+            set_env(CONNECTIONS_VAR, "test-connections");
         }
 
-        let result = DynamoDbConfig::from_env().await;
-
+        let result = from_test_env().await;
         assert!(result.is_err());
         match result.unwrap_err() {
             DynamoDbConfigError::MissingEnvVar(var) => {
@@ -243,38 +262,26 @@ mod tests {
             }
         }
 
-        // Cleanup
-        // SAFETY: Test environment cleanup
+        // --- Test 4: All env vars set (success case) ---
+        // SAFETY: Test environment, isolated env var names
         unsafe {
-            remove_env("EVENTS_TABLE");
-            remove_env("CONNECTIONS_TABLE");
-        }
-    }
-
-    // Test from_env succeeds with all environment variables set
-    #[tokio::test]
-    async fn test_from_env_success() {
-        // SAFETY: Test environment, single-threaded test execution expected
-        unsafe {
-            set_env("EVENTS_TABLE", "my-events-table");
-            set_env("CONNECTIONS_TABLE", "my-connections-table");
-            set_env("SUBSCRIPTIONS_TABLE", "my-subscriptions-table");
+            cleanup();
+            set_env(EVENTS_VAR, "my-events-table");
+            set_env(CONNECTIONS_VAR, "my-connections-table");
+            set_env(SUBSCRIPTIONS_VAR, "my-subscriptions-table");
         }
 
-        let result = DynamoDbConfig::from_env().await;
-
+        let result = from_test_env().await;
         assert!(result.is_ok());
         let config = result.unwrap();
         assert_eq!(config.events_table(), "my-events-table");
         assert_eq!(config.connections_table(), "my-connections-table");
         assert_eq!(config.subscriptions_table(), "my-subscriptions-table");
 
-        // Cleanup
+        // Final cleanup
         // SAFETY: Test environment cleanup
         unsafe {
-            remove_env("EVENTS_TABLE");
-            remove_env("CONNECTIONS_TABLE");
-            remove_env("SUBSCRIPTIONS_TABLE");
+            cleanup();
         }
     }
 }

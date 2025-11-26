@@ -76,7 +76,7 @@
   - テーブル名を環境変数から取得する設定を実装
   - _Requirements: 16.1, 17.1, 18.1_
 
-- [ ] 3.2 (P) WebSocket送信機能実装
+- [x] 3.2 (P) WebSocket送信機能実装
   - API Gateway Management APIクライアントを初期化
   - エンドポイントURLを動的に設定する機能を実装
   - 接続IDを指定してメッセージを送信する機能を実装
