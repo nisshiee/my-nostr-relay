@@ -4,6 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+# AWS Lambda runtime
 lambda_runtime = "1.0.1"
+
+# Nostr protocol library - event model, signature verification, filter evaluation
+nostr = "0.44"
+
+# AWS SDK - DynamoDB operations
+aws-sdk-dynamodb = "1"
+
+# AWS SDK - WebSocket message sending via API Gateway Management API
+aws-sdk-apigatewaymanagement = "1"
+
+# AWS SDK - authentication and configuration
+aws-config = "1"
+
+# Async trait support
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
+
+# Async runtime
 tokio = { version = "1.48.0", features = ["full"] }

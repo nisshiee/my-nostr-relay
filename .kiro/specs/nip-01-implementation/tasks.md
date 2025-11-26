@@ -2,14 +2,14 @@
 
 ## Task 1: Project Setup and Dependencies
 
-- [ ] 1.1 Cargo.toml依存関係追加
+- [x] 1.1 Cargo.toml依存関係追加
   - nostr crate (v0.44.x) をイベントモデル・署名検証・フィルター評価用に追加
   - aws-sdk-dynamodb, aws-sdk-apigatewaymanagement, aws-config を追加
   - async-trait crateを非同期トレイト定義用に追加
   - 既存のserde, serde_json, tokioとの互換性を確認
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 3.1, 4.1, 16.1_
 
-- [ ] 1.2 DynamoDB Terraformリソース定義
+- [x] 1.2 DynamoDB Terraformリソース定義
   - terraform/modules/api/ にEventsテーブル定義を追加（PKはid）
   - GSI-PubkeyCreatedAt（pubkey, created_at）を定義
   - GSI-KindCreatedAt（kind, created_at）を定義

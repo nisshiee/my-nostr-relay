@@ -200,3 +200,32 @@ resource "aws_lambda_permission" "default" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.relay.execution_arn}/*/$default"
 }
+
+# ------------------------------------------------------------------------------
+# IAM Policy for API Gateway Management API Access
+# ------------------------------------------------------------------------------
+
+resource "aws_iam_policy" "lambda_apigateway_management" {
+  name        = "nostr_relay_lambda_apigateway_management"
+  description = "IAM policy for Lambda to send messages via API Gateway Management API"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "execute-api:ManageConnections"
+        ]
+        Resource = [
+          "${aws_apigatewayv2_api.relay.execution_arn}/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_apigateway_management" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = aws_iam_policy.lambda_apigateway_management.arn
+}
