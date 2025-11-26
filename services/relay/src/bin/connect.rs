@@ -8,7 +8,10 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-async fn func(event: LambdaEvent<Value>) -> Result<Value, Error> {
+async fn func(_event: LambdaEvent<Value>) -> Result<Value, Error> {
     println!("Connect handler invoked");
-    Ok(event.payload)
+    Ok(serde_json::json!({
+        "statusCode": 200,
+        "body": "Connected"
+    }))
 }

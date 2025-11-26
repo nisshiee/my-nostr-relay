@@ -9,6 +9,7 @@ yarn-error.log*
 .env.local
 .env.*.local
 *.pem
+.envrc.local
 
 # Editor
 .vscode/
