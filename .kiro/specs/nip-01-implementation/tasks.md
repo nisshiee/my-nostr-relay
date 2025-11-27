@@ -128,7 +128,7 @@
 
 ## Task 4: Application Layer Implementation
 
-- [ ] 4.1 メッセージパーサー実装
+- [x] 4.1 メッセージパーサー実装
   - 受信したWebSocketメッセージをJSONとしてパース
   - JSON配列形式であることを検証
   - 配列の先頭要素からメッセージタイプ（EVENT, REQ, CLOSE）を識別
