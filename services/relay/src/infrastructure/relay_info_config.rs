@@ -143,6 +143,7 @@ pub fn parse_comma_separated(value: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     // テストで環境変数を安全に設定/削除するヘルパー
     // 安全性: シングルスレッドテスト環境で使用
@@ -366,8 +367,7 @@ mod tests {
     // from_env統合テスト（環境変数を使用）
     // ===========================================
 
-    // 注: これらのテストは環境変数を操作するため、
-    // cargo test --test-threads=1 で実行することを推奨
+    // 注: これらのテストは環境変数を操作するため、#[serial]で直列実行
 
     // from_env用の環境変数をクリーンアップ
     unsafe fn cleanup_relay_env() {
@@ -384,6 +384,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_with_all_fields_set() {
         // すべての環境変数が設定されている場合のfrom_envテスト
         let valid_pubkey = "a".repeat(64);
@@ -417,6 +418,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_with_no_fields_set() {
         // 環境変数が設定されていない場合
         unsafe { cleanup_relay_env(); }
@@ -434,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_with_invalid_pubkey() {
         // 無効なpubkeyはNoneになる
         unsafe {
@@ -451,6 +454,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_with_empty_string_values() {
         // 空文字列はNone扱いになる
         unsafe {
@@ -468,6 +472,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_parses_comma_separated_countries() {
         // カンマ区切りの国コードパース
         unsafe {
@@ -483,6 +488,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_parses_comma_separated_language_tags() {
         // カンマ区切りの言語タグパース
         unsafe {

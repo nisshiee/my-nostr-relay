@@ -467,6 +467,7 @@ mod tests {
             Body::Text(text) => text.clone(),
             Body::Binary(bytes) => String::from_utf8(bytes.clone()).unwrap(),
             Body::Empty => String::new(),
+            _ => panic!("予期しないBody型"),
         };
 
         let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();

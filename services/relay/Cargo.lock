@@ -351,7 +351,7 @@ dependencies = [
  "rustls-pki-types",
  "tokio",
  "tokio-rustls 0.26.4",
- "tower 0.5.2",
+ "tower",
  "tracing",
 ]
 
@@ -475,9 +475,9 @@ dependencies = [
 
 [[package]]
 name = "aws_lambda_events"
-version = "0.16.1"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144ec7565561115498a288850cc6a42b279e09b6c4b88f623eecb9c8ca96c08c"
+checksum = "ac59c9b189a3bd75146633e1c87f35fb727f53b03c7f331af789ff1293a9f350"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -1370,21 +1370,19 @@ dependencies = [
 
 [[package]]
 name = "lambda_http"
-version = "0.14.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68b470cea1ec37b96e9543870a33c1f4b9e243754fe5892668efa3125ea12784"
+checksum = "a106755a9079a3ed20b4262e32c9a5efa127c97546cb2ecf69bbf3d17dbf970b"
 dependencies = [
  "aws_lambda_events",
- "base64 0.22.1",
  "bytes",
  "encoding_rs",
- "futures",
  "futures-util",
  "http 1.4.0",
  "http-body 1.0.1",
  "http-body-util",
  "hyper 1.8.1",
- "lambda_runtime 0.13.0",
+ "lambda_runtime",
  "mime",
  "percent-encoding",
  "pin-project-lite",
@@ -1393,34 +1391,6 @@ dependencies = [
  "serde_urlencoded",
  "tokio-stream",
  "url",
-]
-
-[[package]]
-name = "lambda_runtime"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed49669d6430292aead991e19bf13153135a884f916e68f32997c951af637ebe"
-dependencies = [
- "async-stream",
- "base64 0.22.1",
- "bytes",
- "futures",
- "http 1.4.0",
- "http-body 1.0.1",
- "http-body-util",
- "http-serde",
- "hyper 1.8.1",
- "hyper-util",
- "lambda_runtime_api_client 0.11.1",
- "pin-project",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "tokio",
- "tokio-stream",
- "tower 0.4.13",
- "tower-layer",
- "tracing",
 ]
 
 [[package]]
@@ -1437,36 +1407,15 @@ dependencies = [
  "http-body-util",
  "http-serde",
  "hyper 1.8.1",
- "lambda_runtime_api_client 1.0.1",
+ "lambda_runtime_api_client",
  "pin-project",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "tokio",
  "tokio-stream",
- "tower 0.5.2",
+ "tower",
  "tracing",
-]
-
-[[package]]
-name = "lambda_runtime_api_client"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c90a10f094475a34a04da2be11686c4dcfe214d93413162db9ffdff3d3af293a"
-dependencies = [
- "bytes",
- "futures-channel",
- "futures-util",
- "http 1.4.0",
- "http-body 1.0.1",
- "http-body-util",
- "hyper 1.8.1",
- "hyper-util",
- "tokio",
- "tower 0.4.13",
- "tower-service",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -1483,7 +1432,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.8.1",
  "hyper-util",
- "tower 0.5.2",
+ "tower",
  "tracing",
  "tracing-subscriber",
 ]
@@ -1857,10 +1806,11 @@ dependencies = [
  "aws-sdk-apigatewaymanagement",
  "aws-sdk-dynamodb",
  "lambda_http",
- "lambda_runtime 1.0.1",
+ "lambda_runtime",
  "nostr",
  "serde",
  "serde_json",
+ "serial_test",
  "thiserror",
  "tokio",
  "tracing",
@@ -2002,6 +1952,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "scc"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46e6f046b7fef48e2660c57ed794263155d713de679057f2d0c169bfc6e756cc"
+dependencies = [
+ "sdd",
+]
+
+[[package]]
 name = "schannel"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2037,6 +1996,12 @@ dependencies = [
  "ring",
  "untrusted",
 ]
+
+[[package]]
+name = "sdd"
+version = "3.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490dcfcbfef26be6800d11870ff2df8774fa6e86d047e3e8c8a76b25655e41ca"
 
 [[package]]
 name = "secp256k1"
@@ -2164,6 +2129,31 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "serial_test"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b258109f244e1d6891bf1053a55d63a5cd4f8f4c30cf9a1280989f80e7a1fa9"
+dependencies = [
+ "futures",
+ "log",
+ "once_cell",
+ "parking_lot",
+ "scc",
+ "serial_test_derive",
+]
+
+[[package]]
+name = "serial_test_derive"
+version = "3.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d69265a08751de7844521fd15003ae0a888e035773ba05695c5c759a6f89eef"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2427,21 +2417,6 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tower"
-version = "0.4.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c"
-dependencies = [
- "futures-core",
- "futures-util",
- "pin-project",
- "pin-project-lite",
- "tower-layer",
- "tower-service",
- "tracing",
 ]
 
 [[package]]

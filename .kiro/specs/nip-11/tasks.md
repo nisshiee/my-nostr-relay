@@ -52,8 +52,8 @@
   - Content-Type: application/nostr+json をレスポンスに設定
   - _Requirements: 3.1, 3.2, 3.3_
 
-- [ ] 4. Lambda関数エントリポイントの実装
-- [ ] 4.1 NIP-11用HTTP Lambda関数を実装する
+- [x] 4. Lambda関数エントリポイントの実装
+- [x] 4.1 NIP-11用HTTP Lambda関数を実装する
   - lambda_httpクレートを依存関係に追加
   - Lambda Function URL経由のHTTPリクエストを処理
   - ハンドラーコンポーネントを呼び出してレスポンスを生成

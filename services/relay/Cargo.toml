@@ -8,7 +8,7 @@ edition = "2024"
 lambda_runtime = "1.0.1"
 
 # AWS Lambda HTTPランタイム（NIP-11用）
-lambda_http = "0.14"
+lambda_http = "1.0.1"
 
 # Nostrプロトコルライブラリ - イベントモデル、署名検証、フィルター評価
 nostr = "0.44"
@@ -38,3 +38,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # 非同期ランタイム
 tokio = { version = "1.48.0", features = ["full"] }
+
+[dev-dependencies]
+# テストのシリアル実行（環境変数テストの競合防止）
+serial_test = "3"
