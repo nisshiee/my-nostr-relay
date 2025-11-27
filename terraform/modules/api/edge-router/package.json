@@ -1,0 +1,12 @@
+{
+  "name": "edge-router",
+  "version": "1.0.0",
+  "description": "Lambda@Edge router for NIP-11 and WebSocket requests",
+  "main": "index.js",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

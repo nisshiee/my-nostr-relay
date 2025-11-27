@@ -61,21 +61,21 @@
   - 依存: タスク3の完了が必要
   - _Requirements: 1.1, 1.3, 6.2_
 
-- [ ] 5. Lambda@Edgeルーターの実装
-- [ ] 5.1 (P) JavaScriptでLambda@Edge関数を実装する
+- [x] 5. Lambda@Edgeルーターの実装
+- [x] 5.1 (P) JavaScriptでLambda@Edge関数を実装する
   - edge-router用の新規ディレクトリを作成（terraform/modules/api/edge-router/）
   - Acceptヘッダーを検査してapplication/nostr+jsonを検出
   - NIP-11リクエスト検出時にNIP-11オリジンへルーティング
   - その他のリクエストはWebSocket API Gatewayへ転送
   - _Requirements: 1.1, 1.2, 6.1_
 
-- [ ] 5.2 (P) CORSプリフライトリクエストをエッジで処理する
+- [x] 5.2 (P) CORSプリフライトリクエストをエッジで処理する
   - OPTIONSメソッド検出時に直接レスポンスを生成（オリジン転送なし）
   - Access-Control-Allow-Origin, Allow-Methods, Allow-Headers, Max-Ageヘッダーを付与
   - 200 OKステータスで応答
   - _Requirements: 3.4_
 
-- [ ] 5.3 (P) Lambda@Edge関数のユニットテストを実装する
+- [x] 5.3 (P) Lambda@Edge関数のユニットテストを実装する
   - OPTIONSリクエストでCORS応答が返ることを検証
   - Accept: application/nostr+jsonでオリジン切り替えを検証
   - WebSocket Upgradeヘッダーでデフォルトオリジン維持を検証
