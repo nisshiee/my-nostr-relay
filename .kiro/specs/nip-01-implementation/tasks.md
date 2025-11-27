@@ -171,7 +171,7 @@
 
 ## Task 5: Lambda Handler Integration
 
-- [ ] 5.1 接続ハンドラー統合
+- [x] 5.1 接続ハンドラー統合
   - $connectルートでLambdaが呼び出された際の処理を実装
   - API Gateway WebSocketイベントからconnectionIdを取得
   - リクエストコンテキストからエンドポイントURLを構築
