@@ -5,6 +5,8 @@
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::domain::MAX_SUBID_LENGTH;
+
 /// クライアントからリレーへのメッセージ
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientMessage {
@@ -161,7 +163,7 @@ impl MessageParser {
     /// バイト長ではなく文字数でカウントする
     fn validate_subscription_id(subscription_id: &str) -> Result<(), ParseError> {
         let char_count = subscription_id.chars().count();
-        if char_count == 0 || char_count > 64 {
+        if char_count == 0 || char_count > MAX_SUBID_LENGTH as usize {
             return Err(ParseError::InvalidSubscriptionId);
         }
         Ok(())
