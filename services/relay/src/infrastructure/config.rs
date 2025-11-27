@@ -1,52 +1,51 @@
-/// DynamoDB connection configuration
+/// DynamoDB接続設定
 ///
-/// Requirements: 16.1, 17.1, 18.1
+/// 要件: 16.1, 17.1, 18.1
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use thiserror::Error;
 
-/// Error types for DynamoDB configuration
+/// DynamoDB設定のエラー型
 #[derive(Debug, Error)]
 pub enum DynamoDbConfigError {
     #[error("Missing environment variable: {0}")]
     MissingEnvVar(String),
 }
 
-/// DynamoDB configuration with table names and client
+/// テーブル名とクライアントを持つDynamoDB設定
 ///
-/// This struct holds the DynamoDB client and table names loaded from environment variables.
-/// Table names are expected to be set via:
-/// - EVENTS_TABLE: Table for storing Nostr events
-/// - CONNECTIONS_TABLE: Table for managing WebSocket connections
-/// - SUBSCRIPTIONS_TABLE: Table for managing subscriptions
+/// この構造体は環境変数から読み込んだDynamoDBクライアントとテーブル名を保持します。
+/// テーブル名は以下の環境変数で設定:
+/// - EVENTS_TABLE: Nostrイベント保存用テーブル
+/// - CONNECTIONS_TABLE: WebSocket接続管理用テーブル
+/// - SUBSCRIPTIONS_TABLE: サブスクリプション管理用テーブル
 #[derive(Debug, Clone)]
 pub struct DynamoDbConfig {
-    /// DynamoDB client instance
+    /// DynamoDBクライアントインスタンス
     client: DynamoDbClient,
-    /// Events table name
+    /// イベントテーブル名
     events_table: String,
-    /// Connections table name
+    /// 接続テーブル名
     connections_table: String,
-    /// Subscriptions table name
+    /// サブスクリプションテーブル名
     subscriptions_table: String,
 }
 
 impl DynamoDbConfig {
-    /// Create a new DynamoDbConfig by loading AWS config from environment
-    /// and reading table names from environment variables
+    /// 環境からAWS設定を読み込み、環境変数からテーブル名を読み取って新しいDynamoDbConfigを作成
     ///
-    /// Environment variables:
-    /// - AWS credentials: loaded automatically by aws-config
-    /// - EVENTS_TABLE: DynamoDB table name for events
-    /// - CONNECTIONS_TABLE: DynamoDB table name for connections
-    /// - SUBSCRIPTIONS_TABLE: DynamoDB table name for subscriptions
+    /// 環境変数:
+    /// - AWS認証情報: aws-configにより自動読み込み
+    /// - EVENTS_TABLE: イベント用DynamoDBテーブル名
+    /// - CONNECTIONS_TABLE: 接続用DynamoDBテーブル名
+    /// - SUBSCRIPTIONS_TABLE: サブスクリプション用DynamoDBテーブル名
     pub async fn from_env() -> Result<Self, DynamoDbConfigError> {
-        // Load AWS configuration from environment (credentials, region, etc.)
+        // 環境からAWS設定を読み込み（認証情報、リージョンなど）
         let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
 
-        // Create DynamoDB client from AWS config
+        // AWS設定からDynamoDBクライアントを作成
         let client = DynamoDbClient::new(&aws_config);
 
-        // Load table names from environment variables
+        // 環境変数からテーブル名を読み込み
         let events_table = std::env::var("EVENTS_TABLE")
             .map_err(|_| DynamoDbConfigError::MissingEnvVar("EVENTS_TABLE".to_string()))?;
 
@@ -64,7 +63,7 @@ impl DynamoDbConfig {
         })
     }
 
-    /// Create a new DynamoDbConfig with explicit values (for testing)
+    /// 明示的な値で新しいDynamoDbConfigを作成（テスト用）
     pub fn new(
         client: DynamoDbClient,
         events_table: String,
@@ -79,22 +78,22 @@ impl DynamoDbConfig {
         }
     }
 
-    /// Get a reference to the DynamoDB client
+    /// DynamoDBクライアントへの参照を取得
     pub fn client(&self) -> &DynamoDbClient {
         &self.client
     }
 
-    /// Get the events table name
+    /// イベントテーブル名を取得
     pub fn events_table(&self) -> &str {
         &self.events_table
     }
 
-    /// Get the connections table name
+    /// 接続テーブル名を取得
     pub fn connections_table(&self) -> &str {
         &self.connections_table
     }
 
-    /// Get the subscriptions table name
+    /// サブスクリプションテーブル名を取得
     pub fn subscriptions_table(&self) -> &str {
         &self.subscriptions_table
     }
@@ -104,22 +103,22 @@ impl DynamoDbConfig {
 mod tests {
     use super::*;
 
-    // ==================== 3.1 DynamoDB Configuration Tests ====================
+    // ==================== 3.1 DynamoDB設定テスト ====================
 
-    // Helper to safely set/remove environment variables in tests
-    // SAFETY: These tests run single-threaded via cargo test --test-threads=1
-    // or we accept the risk in test environment
+    // テストで環境変数を安全に設定/削除するヘルパー
+    // 安全性: これらのテストは cargo test --test-threads=1 でシングルスレッド実行するか、
+    // テスト環境でのリスクを許容する
     unsafe fn set_env(key: &str, value: &str) {
-        // SAFETY: Caller ensures this is safe (single-threaded test environment)
+        // 安全性: 呼び出し元が安全であることを保証（シングルスレッドテスト環境）
         unsafe { std::env::set_var(key, value) };
     }
 
     unsafe fn remove_env(key: &str) {
-        // SAFETY: Caller ensures this is safe (single-threaded test environment)
+        // 安全性: 呼び出し元が安全であることを保証（シングルスレッドテスト環境）
         unsafe { std::env::remove_var(key) };
     }
 
-    // Test error types (Req 16.1, 17.1, 18.1)
+    // エラー型テスト (要件 16.1, 17.1, 18.1)
     #[test]
     fn test_missing_env_var_error_display() {
         let error = DynamoDbConfigError::MissingEnvVar("TEST_VAR".to_string());
@@ -129,10 +128,10 @@ mod tests {
         );
     }
 
-    // Test DynamoDbConfig construction with explicit values
+    // 明示的な値でDynamoDbConfig構築のテスト
     #[tokio::test]
     async fn test_dynamodb_config_new() {
-        // Create a mock AWS config and client
+        // モックAWS設定とクライアントを作成
         let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let client = DynamoDbClient::new(&aws_config);
 
@@ -148,7 +147,7 @@ mod tests {
         assert_eq!(config.subscriptions_table(), "test-subscriptions");
     }
 
-    // Test getters return correct values
+    // ゲッターが正しい値を返すテスト
     #[tokio::test]
     async fn test_dynamodb_config_getters() {
         let aws_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -161,26 +160,26 @@ mod tests {
             "subscriptions-table-name".to_string(),
         );
 
-        // Verify all getters return expected values
+        // すべてのゲッターが期待値を返すことを検証
         assert_eq!(config.events_table(), "events-table-name");
         assert_eq!(config.connections_table(), "connections-table-name");
         assert_eq!(config.subscriptions_table(), "subscriptions-table-name");
 
-        // Verify client is accessible (we can at least get a reference)
+        // クライアントがアクセス可能であることを検証（少なくとも参照を取得できる）
         let _client_ref = config.client();
     }
 
-    // Test from_env with various environment variable scenarios
-    // All env var tests are combined into one test to avoid race conditions
-    // when tests run in parallel (env vars are process-global state)
+    // さまざまな環境変数シナリオでfrom_envをテスト
+    // 並列実行時のレースコンディションを避けるため、すべての環境変数テストを1つにまとめる
+    // （環境変数はプロセスグローバルな状態）
     #[tokio::test]
     async fn test_from_env_scenarios() {
-        // Use unique env var names to avoid conflicts with other tests
+        // 他のテストとの競合を避けるためユニークな環境変数名を使用
         const EVENTS_VAR: &str = "TEST_CONFIG_EVENTS_TABLE";
         const CONNECTIONS_VAR: &str = "TEST_CONFIG_CONNECTIONS_TABLE";
         const SUBSCRIPTIONS_VAR: &str = "TEST_CONFIG_SUBSCRIPTIONS_TABLE";
 
-        // Helper to create config from test-specific env vars
+        // テスト専用の環境変数から設定を作成するヘルパー
         async fn from_test_env() -> Result<DynamoDbConfig, DynamoDbConfigError> {
             let aws_config =
                 aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -204,8 +203,8 @@ mod tests {
             })
         }
 
-        // Cleanup helper
-        // SAFETY: Test environment cleanup
+        // クリーンアップヘルパー
+        // 安全性: テスト環境のクリーンアップ
         unsafe fn cleanup() {
             unsafe {
                 remove_env(EVENTS_VAR);
@@ -214,8 +213,8 @@ mod tests {
             }
         }
 
-        // --- Test 1: Missing EVENTS_TABLE ---
-        // SAFETY: Test environment, isolated env var names
+        // --- テスト1: EVENTS_TABLEが欠落 ---
+        // 安全性: テスト環境、隔離された環境変数名
         unsafe {
             cleanup();
             set_env(CONNECTIONS_VAR, "test-connections");
@@ -230,8 +229,8 @@ mod tests {
             }
         }
 
-        // --- Test 2: Missing CONNECTIONS_TABLE ---
-        // SAFETY: Test environment, isolated env var names
+        // --- テスト2: CONNECTIONS_TABLEが欠落 ---
+        // 安全性: テスト環境、隔離された環境変数名
         unsafe {
             cleanup();
             set_env(EVENTS_VAR, "test-events");
@@ -246,8 +245,8 @@ mod tests {
             }
         }
 
-        // --- Test 3: Missing SUBSCRIPTIONS_TABLE ---
-        // SAFETY: Test environment, isolated env var names
+        // --- テスト3: SUBSCRIPTIONS_TABLEが欠落 ---
+        // 安全性: テスト環境、隔離された環境変数名
         unsafe {
             cleanup();
             set_env(EVENTS_VAR, "test-events");
@@ -262,8 +261,8 @@ mod tests {
             }
         }
 
-        // --- Test 4: All env vars set (success case) ---
-        // SAFETY: Test environment, isolated env var names
+        // --- テスト4: すべての環境変数が設定されている（成功ケース） ---
+        // 安全性: テスト環境、隔離された環境変数名
         unsafe {
             cleanup();
             set_env(EVENTS_VAR, "my-events-table");
@@ -278,8 +277,8 @@ mod tests {
         assert_eq!(config.connections_table(), "my-connections-table");
         assert_eq!(config.subscriptions_table(), "my-subscriptions-table");
 
-        // Final cleanup
-        // SAFETY: Test environment cleanup
+        // 最終クリーンアップ
+        // 安全性: テスト環境のクリーンアップ
         unsafe {
             cleanup();
         }

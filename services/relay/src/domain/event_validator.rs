@@ -1,69 +1,69 @@
-/// Event validation for NIP-01 compliance
+/// NIP-01準拠のイベントバリデーション
 ///
-/// Requirements: 2.1-2.8, 3.1-3.5, 4.1-4.2
+/// 要件: 2.1-2.8, 3.1-3.5, 4.1-4.2
 use nostr::Event;
 use serde_json::Value;
 use thiserror::Error;
 
-/// Validation errors for event structure and verification
+/// イベント構造と検証のバリデーションエラー
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum ValidationError {
-    /// Required field is missing
+    /// 必須フィールドが欠落
     #[error("missing required field: {0}")]
     MissingField(String),
-    /// Event ID is not valid hex format (64 lowercase chars)
+    /// イベントIDが有効な16進数形式でない（64文字の小文字）
     #[error("id must be 64 lowercase hex characters")]
     InvalidIdFormat,
-    /// Public key is not valid hex format (64 lowercase chars)
+    /// 公開鍵が有効な16進数形式でない（64文字の小文字）
     #[error("pubkey must be 64 lowercase hex characters")]
     InvalidPubkeyFormat,
-    /// Signature is not valid hex format (128 lowercase chars)
+    /// 署名が有効な16進数形式でない（128文字の小文字）
     #[error("sig must be 128 lowercase hex characters")]
     InvalidSignatureFormat,
-    /// Kind value is out of range (0-65535)
+    /// kind値が範囲外（0-65535）
     #[error("kind must be 0-65535")]
     InvalidKindRange,
-    /// Tags is not an array of string arrays
+    /// tagsが文字列配列の配列でない
     #[error("tags must be an array of string arrays")]
     InvalidTagsFormat,
-    /// Content is not a string
+    /// contentが文字列でない
     #[error("content must be a string")]
     InvalidContentFormat,
-    /// created_at is not a valid Unix timestamp
+    /// created_atが有効なUnixタイムスタンプでない
     #[error("created_at must be a Unix timestamp")]
     InvalidTimestamp,
-    /// Event ID does not match computed hash
+    /// イベントIDが計算されたハッシュと一致しない
     #[error("event id does not match")]
     IdMismatch,
-    /// Signature verification failed
+    /// 署名検証に失敗
     #[error("signature verification failed")]
     SignatureVerificationFailed,
-    /// Failed to parse event JSON
+    /// イベントJSONのパースに失敗
     #[error("parse error: {0}")]
     ParseError(String),
 }
 
-/// Event validator for NIP-01 compliance
+/// NIP-01準拠のイベントバリデータ
 pub struct EventValidator;
 
 impl EventValidator {
-    /// Validate event structure (Requirements 2.1-2.8)
+    /// イベント構造のバリデーション（要件 2.1-2.8）
     ///
-    /// Checks that:
-    /// - All required fields are present (id, pubkey, created_at, kind, tags, content, sig)
-    /// - id is 64 lowercase hex characters (32 bytes)
-    /// - pubkey is 64 lowercase hex characters (32 bytes)
-    /// - created_at is a Unix timestamp (integer)
-    /// - kind is 0-65535
-    /// - tags is an array of string arrays
-    /// - content is a string
-    /// - sig is 128 lowercase hex characters (64 bytes)
+    /// チェック内容:
+    /// - すべての必須フィールドが存在する (id, pubkey, created_at, kind, tags, content, sig)
+    /// - idが64文字の小文字16進数（32バイト）
+    /// - pubkeyが64文字の小文字16進数（32バイト）
+    /// - created_atがUnixタイムスタンプ（整数）
+    /// - kindが0-65535
+    /// - tagsが文字列配列の配列
+    /// - contentが文字列
+    /// - sigが128文字の小文字16進数（64バイト）
     pub fn validate_structure(event_json: &Value) -> Result<(), ValidationError> {
         let obj = event_json
             .as_object()
             .ok_or_else(|| ValidationError::ParseError("event must be an object".to_string()))?;
 
-        // Check required fields exist (Req 2.1)
+        // 必須フィールドの存在確認 (要件 2.1)
         let required_fields = ["id", "pubkey", "created_at", "kind", "tags", "content", "sig"];
         for field in required_fields {
             if !obj.contains_key(field) {
@@ -71,25 +71,25 @@ impl EventValidator {
             }
         }
 
-        // Validate id format (Req 2.2)
+        // idフォーマットのバリデーション (要件 2.2)
         let id = obj.get("id").unwrap();
         if !Self::is_valid_hex_string(id, 64) {
             return Err(ValidationError::InvalidIdFormat);
         }
 
-        // Validate pubkey format (Req 2.3)
+        // pubkeyフォーマットのバリデーション (要件 2.3)
         let pubkey = obj.get("pubkey").unwrap();
         if !Self::is_valid_hex_string(pubkey, 64) {
             return Err(ValidationError::InvalidPubkeyFormat);
         }
 
-        // Validate created_at (Req 2.4)
+        // created_atのバリデーション (要件 2.4)
         let created_at = obj.get("created_at").unwrap();
         if !created_at.is_u64() && !created_at.is_i64() {
             return Err(ValidationError::InvalidTimestamp);
         }
 
-        // Validate kind (Req 2.5)
+        // kindのバリデーション (要件 2.5)
         let kind = obj.get("kind").unwrap();
         if let Some(k) = kind.as_u64() {
             if k > 65535 {
@@ -99,19 +99,19 @@ impl EventValidator {
             return Err(ValidationError::InvalidKindRange);
         }
 
-        // Validate tags (Req 2.6)
+        // tagsのバリデーション (要件 2.6)
         let tags = obj.get("tags").unwrap();
         if !Self::is_valid_tags(tags) {
             return Err(ValidationError::InvalidTagsFormat);
         }
 
-        // Validate content (Req 2.7)
+        // contentのバリデーション (要件 2.7)
         let content = obj.get("content").unwrap();
         if !content.is_string() {
             return Err(ValidationError::InvalidContentFormat);
         }
 
-        // Validate sig format (Req 2.8)
+        // sigフォーマットのバリデーション (要件 2.8)
         let sig = obj.get("sig").unwrap();
         if !Self::is_valid_hex_string(sig, 128) {
             return Err(ValidationError::InvalidSignatureFormat);
@@ -120,13 +120,13 @@ impl EventValidator {
         Ok(())
     }
 
-    /// Verify event ID matches the SHA256 hash of serialized event data (Requirements 3.1-3.5)
+    /// イベントIDがシリアライズされたイベントデータのSHA256ハッシュと一致するか検証（要件 3.1-3.5）
     ///
-    /// Uses nostr crate's Event::verify_id() which:
-    /// - Serializes event as [0, pubkey, created_at, kind, tags, content]
-    /// - Uses UTF-8 encoding
-    /// - No whitespace or formatting
-    /// - Proper escaping of special characters in content
+    /// nostrクレートのEvent::verify_id()を使用:
+    /// - イベントを [0, pubkey, created_at, kind, tags, content] としてシリアライズ
+    /// - UTF-8エンコーディング使用
+    /// - 空白やフォーマットなし
+    /// - content内の特殊文字を適切にエスケープ
     pub fn verify_id(event: &Event) -> Result<(), ValidationError> {
         if event.verify_id() {
             Ok(())
@@ -135,38 +135,38 @@ impl EventValidator {
         }
     }
 
-    /// Verify event signature using Schnorr signature verification (Requirements 4.1-4.2)
+    /// Schnorr署名検証を使用してイベント署名を検証（要件 4.1-4.2）
     ///
-    /// Uses nostr crate's Event::verify() which validates that:
-    /// - sig is a valid secp256k1 Schnorr signature
-    /// - Signature is valid for id using pubkey
+    /// nostrクレートのEvent::verify()を使用して検証:
+    /// - sigが有効なsecp256k1 Schnorr署名
+    /// - 署名がpubkeyを使用してidに対して有効
     pub fn verify_signature(event: &Event) -> Result<(), ValidationError> {
         event
             .verify()
             .map_err(|_| ValidationError::SignatureVerificationFailed)
     }
 
-    /// Run all validations and parse into Event
+    /// すべてのバリデーションを実行してEventにパース
     ///
-    /// Validation order: structure -> parse -> id -> signature
+    /// バリデーション順序: 構造 -> パース -> ID -> 署名
     pub fn validate_all(event_json: &Value) -> Result<Event, ValidationError> {
-        // First validate structure
+        // まず構造をバリデーション
         Self::validate_structure(event_json)?;
 
-        // Parse into nostr Event
+        // nostr Eventにパース
         let event: Event = serde_json::from_value(event_json.clone())
             .map_err(|e| ValidationError::ParseError(e.to_string()))?;
 
-        // Verify ID (Req 3.1-3.5)
+        // IDを検証 (要件 3.1-3.5)
         Self::verify_id(&event)?;
 
-        // Verify signature (Req 4.1-4.2)
+        // 署名を検証 (要件 4.1-4.2)
         Self::verify_signature(&event)?;
 
         Ok(event)
     }
 
-    /// Check if a value is a valid lowercase hex string of specified length
+    /// 値が指定された長さの有効な小文字16進数文字列かをチェック
     fn is_valid_hex_string(value: &Value, expected_len: usize) -> bool {
         if let Some(s) = value.as_str() {
             s.len() == expected_len && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
@@ -175,7 +175,7 @@ impl EventValidator {
         }
     }
 
-    /// Check if tags is an array of string arrays
+    /// tagsが文字列配列の配列かをチェック
     fn is_valid_tags(value: &Value) -> bool {
         if let Some(arr) = value.as_array() {
             arr.iter().all(|tag| {
@@ -196,7 +196,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // Helper function to create a valid event JSON (structure only)
+    // 有効なイベントJSON（構造のみ）を作成するヘルパー関数
     fn valid_event_json() -> Value {
         json!({
             "id": "0".repeat(64),
@@ -209,7 +209,7 @@ mod tests {
         })
     }
 
-    // ==================== Structure Validation Tests (Req 2.1-2.8) ====================
+    // ==================== 構造バリデーションテスト (要件 2.1-2.8) ====================
 
     #[test]
     fn test_validate_structure_valid_event() {
@@ -217,7 +217,7 @@ mod tests {
         assert!(EventValidator::validate_structure(&event).is_ok());
     }
 
-    // Req 2.1: All required fields must be present
+    // 要件 2.1: すべての必須フィールドが存在する必要がある
     #[test]
     fn test_validate_structure_missing_id() {
         let mut event = valid_event_json();
@@ -292,7 +292,7 @@ mod tests {
         );
     }
 
-    // Req 2.2: id must be 64 lowercase hex characters
+    // 要件 2.2: idは64文字の小文字16進数でなければならない
     #[test]
     fn test_validate_structure_invalid_id_too_short() {
         let mut event = valid_event_json();
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(result, Err(ValidationError::InvalidIdFormat));
     }
 
-    // Req 2.3: pubkey must be 64 lowercase hex characters
+    // 要件 2.3: pubkeyは64文字の小文字16進数でなければならない
     #[test]
     fn test_validate_structure_invalid_pubkey_too_short() {
         let mut event = valid_event_json();
@@ -350,7 +350,7 @@ mod tests {
         assert_eq!(result, Err(ValidationError::InvalidPubkeyFormat));
     }
 
-    // Req 2.4: created_at must be Unix timestamp
+    // 要件 2.4: created_atはUnixタイムスタンプでなければならない
     #[test]
     fn test_validate_structure_invalid_created_at_string() {
         let mut event = valid_event_json();
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(result, Err(ValidationError::InvalidTimestamp));
     }
 
-    // Req 2.5: kind must be 0-65535
+    // 要件 2.5: kindは0-65535でなければならない
     #[test]
     fn test_validate_structure_kind_zero_valid() {
         let mut event = valid_event_json();
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(result, Err(ValidationError::InvalidKindRange));
     }
 
-    // Req 2.6: tags must be array of string arrays
+    // 要件 2.6: tagsは文字列配列の配列でなければならない
     #[test]
     fn test_validate_structure_valid_empty_tags() {
         let mut event = valid_event_json();
@@ -449,7 +449,7 @@ mod tests {
         assert_eq!(result, Err(ValidationError::InvalidTagsFormat));
     }
 
-    // Req 2.7: content must be string
+    // 要件 2.7: contentは文字列でなければならない
     #[test]
     fn test_validate_structure_valid_empty_content() {
         let mut event = valid_event_json();
@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(result, Err(ValidationError::InvalidContentFormat));
     }
 
-    // Req 2.8: sig must be 128 lowercase hex characters
+    // 要件 2.8: sigは128文字の小文字16進数でなければならない
     #[test]
     fn test_validate_structure_invalid_sig_too_short() {
         let mut event = valid_event_json();
@@ -490,11 +490,11 @@ mod tests {
         assert_eq!(result, Err(ValidationError::InvalidSignatureFormat));
     }
 
-    // ==================== ID Verification Tests (Req 3.1-3.5) ====================
+    // ==================== ID検証テスト (要件 3.1-3.5) ====================
 
     #[test]
     fn test_verify_id_valid_event() {
-        // Create a valid event using nostr crate
+        // nostrクレートを使用して有効なイベントを作成
         use nostr::Keys;
 
         let keys = Keys::generate();
@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_verify_id_invalid_event() {
-        // Create an event with mismatched ID
+        // IDが不一致のイベントを作成
         use nostr::Keys;
 
         let keys = Keys::generate();
@@ -515,12 +515,12 @@ mod tests {
             .sign_with_keys(&keys)
             .expect("Failed to create event");
 
-        // The event's ID is already verified by nostr crate during creation
-        // So we just verify the verify_id function works
+        // イベントのIDはnostrクレートにより作成時に既に検証済み
+        // verify_id関数が機能することを確認するだけ
         assert!(EventValidator::verify_id(&event).is_ok());
     }
 
-    // ==================== Signature Verification Tests (Req 4.1-4.2) ====================
+    // ==================== 署名検証テスト (要件 4.1-4.2) ====================
 
     #[test]
     fn test_verify_signature_valid_event() {
@@ -534,7 +534,7 @@ mod tests {
         assert!(EventValidator::verify_signature(&event).is_ok());
     }
 
-    // ==================== Full Validation Tests ====================
+    // ==================== 完全バリデーションテスト ====================
 
     #[test]
     fn test_validate_all_with_real_event() {
@@ -569,7 +569,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // ==================== Display Tests ====================
+    // ==================== 表示テスト ====================
 
     #[test]
     fn test_validation_error_display() {

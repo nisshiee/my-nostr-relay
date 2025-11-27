@@ -1,52 +1,52 @@
-/// WebSocket message sender using API Gateway Management API
+/// API Gateway Management APIを使用したWebSocketメッセージ送信
 ///
-/// Requirements: 6.2, 6.5, 18.7
+/// 要件: 6.2, 6.5, 18.7
 use async_trait::async_trait;
 use aws_sdk_apigatewaymanagement::{primitives::Blob, Client as ApiGatewayManagementClient};
 use thiserror::Error;
 
-/// Error types for WebSocket send operations
+/// WebSocket送信操作のエラー型
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum SendError {
-    /// Connection is gone (410 GONE from API Gateway)
+    /// 接続が切断された（API Gatewayからの410 GONE）
     #[error("Connection is gone")]
     ConnectionGone,
 
-    /// Network or service error
+    /// ネットワークまたはサービスエラー
     #[error("Network error: {0}")]
     NetworkError(String),
 
-    /// Message serialization error
+    /// メッセージシリアライズエラー
     #[error("Serialization error: {0}")]
     SerializationError(String),
 }
 
-/// Trait for sending WebSocket messages
+/// WebSocketメッセージ送信用トレイト
 ///
-/// This trait abstracts the WebSocket sending functionality to allow
-/// for different implementations (real API Gateway client, mock for testing).
+/// このトレイトはWebSocket送信機能を抽象化し、
+/// 異なる実装を可能にします（実際のAPI Gatewayクライアント、テスト用モック）。
 #[async_trait]
 pub trait WebSocketSender: Send + Sync {
-    /// Send a message to a specific connection
+    /// 特定の接続にメッセージを送信
     ///
-    /// # Arguments
-    /// * `connection_id` - The API Gateway connection ID
-    /// * `message` - The message to send (JSON string)
+    /// # 引数
+    /// * `connection_id` - API Gateway接続ID
+    /// * `message` - 送信するメッセージ（JSON文字列）
     ///
-    /// # Returns
-    /// * `Ok(())` on success
-    /// * `Err(SendError::ConnectionGone)` if the connection no longer exists
-    /// * `Err(SendError::NetworkError)` for other network failures
+    /// # 戻り値
+    /// * 成功時は`Ok(())`
+    /// * 接続が存在しない場合は`Err(SendError::ConnectionGone)`
+    /// * その他のネットワーク障害は`Err(SendError::NetworkError)`
     async fn send(&self, connection_id: &str, message: &str) -> Result<(), SendError>;
 
-    /// Send a message to multiple connections (broadcast)
+    /// 複数の接続にメッセージを送信（ブロードキャスト）
     ///
-    /// # Arguments
-    /// * `connection_ids` - List of connection IDs to send to
-    /// * `message` - The message to send
+    /// # 引数
+    /// * `connection_ids` - 送信先の接続IDリスト
+    /// * `message` - 送信するメッセージ
     ///
-    /// # Returns
-    /// A vector of (connection_id, result) pairs for each connection
+    /// # 戻り値
+    /// 各接続の(connection_id, result)ペアのベクター
     async fn broadcast(
         &self,
         connection_ids: &[String],
@@ -54,24 +54,24 @@ pub trait WebSocketSender: Send + Sync {
     ) -> Vec<(String, Result<(), SendError>)>;
 }
 
-/// API Gateway Management API WebSocket sender implementation
+/// API Gateway Management API WebSocket送信実装
 ///
-/// This struct implements the WebSocketSender trait using the AWS API Gateway
-/// Management API to send messages to WebSocket connections.
+/// この構造体はWebSocketSenderトレイトを実装し、AWS API Gateway
+/// Management APIを使用してWebSocket接続にメッセージを送信します。
 #[derive(Debug, Clone)]
 pub struct ApiGatewayWebSocketSender {
-    /// The API Gateway Management API client
+    /// API Gateway Management APIクライアント
     client: ApiGatewayManagementClient,
 }
 
 impl ApiGatewayWebSocketSender {
-    /// Create a new ApiGatewayWebSocketSender with the given endpoint URL
+    /// 指定されたエンドポイントURLで新しいApiGatewayWebSocketSenderを作成
     ///
-    /// # Arguments
-    /// * `endpoint_url` - The API Gateway Management API endpoint URL
-    ///   (e.g., "https://{api-id}.execute-api.{region}.amazonaws.com/{stage}")
+    /// # 引数
+    /// * `endpoint_url` - API Gateway Management APIエンドポイントURL
+    ///   (例: "https://{api-id}.execute-api.{region}.amazonaws.com/{stage}")
     ///
-    /// # Example
+    /// # 例
     /// ```ignore
     /// let sender = ApiGatewayWebSocketSender::new("https://abc123.execute-api.us-east-1.amazonaws.com/prod").await;
     /// ```
@@ -85,21 +85,21 @@ impl ApiGatewayWebSocketSender {
         Self { client }
     }
 
-    /// Create a new ApiGatewayWebSocketSender with a pre-configured client
+    /// 事前設定されたクライアントで新しいApiGatewayWebSocketSenderを作成
     ///
-    /// This is useful for testing with a mock client.
+    /// モッククライアントでのテストに便利です。
     pub fn with_client(client: ApiGatewayManagementClient) -> Self {
         Self { client }
     }
 
-    /// Build the endpoint URL from API Gateway request context
+    /// API GatewayリクエストコンテキストからエンドポイントURLを構築
     ///
-    /// # Arguments
-    /// * `domain_name` - The domain name from the request context
-    /// * `stage` - The stage from the request context
+    /// # 引数
+    /// * `domain_name` - リクエストコンテキストからのドメイン名
+    /// * `stage` - リクエストコンテキストからのステージ
     ///
-    /// # Returns
-    /// The endpoint URL for the API Gateway Management API
+    /// # 戻り値
+    /// API Gateway Management APIのエンドポイントURL
     pub fn build_endpoint_url(domain_name: &str, stage: &str) -> String {
         format!("https://{domain_name}/{stage}")
     }
@@ -122,12 +122,12 @@ impl WebSocketSender for ApiGatewayWebSocketSender {
             Err(err) => {
                 let service_error = err.into_service_error();
 
-                // Check if the error is a 410 GONE (connection gone)
+                // エラーが410 GONE（接続切断）かチェック
                 if service_error.is_gone_exception() {
                     return Err(SendError::ConnectionGone);
                 }
 
-                // Other errors are network errors
+                // その他のエラーはネットワークエラー
                 Err(SendError::NetworkError(service_error.to_string()))
             }
         }
@@ -155,9 +155,9 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    // ==================== 3.2 WebSocket Sender Tests ====================
+    // ==================== 3.2 WebSocket送信テスト ====================
 
-    // Test SendError display messages (Req 6.2, 6.5, 18.7)
+    // SendError表示メッセージのテスト (要件 6.2, 6.5, 18.7)
     #[test]
     fn test_send_error_connection_gone_display() {
         let error = SendError::ConnectionGone;
@@ -176,7 +176,7 @@ mod tests {
         assert_eq!(error.to_string(), "Serialization error: invalid utf8");
     }
 
-    // Test SendError equality
+    // SendError等価性のテスト
     #[test]
     fn test_send_error_equality() {
         assert_eq!(SendError::ConnectionGone, SendError::ConnectionGone);
@@ -190,7 +190,7 @@ mod tests {
         );
     }
 
-    // Test SendError clone
+    // SendErrorクローンのテスト
     #[test]
     fn test_send_error_clone() {
         let error = SendError::NetworkError("test".to_string());
@@ -198,7 +198,7 @@ mod tests {
         assert_eq!(error, cloned);
     }
 
-    // Test build_endpoint_url helper (Req 6.2)
+    // build_endpoint_urlヘルパーのテスト (要件 6.2)
     #[test]
     fn test_build_endpoint_url() {
         let url = ApiGatewayWebSocketSender::build_endpoint_url(
@@ -223,14 +223,14 @@ mod tests {
         );
     }
 
-    // Mock WebSocket sender for unit testing
+    // ユニットテスト用のモックWebSocket送信
     #[derive(Debug, Clone)]
     pub struct MockWebSocketSender {
-        /// Track sent messages: connection_id -> messages
+        /// 送信されたメッセージを追跡: connection_id -> messages
         sent_messages: Arc<Mutex<HashMap<String, Vec<String>>>>,
-        /// Connections that should return ConnectionGone error
+        /// ConnectionGoneエラーを返す接続
         gone_connections: Arc<Mutex<Vec<String>>>,
-        /// Connections that should return NetworkError
+        /// NetworkErrorを返す接続
         error_connections: Arc<Mutex<HashMap<String, String>>>,
     }
 
@@ -316,7 +316,7 @@ mod tests {
         }
     }
 
-    // Test MockWebSocketSender send success (Req 6.2)
+    // MockWebSocketSender送信成功のテスト (要件 6.2)
     #[tokio::test]
     async fn test_mock_sender_send_success() {
         let sender = MockWebSocketSender::new();
@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(messages[0], r#"["OK","abc",true,""]"#);
     }
 
-    // Test MockWebSocketSender send multiple messages (Req 6.2)
+    // MockWebSocketSender複数メッセージ送信のテスト (要件 6.2)
     #[tokio::test]
     async fn test_mock_sender_send_multiple_messages() {
         let sender = MockWebSocketSender::new();
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(messages_456[0], "message3");
     }
 
-    // Test MockWebSocketSender connection gone (Req 6.2, 18.7)
+    // MockWebSocketSender接続切断のテスト (要件 6.2, 18.7)
     #[tokio::test]
     async fn test_mock_sender_connection_gone() {
         let sender = MockWebSocketSender::new();
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(result.unwrap_err(), SendError::ConnectionGone);
     }
 
-    // Test MockWebSocketSender network error (Req 6.2, 18.7)
+    // MockWebSocketSenderネットワークエラーのテスト (要件 6.2, 18.7)
     #[tokio::test]
     async fn test_mock_sender_network_error() {
         let sender = MockWebSocketSender::new();
@@ -374,7 +374,7 @@ mod tests {
         );
     }
 
-    // Test broadcast to multiple connections (Req 6.5, 18.7)
+    // 複数接続へのブロードキャストのテスト (要件 6.5, 18.7)
     #[tokio::test]
     async fn test_mock_sender_broadcast_success() {
         let sender = MockWebSocketSender::new();
@@ -391,13 +391,13 @@ mod tests {
             assert!(result.is_ok(), "Failed for connection {conn_id}");
         }
 
-        // Verify all connections received the message
+        // すべての接続がメッセージを受信したことを検証
         assert_eq!(sender.get_sent_messages("conn-1"), vec!["broadcast message"]);
         assert_eq!(sender.get_sent_messages("conn-2"), vec!["broadcast message"]);
         assert_eq!(sender.get_sent_messages("conn-3"), vec!["broadcast message"]);
     }
 
-    // Test broadcast with some connections gone (Req 6.5, 18.7)
+    // 一部の接続が切断されたブロードキャストのテスト (要件 6.5, 18.7)
     #[tokio::test]
     async fn test_mock_sender_broadcast_partial_failure() {
         let sender = MockWebSocketSender::new();
@@ -413,28 +413,28 @@ mod tests {
 
         assert_eq!(results.len(), 3);
 
-        // conn-1 should succeed
+        // conn-1は成功すべき
         assert_eq!(results[0].0, "conn-1");
         assert!(results[0].1.is_ok());
 
-        // conn-2 should be gone
+        // conn-2は切断されているべき
         assert_eq!(results[1].0, "conn-2");
         assert_eq!(results[1].1, Err(SendError::ConnectionGone));
 
-        // conn-3 should have network error
+        // conn-3はネットワークエラーがあるべき
         assert_eq!(results[2].0, "conn-3");
         assert_eq!(
             results[2].1,
             Err(SendError::NetworkError("timeout".to_string()))
         );
 
-        // Only conn-1 should have the message
+        // conn-1のみがメッセージを持つべき
         assert_eq!(sender.get_sent_messages("conn-1"), vec!["broadcast message"]);
         assert!(sender.get_sent_messages("conn-2").is_empty());
         assert!(sender.get_sent_messages("conn-3").is_empty());
     }
 
-    // Test broadcast to empty list (Req 6.5)
+    // 空リストへのブロードキャストのテスト (要件 6.5)
     #[tokio::test]
     async fn test_mock_sender_broadcast_empty() {
         let sender = MockWebSocketSender::new();
@@ -442,14 +442,14 @@ mod tests {
         assert!(results.is_empty());
     }
 
-    // Test error types are properly distinguished (Req 18.7)
+    // エラー型が適切に区別されるテスト (要件 18.7)
     #[test]
     fn test_error_types_distinguished() {
         let gone = SendError::ConnectionGone;
         let network = SendError::NetworkError("test".to_string());
         let serialization = SendError::SerializationError("test".to_string());
 
-        // All three types should be different
+        // 3つの型はすべて異なるべき
         assert_ne!(gone, network);
         assert_ne!(gone, serialization);
         assert_ne!(network, serialization);

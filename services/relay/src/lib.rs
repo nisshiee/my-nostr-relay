@@ -1,10 +1,10 @@
 use lambda_runtime::{Error, LambdaEvent};
 use serde_json::Value;
 
-// Domain layer modules
+// ドメイン層モジュール
 pub mod domain;
 
-// Infrastructure layer modules
+// インフラストラクチャ層モジュール
 pub mod infrastructure;
 
 pub async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {

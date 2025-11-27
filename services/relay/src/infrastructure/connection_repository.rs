@@ -1,114 +1,114 @@
-/// Connection repository for managing WebSocket connections in DynamoDB
+/// DynamoDBでWebSocket接続を管理するための接続リポジトリ
 ///
-/// Requirements: 17.1, 17.2, 17.3, 17.4, 17.5
+/// 要件: 17.1, 17.2, 17.3, 17.4, 17.5
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
-/// Error types for repository operations
+/// リポジトリ操作のエラー型
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum RepositoryError {
-    /// Failed to connect to DynamoDB
+    /// DynamoDBへの接続に失敗
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
 
-    /// Failed to write to DynamoDB
+    /// DynamoDBへの書き込みに失敗
     #[error("Write error: {0}")]
     WriteError(String),
 
-    /// Failed to read from DynamoDB
+    /// DynamoDBからの読み取りに失敗
     #[error("Read error: {0}")]
     ReadError(String),
 
-    /// Failed to serialize/deserialize data
+    /// データのシリアライズ/デシリアライズに失敗
     #[error("Serialization error: {0}")]
     SerializationError(String),
 }
 
-/// Information about a WebSocket connection
+/// WebSocket接続の情報
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConnectionInfo {
-    /// The API Gateway connection ID
+    /// API Gateway接続ID
     pub connection_id: String,
-    /// The API Gateway Management API endpoint URL
+    /// API Gateway Management APIエンドポイントURL
     pub endpoint_url: String,
-    /// Unix timestamp of when the connection was established
+    /// 接続が確立されたUnixタイムスタンプ
     pub connected_at: i64,
 }
 
-/// Trait for managing WebSocket connections
+/// WebSocket接続管理用トレイト
 ///
-/// This trait abstracts the connection persistence functionality to allow
-/// for different implementations (real DynamoDB, mock for testing).
+/// このトレイトは接続永続化機能を抽象化し、
+/// 異なる実装を可能にします（実際のDynamoDB、テスト用モック）。
 #[async_trait]
 pub trait ConnectionRepository: Send + Sync {
-    /// Save a new connection to the repository
+    /// リポジトリに新しい接続を保存
     ///
-    /// # Arguments
-    /// * `connection_id` - The API Gateway connection ID
-    /// * `endpoint_url` - The API Gateway Management API endpoint URL
+    /// # 引数
+    /// * `connection_id` - API Gateway接続ID
+    /// * `endpoint_url` - API Gateway Management APIエンドポイントURL
     ///
-    /// # Returns
-    /// * `Ok(())` on success
-    /// * `Err(RepositoryError)` on failure
+    /// # 戻り値
+    /// * 成功時は`Ok(())`
+    /// * 失敗時は`Err(RepositoryError)`
     ///
-    /// Requirements: 17.1, 17.2
+    /// 要件: 17.1, 17.2
     async fn save(&self, connection_id: &str, endpoint_url: &str) -> Result<(), RepositoryError>;
 
-    /// Delete a connection from the repository
+    /// リポジトリから接続を削除
     ///
-    /// # Arguments
-    /// * `connection_id` - The API Gateway connection ID
+    /// # 引数
+    /// * `connection_id` - API Gateway接続ID
     ///
-    /// # Returns
-    /// * `Ok(())` on success (even if the connection didn't exist)
-    /// * `Err(RepositoryError)` on failure
+    /// # 戻り値
+    /// * 成功時は`Ok(())`（接続が存在しなかった場合も含む）
+    /// * 失敗時は`Err(RepositoryError)`
     ///
-    /// Requirement: 17.3
+    /// 要件: 17.3
     async fn delete(&self, connection_id: &str) -> Result<(), RepositoryError>;
 
-    /// Get connection information by connection ID
+    /// 接続IDで接続情報を取得
     ///
-    /// # Arguments
-    /// * `connection_id` - The API Gateway connection ID
+    /// # 引数
+    /// * `connection_id` - API Gateway接続ID
     ///
-    /// # Returns
-    /// * `Ok(Some(ConnectionInfo))` if found
-    /// * `Ok(None)` if not found
-    /// * `Err(RepositoryError)` on failure
+    /// # 戻り値
+    /// * 見つかった場合は`Ok(Some(ConnectionInfo))`
+    /// * 見つからなかった場合は`Ok(None)`
+    /// * 失敗時は`Err(RepositoryError)`
     ///
-    /// Requirement: 17.4
+    /// 要件: 17.4
     async fn get(&self, connection_id: &str) -> Result<Option<ConnectionInfo>, RepositoryError>;
 }
 
-/// TTL duration for connections (24 hours in seconds)
+/// 接続のTTL期間（24時間を秒で）
 const CONNECTION_TTL_SECONDS: i64 = 24 * 60 * 60;
 
-/// DynamoDB implementation of ConnectionRepository
+/// ConnectionRepositoryのDynamoDB実装
 ///
-/// This struct implements the ConnectionRepository trait using DynamoDB
-/// for persistent storage of WebSocket connection information.
+/// この構造体はDynamoDBを使用してWebSocket接続情報を
+/// 永続的に保存するConnectionRepositoryトレイトを実装します。
 #[derive(Debug, Clone)]
 pub struct DynamoConnectionRepository {
-    /// DynamoDB client
+    /// DynamoDBクライアント
     client: DynamoDbClient,
-    /// Table name for connections
+    /// 接続テーブル名
     table_name: String,
 }
 
 impl DynamoConnectionRepository {
-    /// Create a new DynamoConnectionRepository
+    /// 新しいDynamoConnectionRepositoryを作成
     ///
-    /// # Arguments
-    /// * `client` - DynamoDB client
-    /// * `table_name` - Name of the connections table
+    /// # 引数
+    /// * `client` - DynamoDBクライアント
+    /// * `table_name` - 接続テーブルの名前
     pub fn new(client: DynamoDbClient, table_name: String) -> Self {
         Self { client, table_name }
     }
 
-    /// Get current Unix timestamp in seconds
+    /// 現在のUnixタイムスタンプを秒で取得
     fn current_timestamp() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -116,7 +116,7 @@ impl DynamoConnectionRepository {
             .as_secs() as i64
     }
 
-    /// Calculate TTL timestamp (current time + 24 hours)
+    /// TTLタイムスタンプを計算（現在時刻 + 24時間）
     fn calculate_ttl(connected_at: i64) -> i64 {
         connected_at + CONNECTION_TTL_SECONDS
     }
@@ -209,9 +209,9 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
-    // ==================== 3.3 Connection Repository Tests ====================
+    // ==================== 3.3 接続リポジトリテスト ====================
 
-    // Test RepositoryError display messages (Req 17.5)
+    // RepositoryError表示メッセージのテスト (要件 17.5)
     #[test]
     fn test_repository_error_connection_failed_display() {
         let error = RepositoryError::ConnectionFailed("timeout".to_string());
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(error.to_string(), "Serialization error: invalid format");
     }
 
-    // Test RepositoryError equality
+    // RepositoryError等価性のテスト
     #[test]
     fn test_repository_error_equality() {
         assert_eq!(
@@ -253,7 +253,7 @@ mod tests {
         );
     }
 
-    // Test RepositoryError clone
+    // RepositoryErrorクローンのテスト
     #[test]
     fn test_repository_error_clone() {
         let error = RepositoryError::WriteError("test".to_string());
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(error, cloned);
     }
 
-    // Test ConnectionInfo fields (Req 17.1, 17.2)
+    // ConnectionInfoフィールドのテスト (要件 17.1, 17.2)
     #[test]
     fn test_connection_info_fields() {
         let info = ConnectionInfo {
@@ -275,7 +275,7 @@ mod tests {
         assert_eq!(info.connected_at, 1700000000);
     }
 
-    // Test ConnectionInfo clone
+    // ConnectionInfoクローンのテスト
     #[test]
     fn test_connection_info_clone() {
         let info = ConnectionInfo {
@@ -287,34 +287,34 @@ mod tests {
         assert_eq!(info, cloned);
     }
 
-    // Test TTL calculation (Req 17.2)
+    // TTL計算のテスト (要件 17.2)
     #[test]
     fn test_ttl_calculation() {
         let connected_at: i64 = 1700000000;
         let ttl = DynamoConnectionRepository::calculate_ttl(connected_at);
 
-        // TTL should be 24 hours (86400 seconds) after connected_at
+        // TTLはconnected_atの24時間後（86400秒）であるべき
         assert_eq!(ttl, connected_at + CONNECTION_TTL_SECONDS);
         assert_eq!(ttl, 1700000000 + 86400);
     }
 
-    // Test current_timestamp returns reasonable value
+    // current_timestampが妥当な値を返すテスト
     #[test]
     fn test_current_timestamp() {
         let timestamp = DynamoConnectionRepository::current_timestamp();
 
-        // Should be after Jan 1, 2020 (1577836800)
+        // 2020年1月1日（1577836800）より後であるべき
         assert!(timestamp > 1577836800);
-        // Should be before year 3000 (just a sanity check)
+        // 3000年より前であるべき（健全性チェック）
         assert!(timestamp < 32503680000);
     }
 
-    // Mock ConnectionRepository for unit testing
+    // ユニットテスト用のモックConnectionRepository
     #[derive(Debug, Clone)]
     pub struct MockConnectionRepository {
-        /// Stored connections: connection_id -> ConnectionInfo
+        /// 保存された接続: connection_id -> ConnectionInfo
         connections: Arc<Mutex<HashMap<String, ConnectionInfo>>>,
-        /// Error to return on next operation (for testing error paths)
+        /// 次の操作で返すエラー（エラーパスのテスト用）
         next_error: Arc<Mutex<Option<RepositoryError>>>,
     }
 
@@ -383,7 +383,7 @@ mod tests {
         }
     }
 
-    // Test MockConnectionRepository save success (Req 17.1, 17.2)
+    // MockConnectionRepository保存成功のテスト (要件 17.1, 17.2)
     #[tokio::test]
     async fn test_mock_repo_save_success() {
         let repo = MockConnectionRepository::new();
@@ -400,7 +400,7 @@ mod tests {
         assert!(info.connected_at > 0);
     }
 
-    // Test MockConnectionRepository save multiple connections (Req 17.1)
+    // MockConnectionRepository複数接続保存のテスト (要件 17.1)
     #[tokio::test]
     async fn test_mock_repo_save_multiple() {
         let repo = MockConnectionRepository::new();
@@ -415,7 +415,7 @@ mod tests {
         assert!(repo.get_connection("conn-3").is_some());
     }
 
-    // Test MockConnectionRepository save overwrites existing (Req 17.1)
+    // MockConnectionRepository保存が既存を上書きするテスト (要件 17.1)
     #[tokio::test]
     async fn test_mock_repo_save_overwrite() {
         let repo = MockConnectionRepository::new();
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(info.endpoint_url, "https://new.example.com/stage");
     }
 
-    // Test MockConnectionRepository delete success (Req 17.3)
+    // MockConnectionRepository削除成功のテスト (要件 17.3)
     #[tokio::test]
     async fn test_mock_repo_delete_success() {
         let repo = MockConnectionRepository::new();
@@ -442,17 +442,17 @@ mod tests {
         assert!(repo.get_connection("conn-123").is_none());
     }
 
-    // Test MockConnectionRepository delete non-existent (Req 17.3)
+    // MockConnectionRepository存在しない接続の削除のテスト (要件 17.3)
     #[tokio::test]
     async fn test_mock_repo_delete_non_existent() {
         let repo = MockConnectionRepository::new();
 
-        // Deleting non-existent connection should succeed
+        // 存在しない接続の削除は成功するべき
         let result = repo.delete("non-existent").await;
         assert!(result.is_ok());
     }
 
-    // Test MockConnectionRepository get success (Req 17.4)
+    // MockConnectionRepository取得成功のテスト (要件 17.4)
     #[tokio::test]
     async fn test_mock_repo_get_success() {
         let repo = MockConnectionRepository::new();
@@ -467,7 +467,7 @@ mod tests {
         assert_eq!(info.endpoint_url, "https://example.com/stage");
     }
 
-    // Test MockConnectionRepository get non-existent (Req 17.4)
+    // MockConnectionRepository存在しない接続の取得のテスト (要件 17.4)
     #[tokio::test]
     async fn test_mock_repo_get_non_existent() {
         let repo = MockConnectionRepository::new();
@@ -477,7 +477,7 @@ mod tests {
         assert!(result.unwrap().is_none());
     }
 
-    // Test MockConnectionRepository save error (Req 17.5)
+    // MockConnectionRepository保存エラーのテスト (要件 17.5)
     #[tokio::test]
     async fn test_mock_repo_save_error() {
         let repo = MockConnectionRepository::new();
@@ -492,7 +492,7 @@ mod tests {
         );
     }
 
-    // Test MockConnectionRepository delete error (Req 17.5)
+    // MockConnectionRepository削除エラーのテスト (要件 17.5)
     #[tokio::test]
     async fn test_mock_repo_delete_error() {
         let repo = MockConnectionRepository::new();
@@ -507,7 +507,7 @@ mod tests {
         );
     }
 
-    // Test MockConnectionRepository get error (Req 17.5)
+    // MockConnectionRepository取得エラーのテスト (要件 17.5)
     #[tokio::test]
     async fn test_mock_repo_get_error() {
         let repo = MockConnectionRepository::new();
@@ -522,7 +522,7 @@ mod tests {
         );
     }
 
-    // Test connection records endpoint URL (Req 17.2)
+    // 接続がエンドポイントURLを記録するテスト (要件 17.2)
     #[tokio::test]
     async fn test_connection_records_endpoint_url() {
         let repo = MockConnectionRepository::new();
@@ -534,7 +534,7 @@ mod tests {
         assert_eq!(info.endpoint_url, endpoint_url);
     }
 
-    // Test connection records connected_at timestamp (Req 17.2)
+    // 接続がconnected_atタイムスタンプを記録するテスト (要件 17.2)
     #[tokio::test]
     async fn test_connection_records_timestamp() {
         let repo = MockConnectionRepository::new();
@@ -545,12 +545,12 @@ mod tests {
         let after = DynamoConnectionRepository::current_timestamp();
         let info = repo.get("conn-123").await.unwrap().unwrap();
 
-        // connected_at should be between before and after
+        // connected_atはbeforeとafterの間であるべき
         assert!(info.connected_at >= before);
         assert!(info.connected_at <= after);
     }
 
-    // Test deleting one connection doesn't affect others (Req 17.3)
+    // 1つの接続を削除しても他に影響しないテスト (要件 17.3)
     #[tokio::test]
     async fn test_delete_does_not_affect_others() {
         let repo = MockConnectionRepository::new();

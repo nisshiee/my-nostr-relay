@@ -1,29 +1,29 @@
-/// Event kind classification based on NIP-01
+/// NIP-01に基づくイベント種別分類
 ///
-/// Requirements: 9.1, 10.1, 11.1, 12.1
+/// 要件: 9.1, 10.1, 11.1, 12.1
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EventKind {
-    /// Regular events: stored normally
+    /// 通常イベント: 通常通り保存
     /// kind 1, 2, 4-44, 1000-9999
     Regular,
 
-    /// Replaceable events: only latest per pubkey+kind is kept
+    /// 置換可能イベント: pubkey+kind毎に最新のみ保持
     /// kind 0, 3, 10000-19999
     Replaceable,
 
-    /// Ephemeral events: not stored, only broadcast
+    /// 一時イベント: 保存せずブロードキャストのみ
     /// kind 20000-29999
     Ephemeral,
 
-    /// Addressable events: only latest per pubkey+kind+d_tag is kept
+    /// アドレス指定可能イベント: pubkey+kind+d_tag毎に最新のみ保持
     /// kind 30000-39999
     Addressable,
 }
 
 impl EventKind {
-    /// Classify an event kind into one of the four categories
+    /// イベント種別を4つのカテゴリのいずれかに分類
     ///
-    /// Based on NIP-01 specification:
+    /// NIP-01仕様に基づく:
     /// - Regular: 1, 2, 4-44, 1000-9999
     /// - Replaceable: 0, 3, 10000-19999
     /// - Ephemeral: 20000-29999
@@ -45,12 +45,12 @@ impl EventKind {
         }
     }
 
-    /// Check if this event kind should be stored
+    /// このイベント種別が保存されるべきかチェック
     pub fn should_store(&self) -> bool {
         !matches!(self, EventKind::Ephemeral)
     }
 
-    /// Check if this event kind replaces existing events
+    /// このイベント種別が既存イベントを置換するかチェック
     pub fn is_replaceable(&self) -> bool {
         matches!(self, EventKind::Replaceable | EventKind::Addressable)
     }
@@ -60,9 +60,9 @@ impl EventKind {
 mod tests {
     use super::*;
 
-    // ==================== 2.1 Kind Classification Tests ====================
+    // ==================== 2.1 種別分類テスト ====================
 
-    // Regular kind tests (Req 9.1)
+    // 通常種別テスト (要件 9.1)
     #[test]
     fn test_classify_regular_kind_1() {
         assert_eq!(EventKind::classify(1), EventKind::Regular);
@@ -94,7 +94,7 @@ mod tests {
         assert_eq!(EventKind::classify(5000), EventKind::Regular);
     }
 
-    // Replaceable kind tests (Req 10.1)
+    // 置換可能種別テスト (要件 10.1)
     #[test]
     fn test_classify_replaceable_kind_0() {
         assert_eq!(EventKind::classify(0), EventKind::Replaceable);
@@ -114,7 +114,7 @@ mod tests {
         assert_eq!(EventKind::classify(15000), EventKind::Replaceable);
     }
 
-    // Ephemeral kind tests (Req 11.1)
+    // 一時種別テスト (要件 11.1)
     #[test]
     fn test_classify_ephemeral_kind_20000_to_29999() {
         // Test boundaries
@@ -124,7 +124,7 @@ mod tests {
         assert_eq!(EventKind::classify(25000), EventKind::Ephemeral);
     }
 
-    // Addressable kind tests (Req 12.1)
+    // アドレス指定可能種別テスト (要件 12.1)
     #[test]
     fn test_classify_addressable_kind_30000_to_39999() {
         // Test boundaries
@@ -134,7 +134,7 @@ mod tests {
         assert_eq!(EventKind::classify(35000), EventKind::Addressable);
     }
 
-    // Boundary tests
+    // 境界値テスト
     #[test]
     fn test_classify_boundary_9999_is_regular() {
         assert_eq!(EventKind::classify(9999), EventKind::Regular);
@@ -172,11 +172,11 @@ mod tests {
 
     #[test]
     fn test_classify_boundary_40000_is_regular() {
-        // Kinds >= 40000 fall back to Regular
+        // kind >= 40000 はRegularにフォールバック
         assert_eq!(EventKind::classify(40000), EventKind::Regular);
     }
 
-    // should_store tests
+    // should_storeテスト
     #[test]
     fn test_regular_should_store() {
         assert!(EventKind::Regular.should_store());
@@ -197,7 +197,7 @@ mod tests {
         assert!(EventKind::Addressable.should_store());
     }
 
-    // is_replaceable tests
+    // is_replaceableテスト
     #[test]
     fn test_regular_is_not_replaceable() {
         assert!(!EventKind::Regular.is_replaceable());

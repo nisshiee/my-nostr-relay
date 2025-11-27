@@ -1,10 +1,10 @@
-/// Relay message types for NIP-01 compliance
+/// NIP-01準拠のリレーメッセージ型
 ///
-/// Requirements: 14.1-14.4
+/// 要件: 14.1-14.4
 use nostr::Event;
 use serde_json::json;
 
-/// Machine-readable error prefixes for OK and CLOSED messages (Req 14.2)
+/// OKおよびCLOSEDメッセージ用の機械可読エラープレフィックス (要件 14.2)
 pub mod error_prefix {
     pub const DUPLICATE: &str = "duplicate:";
     pub const POW: &str = "pow:";
@@ -15,17 +15,17 @@ pub mod error_prefix {
     pub const ERROR: &str = "error:";
 }
 
-/// Relay to Client messages (Req 14.1-14.4)
+/// リレーからクライアントへのメッセージ (要件 14.1-14.4)
 #[derive(Debug, Clone)]
 pub enum RelayMessage {
-    /// EVENT response for subscriptions (Req 6.2)
+    /// サブスクリプション用のEVENTレスポンス (要件 6.2)
     /// ["EVENT", <subscription_id>, <event JSON>]
     Event {
         subscription_id: String,
         event: Event,
     },
 
-    /// OK response for EVENT messages (Req 14.1)
+    /// EVENTメッセージ用のOKレスポンス (要件 14.1)
     /// ["OK", <event_id>, <true|false>, <message>]
     Ok {
         event_id: String,
@@ -33,24 +33,24 @@ pub enum RelayMessage {
         message: String,
     },
 
-    /// EOSE (End of Stored Events) response (Req 6.3)
+    /// EOSE (保存済みイベント終了) レスポンス (要件 6.3)
     /// ["EOSE", <subscription_id>]
     Eose { subscription_id: String },
 
-    /// CLOSED response for subscription termination (Req 14.3)
+    /// サブスクリプション終了用のCLOSEDレスポンス (要件 14.3)
     /// ["CLOSED", <subscription_id>, <message>]
     Closed {
         subscription_id: String,
         message: String,
     },
 
-    /// NOTICE for general notifications (Req 14.4)
+    /// 一般通知用のNOTICE (要件 14.4)
     /// ["NOTICE", <message>]
     Notice { message: String },
 }
 
 impl RelayMessage {
-    /// Convert message to JSON string
+    /// メッセージをJSON文字列に変換
     pub fn to_json(&self) -> String {
         match self {
             RelayMessage::Event {
@@ -86,9 +86,9 @@ impl RelayMessage {
         }
     }
 
-    // ==================== OK Message Helpers ====================
+    // ==================== OKメッセージヘルパー ====================
 
-    /// Create OK success message (Req 5.3)
+    /// OK成功メッセージを作成 (要件 5.3)
     pub fn ok_success(event_id: &str) -> Self {
         RelayMessage::Ok {
             event_id: event_id.to_string(),
@@ -97,7 +97,7 @@ impl RelayMessage {
         }
     }
 
-    /// Create OK duplicate message (Req 5.4)
+    /// OK重複メッセージを作成 (要件 5.4)
     pub fn ok_duplicate(event_id: &str) -> Self {
         RelayMessage::Ok {
             event_id: event_id.to_string(),
@@ -106,7 +106,7 @@ impl RelayMessage {
         }
     }
 
-    /// Create OK error message with prefix (Req 5.5, 14.2)
+    /// プレフィックス付きOKエラーメッセージを作成 (要件 5.5, 14.2)
     pub fn ok_error(event_id: &str, prefix: &str, message: &str) -> Self {
         RelayMessage::Ok {
             event_id: event_id.to_string(),
@@ -115,24 +115,24 @@ impl RelayMessage {
         }
     }
 
-    /// Create OK error for invalid event ID (Req 3.5)
+    /// 無効なイベントID用のOKエラーを作成 (要件 3.5)
     pub fn ok_invalid_id(event_id: &str) -> Self {
         Self::ok_error(event_id, error_prefix::INVALID, "event id does not match")
     }
 
-    /// Create OK error for invalid signature (Req 4.2)
+    /// 無効な署名用のOKエラーを作成 (要件 4.2)
     pub fn ok_invalid_signature(event_id: &str) -> Self {
         Self::ok_error(event_id, error_prefix::INVALID, "signature verification failed")
     }
 
-    /// Create OK error for storage failure (Req 16.8)
+    /// ストレージ失敗用のOKエラーを作成 (要件 16.8)
     pub fn ok_storage_error(event_id: &str) -> Self {
         Self::ok_error(event_id, error_prefix::ERROR, "failed to store event")
     }
 
-    // ==================== CLOSED Message Helpers ====================
+    // ==================== CLOSEDメッセージヘルパー ====================
 
-    /// Create CLOSED message for invalid subscription (Req 6.7)
+    /// 無効なサブスクリプション用のCLOSEDメッセージを作成 (要件 6.7)
     pub fn closed_invalid(subscription_id: &str, message: &str) -> Self {
         RelayMessage::Closed {
             subscription_id: subscription_id.to_string(),
@@ -140,12 +140,12 @@ impl RelayMessage {
         }
     }
 
-    /// Create CLOSED message for invalid subscription ID (Req 6.7)
+    /// 無効なサブスクリプションID用のCLOSEDメッセージを作成 (要件 6.7)
     pub fn closed_invalid_subscription_id(subscription_id: &str) -> Self {
         Self::closed_invalid(subscription_id, "subscription id must be 1-64 characters")
     }
 
-    /// Create CLOSED message for errors (Req 18.8)
+    /// エラー用のCLOSEDメッセージを作成 (要件 18.8)
     pub fn closed_error(subscription_id: &str, message: &str) -> Self {
         RelayMessage::Closed {
             subscription_id: subscription_id.to_string(),
@@ -153,28 +153,28 @@ impl RelayMessage {
         }
     }
 
-    /// Create CLOSED message for subscription management error (Req 18.8)
+    /// サブスクリプション管理エラー用のCLOSEDメッセージを作成 (要件 18.8)
     pub fn closed_subscription_error(subscription_id: &str) -> Self {
         Self::closed_error(subscription_id, "failed to manage subscription")
     }
 
-    // ==================== NOTICE Message Helpers ====================
+    // ==================== NOTICEメッセージヘルパー ====================
 
-    /// Create NOTICE for invalid message format (Req 15.1)
+    /// 無効なメッセージフォーマット用のNOTICEを作成 (要件 15.1)
     pub fn notice_invalid_format() -> Self {
         RelayMessage::Notice {
             message: format!("{} invalid message format", error_prefix::ERROR),
         }
     }
 
-    /// Create NOTICE for unknown message type (Req 15.2)
+    /// 未知のメッセージタイプ用のNOTICEを作成 (要件 15.2)
     pub fn notice_unknown_type() -> Self {
         RelayMessage::Notice {
             message: format!("{} unknown message type", error_prefix::ERROR),
         }
     }
 
-    /// Create NOTICE for JSON parse error (Req 15.3)
+    /// JSONパースエラー用のNOTICEを作成 (要件 15.3)
     pub fn notice_parse_error() -> Self {
         RelayMessage::Notice {
             message: format!("{} failed to parse JSON", error_prefix::ERROR),
@@ -195,9 +195,9 @@ mod tests {
             .expect("Failed to create event")
     }
 
-    // ==================== JSON Conversion Tests ====================
+    // ==================== JSON変換テスト ====================
 
-    // Req 14.1: EVENT response format
+    // 要件 14.1: EVENTレスポンスフォーマット
     #[test]
     fn test_event_message_json() {
         let event = create_test_event();
@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(parsed[2]["id"].as_str().unwrap(), event.id.to_hex());
     }
 
-    // Req 14.1: OK response format
+    // 要件 14.1: OKレスポンスフォーマット
     #[test]
     fn test_ok_message_json_accepted() {
         let msg = RelayMessage::Ok {
@@ -252,7 +252,7 @@ mod tests {
         assert_eq!(parsed[3], "invalid: bad signature");
     }
 
-    // Req 6.3: EOSE response format
+    // 要件 6.3: EOSEレスポンスフォーマット
     #[test]
     fn test_eose_message_json() {
         let msg = RelayMessage::Eose {
@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(parsed[1], "sub123");
     }
 
-    // Req 14.3: CLOSED response format
+    // 要件 14.3: CLOSEDレスポンスフォーマット
     #[test]
     fn test_closed_message_json() {
         let msg = RelayMessage::Closed {
@@ -282,7 +282,7 @@ mod tests {
         assert_eq!(parsed[2], "error: something went wrong");
     }
 
-    // Req 14.4: NOTICE response format
+    // 要件 14.4: NOTICEレスポンスフォーマット
     #[test]
     fn test_notice_message_json() {
         let msg = RelayMessage::Notice {
@@ -296,7 +296,7 @@ mod tests {
         assert_eq!(parsed[1], "hello from relay");
     }
 
-    // ==================== OK Helper Tests ====================
+    // ==================== OKヘルパーテスト ====================
 
     #[test]
     fn test_ok_success() {
@@ -316,7 +316,7 @@ mod tests {
         }
     }
 
-    // Req 5.4: OK duplicate format
+    // 要件 5.4: OK重複フォーマット
     #[test]
     fn test_ok_duplicate() {
         let msg = RelayMessage::ok_duplicate("event123");
@@ -336,7 +336,7 @@ mod tests {
         }
     }
 
-    // Req 14.2: OK error with prefix
+    // 要件 14.2: プレフィックス付きOKエラー
     #[test]
     fn test_ok_error() {
         let msg = RelayMessage::ok_error("event123", error_prefix::INVALID, "bad format");
@@ -356,7 +356,7 @@ mod tests {
         }
     }
 
-    // Req 3.5: Invalid ID error
+    // 要件 3.5: 無効なIDエラー
     #[test]
     fn test_ok_invalid_id() {
         let msg = RelayMessage::ok_invalid_id("event123");
@@ -370,7 +370,7 @@ mod tests {
         }
     }
 
-    // Req 4.2: Invalid signature error
+    // 要件 4.2: 無効な署名エラー
     #[test]
     fn test_ok_invalid_signature() {
         let msg = RelayMessage::ok_invalid_signature("event123");
@@ -384,7 +384,7 @@ mod tests {
         }
     }
 
-    // Req 16.8: Storage error
+    // 要件 16.8: ストレージエラー
     #[test]
     fn test_ok_storage_error() {
         let msg = RelayMessage::ok_storage_error("event123");
@@ -398,9 +398,9 @@ mod tests {
         }
     }
 
-    // ==================== CLOSED Helper Tests ====================
+    // ==================== CLOSEDヘルパーテスト ====================
 
-    // Req 6.7: Invalid subscription ID
+    // 要件 6.7: 無効なサブスクリプションID
     #[test]
     fn test_closed_invalid_subscription_id() {
         let msg = RelayMessage::closed_invalid_subscription_id("bad-sub");
@@ -418,7 +418,7 @@ mod tests {
         }
     }
 
-    // Req 18.8: Subscription management error
+    // 要件 18.8: サブスクリプション管理エラー
     #[test]
     fn test_closed_subscription_error() {
         let msg = RelayMessage::closed_subscription_error("sub123");
@@ -436,9 +436,9 @@ mod tests {
         }
     }
 
-    // ==================== NOTICE Helper Tests ====================
+    // ==================== NOTICEヘルパーテスト ====================
 
-    // Req 15.1: Invalid format notice
+    // 要件 15.1: 無効なフォーマット通知
     #[test]
     fn test_notice_invalid_format() {
         let msg = RelayMessage::notice_invalid_format();
@@ -452,7 +452,7 @@ mod tests {
         }
     }
 
-    // Req 15.2: Unknown type notice
+    // 要件 15.2: 未知のタイプ通知
     #[test]
     fn test_notice_unknown_type() {
         let msg = RelayMessage::notice_unknown_type();
@@ -466,7 +466,7 @@ mod tests {
         }
     }
 
-    // Req 15.3: Parse error notice
+    // 要件 15.3: パースエラー通知
     #[test]
     fn test_notice_parse_error() {
         let msg = RelayMessage::notice_parse_error();
@@ -480,11 +480,11 @@ mod tests {
         }
     }
 
-    // ==================== Error Prefix Constants Tests ====================
+    // ==================== エラープレフィックス定数テスト ====================
 
     #[test]
     fn test_error_prefix_format() {
-        // All prefixes should end with colon
+        // すべてのプレフィックスはコロンで終わる必要がある
         assert!(error_prefix::DUPLICATE.ends_with(':'));
         assert!(error_prefix::POW.ends_with(':'));
         assert!(error_prefix::BLOCKED.ends_with(':'));

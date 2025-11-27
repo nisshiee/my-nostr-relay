@@ -4,30 +4,30 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-# AWS Lambda runtime
+# AWS Lambdaランタイム
 lambda_runtime = "1.0.1"
 
-# Nostr protocol library - event model, signature verification, filter evaluation
+# Nostrプロトコルライブラリ - イベントモデル、署名検証、フィルター評価
 nostr = "0.44"
 
-# AWS SDK - DynamoDB operations
+# AWS SDK - DynamoDB操作
 aws-sdk-dynamodb = "1"
 
-# AWS SDK - WebSocket message sending via API Gateway Management API
+# AWS SDK - API Gateway Management APIによるWebSocketメッセージ送信
 aws-sdk-apigatewaymanagement = "1"
 
-# AWS SDK - authentication and configuration
+# AWS SDK - 認証と設定
 aws-config = "1"
 
-# Async trait support
+# 非同期トレイトサポート
 async-trait = "0.1"
 
-# Serialization
+# シリアライズ
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.145"
 
-# Error handling
+# エラーハンドリング
 thiserror = "2"
 
-# Async runtime
+# 非同期ランタイム
 tokio = { version = "1.48.0", features = ["full"] }

@@ -40,6 +40,9 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 - Follow the user's instructions precisely, and within that scope act autonomously: gather the necessary context and complete the requested work end-to-end in this run, asking questions only when essential information is missing or the instructions are critically ambiguous.
 - Rustコード修正後は必ず `cargo clippy` を実行し、警告がなくなるまで修正すること
 - `cargo test` も合わせて実行し、テストがパスすることを確認すること
+- コードのコメント（`///` ドキュメントコメント、`//` 通常コメント）は日本語で記述すること
+- コミットメッセージは日本語で記述すること
+- Pull Requestのタイトル・本文は日本語で記述すること
 
 ## Steering Configuration
 - Load entire `.kiro/steering/` as project memory

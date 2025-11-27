@@ -1,62 +1,62 @@
-/// Filter evaluation for NIP-01 compliance
+/// NIP-01準拠のフィルター評価
 ///
-/// Requirements: 8.1-8.11
+/// 要件: 8.1-8.11
 use nostr::filter::MatchEventOptions;
 use nostr::{Event, Filter};
 use thiserror::Error;
 
-/// Filter validation errors
+/// フィルターバリデーションエラー
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum FilterValidationError {
-    /// ID value is not valid hex format
+    /// ID値が有効な16進数形式でない
     #[error("invalid id format: {0}")]
     InvalidIdFormat(String),
-    /// Author value is not valid hex format
+    /// author値が有効な16進数形式でない
     #[error("invalid author format: {0}")]
     InvalidAuthorFormat(String),
-    /// Tag value is not valid format for #e or #p
+    /// #eまたは#pのタグ値が有効な形式でない
     #[error("invalid #{tag} tag value format: {value}")]
     InvalidTagValueFormat { tag: String, value: String },
 }
 
-/// Filter evaluator for matching events against NIP-01 filters
+/// NIP-01フィルターに対してイベントをマッチングするためのフィルター評価器
 pub struct FilterEvaluator;
 
 impl FilterEvaluator {
-    /// Check if an event matches a single filter (Requirements 8.1-8.8)
+    /// イベントが単一のフィルターにマッチするかチェック（要件 8.1-8.8）
     ///
-    /// Filter conditions are ANDed together:
-    /// - ids: event id prefix matches any in list (8.1)
-    /// - authors: event pubkey prefix matches any in list (8.2)
-    /// - kinds: event kind matches any in list (8.3)
-    /// - #<letter>: tag value matches any in list (8.4)
+    /// フィルター条件はANDで結合:
+    /// - ids: イベントIDプレフィックスがリスト内のいずれかにマッチ (8.1)
+    /// - authors: イベントpubkeyプレフィックスがリスト内のいずれかにマッチ (8.2)
+    /// - kinds: イベントkindがリスト内のいずれかにマッチ (8.3)
+    /// - #<letter>: タグ値がリスト内のいずれかにマッチ (8.4)
     /// - since: created_at >= since (8.5)
     /// - until: created_at <= until (8.6)
     pub fn matches(event: &Event, filter: &Filter) -> bool {
         filter.match_event(event, MatchEventOptions::default())
     }
 
-    /// Check if an event matches any of multiple filters (Requirement 8.9)
+    /// イベントが複数のフィルターのいずれかにマッチするかチェック（要件 8.9）
     ///
-    /// Multiple filters are ORed together
+    /// 複数のフィルターはORで結合
     pub fn matches_any(event: &Event, filters: &[Filter]) -> bool {
         if filters.is_empty() {
-            // Empty filter list matches all events
+            // 空のフィルターリストはすべてのイベントにマッチ
             return true;
         }
 
         filters.iter().any(|filter| Self::matches(event, filter))
     }
 
-    /// Validate filter values (Requirement 8.11)
+    /// フィルター値のバリデーション（要件 8.11）
     ///
-    /// Validates that:
-    /// - ids values are 64-character lowercase hex strings
-    /// - authors values are 64-character lowercase hex strings
-    /// - #e tag values are 64-character lowercase hex strings
-    /// - #p tag values are 64-character lowercase hex strings
+    /// バリデーション内容:
+    /// - ids値が64文字の小文字16進数文字列
+    /// - authors値が64文字の小文字16進数文字列
+    /// - #eタグ値が64文字の小文字16進数文字列
+    /// - #pタグ値が64文字の小文字16進数文字列
     pub fn validate_filter(filter: &Filter) -> Result<(), FilterValidationError> {
-        // Validate ids (full 64-char hex or prefix)
+        // idsのバリデーション（完全な64文字16進数またはプレフィックス）
         if let Some(ids) = filter.ids.as_ref() {
             for id in ids.iter() {
                 let id_str = id.to_hex();
@@ -66,7 +66,7 @@ impl FilterEvaluator {
             }
         }
 
-        // Validate authors (full 64-char hex or prefix)
+        // authorsのバリデーション（完全な64文字16進数またはプレフィックス）
         if let Some(authors) = filter.authors.as_ref() {
             for author in authors.iter() {
                 let author_str = author.to_hex();
@@ -76,7 +76,7 @@ impl FilterEvaluator {
             }
         }
 
-        // Validate #e tag values
+        // #eタグ値のバリデーション
         if let Some(event_ids) = filter.generic_tags.get(&nostr::SingleLetterTag::lowercase(nostr::Alphabet::E)) {
             for event_id in event_ids.iter() {
                 let id_str = event_id.to_string();
@@ -89,7 +89,7 @@ impl FilterEvaluator {
             }
         }
 
-        // Validate #p tag values
+        // #pタグ値のバリデーション
         if let Some(pubkeys) = filter.generic_tags.get(&nostr::SingleLetterTag::lowercase(nostr::Alphabet::P)) {
             for pubkey in pubkeys.iter() {
                 let pk_str = pubkey.to_string();
@@ -105,7 +105,7 @@ impl FilterEvaluator {
         Ok(())
     }
 
-    /// Check if a string is valid lowercase hex
+    /// 文字列が有効な小文字16進数かチェック
     fn is_valid_hex(s: &str) -> bool {
         !s.is_empty() && s.chars().all(|c| c.is_ascii_hexdigit() && !c.is_uppercase())
     }
@@ -116,7 +116,7 @@ mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Timestamp};
 
-    // Helper to create a test event
+    // テストイベントを作成するヘルパー
     fn create_test_event(content: &str) -> Event {
         let keys = Keys::generate();
         EventBuilder::text_note(content)
@@ -139,25 +139,25 @@ mod tests {
             .expect("Failed to create event")
     }
 
-    // ==================== Single Filter Matching Tests (Req 8.1-8.6, 8.8) ====================
+    // ==================== 単一フィルターマッチングテスト (要件 8.1-8.6, 8.8) ====================
 
-    // Req 8.1: ids filter
+    // 要件 8.1: idsフィルター
     #[test]
     fn test_matches_ids_filter() {
         let event = create_test_event("hello");
         let event_id = event.id;
 
-        // Filter with matching id
+        // マッチするidを持つフィルター
         let filter = Filter::new().id(event_id);
         assert!(FilterEvaluator::matches(&event, &filter));
 
-        // Filter with non-matching id
+        // マッチしないidを持つフィルター
         let other_event = create_test_event("other");
         let filter_other = Filter::new().id(other_event.id);
         assert!(!FilterEvaluator::matches(&event, &filter_other));
     }
 
-    // Req 8.2: authors filter
+    // 要件 8.2: authorsフィルター
     #[test]
     fn test_matches_authors_filter() {
         let keys = Keys::generate();
@@ -165,26 +165,26 @@ mod tests {
             .sign_with_keys(&keys)
             .expect("Failed to create event");
 
-        // Filter with matching author
+        // マッチするauthorを持つフィルター
         let filter = Filter::new().author(keys.public_key());
         assert!(FilterEvaluator::matches(&event, &filter));
 
-        // Filter with non-matching author
+        // マッチしないauthorを持つフィルター
         let other_keys = Keys::generate();
         let filter_other = Filter::new().author(other_keys.public_key());
         assert!(!FilterEvaluator::matches(&event, &filter_other));
     }
 
-    // Req 8.3: kinds filter
+    // 要件 8.3: kindsフィルター
     #[test]
     fn test_matches_kinds_filter() {
         let event = create_test_event_with_kind(1);
 
-        // Filter with matching kind
+        // マッチするkindを持つフィルター
         let filter = Filter::new().kind(Kind::TextNote);
         assert!(FilterEvaluator::matches(&event, &filter));
 
-        // Filter with non-matching kind
+        // マッチしないkindを持つフィルター
         let filter_other = Filter::new().kind(Kind::Metadata);
         assert!(!FilterEvaluator::matches(&event, &filter_other));
     }
@@ -197,7 +197,7 @@ mod tests {
         assert!(FilterEvaluator::matches(&event, &filter));
     }
 
-    // Req 8.4: #<letter> tag filter
+    // 要件 8.4: #<letter>タグフィルター
     #[test]
     fn test_matches_e_tag_filter() {
         let event_id_hex = "a".repeat(64);
@@ -224,17 +224,17 @@ mod tests {
         assert!(FilterEvaluator::matches(&event, &filter));
     }
 
-    // Req 8.5: since filter
+    // 要件 8.5: sinceフィルター
     #[test]
     fn test_matches_since_filter() {
         let event = create_test_event("hello");
         let event_time = event.created_at;
 
-        // Filter with since before event time
+        // イベント時刻より前のsinceを持つフィルター
         let filter = Filter::new().since(Timestamp::from_secs(event_time.as_secs() - 100));
         assert!(FilterEvaluator::matches(&event, &filter));
 
-        // Filter with since after event time
+        // イベント時刻より後のsinceを持つフィルター
         let filter_future = Filter::new().since(Timestamp::from_secs(event_time.as_secs() + 100));
         assert!(!FilterEvaluator::matches(&event, &filter_future));
     }
@@ -244,22 +244,22 @@ mod tests {
         let event = create_test_event("hello");
         let event_time = event.created_at;
 
-        // since <= created_at should match
+        // since <= created_at はマッチするべき
         let filter = Filter::new().since(event_time);
         assert!(FilterEvaluator::matches(&event, &filter));
     }
 
-    // Req 8.6: until filter
+    // 要件 8.6: untilフィルター
     #[test]
     fn test_matches_until_filter() {
         let event = create_test_event("hello");
         let event_time = event.created_at;
 
-        // Filter with until after event time
+        // イベント時刻より後のuntilを持つフィルター
         let filter = Filter::new().until(Timestamp::from_secs(event_time.as_secs() + 100));
         assert!(FilterEvaluator::matches(&event, &filter));
 
-        // Filter with until before event time
+        // イベント時刻より前のuntilを持つフィルター
         let filter_past = Filter::new().until(Timestamp::from_secs(event_time.as_secs() - 100));
         assert!(!FilterEvaluator::matches(&event, &filter_past));
     }
@@ -269,12 +269,12 @@ mod tests {
         let event = create_test_event("hello");
         let event_time = event.created_at;
 
-        // created_at <= until should match
+        // created_at <= until はマッチするべき
         let filter = Filter::new().until(event_time);
         assert!(FilterEvaluator::matches(&event, &filter));
     }
 
-    // Req 8.8: Multiple conditions AND
+    // 要件 8.8: 複数条件のAND
     #[test]
     fn test_matches_multiple_conditions_and() {
         let keys = Keys::generate();
@@ -282,7 +282,7 @@ mod tests {
             .sign_with_keys(&keys)
             .expect("Failed to create event");
 
-        // Filter with multiple conditions
+        // 複数条件を持つフィルター
         let filter = Filter::new()
             .author(keys.public_key())
             .kind(Kind::TextNote);
@@ -297,22 +297,22 @@ mod tests {
             .sign_with_keys(&keys)
             .expect("Failed to create event");
 
-        // Filter with author match but kind mismatch
+        // authorはマッチするがkindはマッチしないフィルター
         let filter = Filter::new()
             .author(keys.public_key())
-            .kind(Kind::Metadata); // Wrong kind
+            .kind(Kind::Metadata); // 間違ったkind
 
         assert!(!FilterEvaluator::matches(&event, &filter));
     }
 
-    // ==================== Multiple Filter OR Tests (Req 8.9) ====================
+    // ==================== 複数フィルターORテスト (要件 8.9) ====================
 
     #[test]
     fn test_matches_any_empty_filters() {
         let event = create_test_event("hello");
         let filters: Vec<Filter> = vec![];
 
-        // Empty filters should match everything
+        // 空のフィルターはすべてにマッチするべき
         assert!(FilterEvaluator::matches_any(&event, &filters));
     }
 
@@ -321,8 +321,8 @@ mod tests {
         let event = create_test_event_with_kind(1);
 
         let filters = vec![
-            Filter::new().kind(Kind::TextNote),     // Matches
-            Filter::new().kind(Kind::Metadata),     // Doesn't match
+            Filter::new().kind(Kind::TextNote),     // マッチ
+            Filter::new().kind(Kind::Metadata),     // マッチしない
         ];
 
         assert!(FilterEvaluator::matches_any(&event, &filters));
@@ -333,8 +333,8 @@ mod tests {
         let event = create_test_event_with_kind(1);
 
         let filters = vec![
-            Filter::new().kind(Kind::Metadata),     // Doesn't match
-            Filter::new().kind(Kind::TextNote),     // Matches
+            Filter::new().kind(Kind::Metadata),     // マッチしない
+            Filter::new().kind(Kind::TextNote),     // マッチ
         ];
 
         assert!(FilterEvaluator::matches_any(&event, &filters));
@@ -352,7 +352,7 @@ mod tests {
         assert!(!FilterEvaluator::matches_any(&event, &filters));
     }
 
-    // ==================== Filter Validation Tests (Req 8.11) ====================
+    // ==================== フィルターバリデーションテスト (要件 8.11) ====================
 
     #[test]
     fn test_validate_filter_empty_filter() {
@@ -394,7 +394,7 @@ mod tests {
         assert!(FilterEvaluator::validate_filter(&filter).is_ok());
     }
 
-    // ==================== Error Display Tests ====================
+    // ==================== エラー表示テスト ====================
 
     #[test]
     fn test_filter_validation_error_display() {
