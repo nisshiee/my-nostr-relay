@@ -8,7 +8,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tracing::{debug, trace, warn};
 
-use crate::domain::{FilterEvaluator, FilterValidationError, RelayMessage};
+use crate::domain::{FilterEvaluator, FilterValidationError, RelayMessage, MAX_SUBID_LENGTH};
 use crate::infrastructure::{
     EventRepository, EventRepositoryError, SendError, SubscriptionRepository,
     SubscriptionRepositoryError, WebSocketSender,
@@ -328,7 +328,7 @@ where
     /// 1-64文字の非空文字列であることを確認
     fn validate_subscription_id(subscription_id: &str) -> Result<(), SubscriptionHandlerError> {
         let char_count = subscription_id.chars().count();
-        if char_count == 0 || char_count > 64 {
+        if char_count == 0 || char_count > MAX_SUBID_LENGTH as usize {
             return Err(SubscriptionHandlerError::InvalidSubscriptionId(
                 "subscription id must be 1-64 characters".to_string(),
             ));

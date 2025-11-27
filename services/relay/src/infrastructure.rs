@@ -3,6 +3,7 @@ pub mod config;
 pub mod connection_repository;
 pub mod event_repository;
 pub mod logging;
+pub mod relay_info_config;
 pub mod subscription_repository;
 pub mod websocket_sender;
 
@@ -20,3 +21,4 @@ pub use subscription_repository::{
     SubscriptionRepositoryError,
 };
 pub use websocket_sender::{ApiGatewayWebSocketSender, SendError, WebSocketSender};
+pub use relay_info_config::{RelayInfoConfig, is_valid_pubkey, parse_comma_separated};

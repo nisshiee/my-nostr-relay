@@ -1,8 +1,9 @@
 terraform {
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
+      source                = "hashicorp/aws"
+      version               = "~> 5.0"
+      configuration_aliases = [aws.us_east_1]
     }
   }
 }
@@ -52,13 +53,13 @@ data "archive_file" "connect" {
 }
 
 resource "aws_lambda_function" "connect" {
-  function_name = "nostr_relay_connect"
-  role          = aws_iam_role.lambda_exec.arn
-  handler       = "bootstrap"
-  runtime       = "provided.al2023"
-  filename      = data.archive_file.connect.output_path
+  function_name    = "nostr_relay_connect"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  filename         = data.archive_file.connect.output_path
   source_code_hash = data.archive_file.connect.output_base64sha256
-  timeout       = 10
+  timeout          = 10
 
   environment {
     variables = {
@@ -76,13 +77,13 @@ data "archive_file" "disconnect" {
 }
 
 resource "aws_lambda_function" "disconnect" {
-  function_name = "nostr_relay_disconnect"
-  role          = aws_iam_role.lambda_exec.arn
-  handler       = "bootstrap"
-  runtime       = "provided.al2023"
-  filename      = data.archive_file.disconnect.output_path
+  function_name    = "nostr_relay_disconnect"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  filename         = data.archive_file.disconnect.output_path
   source_code_hash = data.archive_file.disconnect.output_base64sha256
-  timeout       = 10
+  timeout          = 10
 
   environment {
     variables = {
@@ -100,20 +101,20 @@ data "archive_file" "default" {
 }
 
 resource "aws_lambda_function" "default" {
-  function_name = "nostr_relay_default"
-  role          = aws_iam_role.lambda_exec.arn
-  handler       = "bootstrap"
-  runtime       = "provided.al2023"
-  filename      = data.archive_file.default.output_path
+  function_name    = "nostr_relay_default"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  filename         = data.archive_file.default.output_path
   source_code_hash = data.archive_file.default.output_base64sha256
-  timeout       = 10
+  timeout          = 10
 
   environment {
     variables = {
-      EVENTS_TABLE          = aws_dynamodb_table.events.name
-      CONNECTIONS_TABLE     = aws_dynamodb_table.connections.name
-      SUBSCRIPTIONS_TABLE   = aws_dynamodb_table.subscriptions.name
-      API_GATEWAY_ENDPOINT  = "https://${aws_apigatewayv2_api.relay.id}.execute-api.ap-northeast-1.amazonaws.com/${aws_apigatewayv2_stage.default.name}"
+      EVENTS_TABLE         = aws_dynamodb_table.events.name
+      CONNECTIONS_TABLE    = aws_dynamodb_table.connections.name
+      SUBSCRIPTIONS_TABLE  = aws_dynamodb_table.subscriptions.name
+      API_GATEWAY_ENDPOINT = "https://${aws_apigatewayv2_api.relay.id}.execute-api.ap-northeast-1.amazonaws.com/${aws_apigatewayv2_stage.default.name}"
     }
   }
 }
@@ -150,14 +151,16 @@ resource "aws_apigatewayv2_api_mapping" "relay" {
   stage       = aws_apigatewayv2_stage.default.id
 }
 
+# Route53レコードはCloudFrontを指すように変更
+# API Gatewayカスタムドメインは内部用に残す
 resource "aws_route53_record" "relay" {
-  name    = aws_apigatewayv2_domain_name.relay.domain_name
+  name    = "relay.${var.domain_name}"
   type    = "A"
   zone_id = var.zone_id
 
   alias {
-    name                   = aws_apigatewayv2_domain_name.relay.domain_name_configuration[0].target_domain_name
-    zone_id                = aws_apigatewayv2_domain_name.relay.domain_name_configuration[0].hosted_zone_id
+    name                   = aws_cloudfront_distribution.relay.domain_name
+    zone_id                = aws_cloudfront_distribution.relay.hosted_zone_id
     evaluate_target_health = false
   }
 }
