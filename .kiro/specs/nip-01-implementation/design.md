@@ -105,6 +105,7 @@ graph TB
 | AWS SDK | aws-sdk-apigatewaymanagement 1.x | WebSocketメッセージ送信 | 新規追加 |
 | AWS SDK | aws-config 1.x | AWS認証設定 | 新規追加 |
 | Serialization | serde 1.x, serde_json 1.x | JSON処理 | 既存を拡張 |
+| Logging | tracing 0.1.x, tracing-subscriber 0.3.x | 構造化ログ出力 | 新規追加 |
 | Data / Storage | DynamoDB | イベント・接続・サブスクリプション永続化 | 新規テーブル作成 |
 | Infrastructure / Runtime | Lambda (provided.al2023) | サーバーレス実行環境 | 既存設定を継続 |
 
@@ -229,6 +230,7 @@ sequenceDiagram
 | 16.1-16.8 | DynamoDBイベントストレージ | DynamoEventRepository | Repository trait実装 | EVENT/REQ処理フロー |
 | 17.1-17.5 | DynamoDB接続管理 | DynamoConnectionRepository | Repository trait実装 | 接続・切断フロー |
 | 18.1-18.8 | DynamoDBサブスクリプション管理 | DynamoSubscriptionRepository | Repository trait実装 | REQ処理フロー |
+| 19.1-19.6 | 構造化ログ出力 | 全コンポーネント | tracing macros | 全フロー |
 
 ## Components and Interfaces
 
@@ -940,7 +942,11 @@ erDiagram
 
 ### Monitoring
 
-- CloudWatch Logsへの構造化ログ出力
+- **構造化ログ**: tracingクレートを使用したJSON形式の構造化ログ出力
+  - Lambda環境向けにtracing-subscriberを設定
+  - ログレベル: error, warn, info, debug, trace
+  - コンテキスト情報: connection_id, event_id, subscription_id
+- CloudWatch Logsへの出力
 - エラー率、レイテンシのメトリクス収集
 - DynamoDB容量使用率の監視
 

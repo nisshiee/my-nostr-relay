@@ -1,0 +1,712 @@
+/// EVENTメッセージハンドラー
+///
+/// NIP-01準拠のイベント処理を実行する
+/// 要件: 5.1, 5.2, 5.3, 5.4, 5.5, 9.1, 10.1, 10.2, 10.3, 11.1, 11.2, 12.1, 12.2, 12.3
+use nostr::Event;
+use serde_json::Value;
+
+use crate::domain::{EventKind, EventValidator, RelayMessage, ValidationError};
+use crate::infrastructure::{
+    EventRepository, EventRepositoryError, SaveResult, SendError, SubscriptionRepository,
+    SubscriptionRepositoryError, WebSocketSender,
+};
+
+/// イベントハンドラーのエラー型
+#[derive(Debug, Clone)]
+pub enum EventHandlerError {
+    /// イベント検証エラー
+    ValidationError(ValidationError),
+    /// リポジトリエラー
+    RepositoryError(String),
+    /// WebSocket送信エラー
+    SendError(String),
+}
+
+impl From<ValidationError> for EventHandlerError {
+    fn from(err: ValidationError) -> Self {
+        EventHandlerError::ValidationError(err)
+    }
+}
+
+impl From<EventRepositoryError> for EventHandlerError {
+    fn from(err: EventRepositoryError) -> Self {
+        EventHandlerError::RepositoryError(err.to_string())
+    }
+}
+
+impl From<SubscriptionRepositoryError> for EventHandlerError {
+    fn from(err: SubscriptionRepositoryError) -> Self {
+        EventHandlerError::RepositoryError(err.to_string())
+    }
+}
+
+impl From<SendError> for EventHandlerError {
+    fn from(err: SendError) -> Self {
+        EventHandlerError::SendError(err.to_string())
+    }
+}
+
+/// EVENTメッセージを処理するハンドラー
+///
+/// イベントの検証、Kind別処理、保存、購読者への配信を行う
+pub struct EventHandler<ER, SR, WS>
+where
+    ER: EventRepository,
+    SR: SubscriptionRepository,
+    WS: WebSocketSender,
+{
+    /// イベントリポジトリ
+    event_repo: ER,
+    /// サブスクリプションリポジトリ
+    subscription_repo: SR,
+    /// WebSocket送信
+    ws_sender: WS,
+}
+
+impl<ER, SR, WS> EventHandler<ER, SR, WS>
+where
+    ER: EventRepository,
+    SR: SubscriptionRepository,
+    WS: WebSocketSender,
+{
+    /// 新しいEventHandlerを作成
+    pub fn new(event_repo: ER, subscription_repo: SR, ws_sender: WS) -> Self {
+        Self {
+            event_repo,
+            subscription_repo,
+            ws_sender,
+        }
+    }
+
+    /// EVENTメッセージを処理
+    ///
+    /// # 処理フロー
+    /// 1. イベントJSONの検証（構造、ID、署名）
+    /// 2. Kind別処理（Regular, Replaceable, Ephemeral, Addressable）
+    /// 3. 非Ephemeralイベントはリポジトリに保存
+    /// 4. マッチする購読者にイベントを配信
+    /// 5. OK応答を返却
+    ///
+    /// # 引数
+    /// * `event_json` - パースされたイベントJSON
+    /// * `connection_id` - 送信元のAPI Gateway接続ID
+    ///
+    /// # 戻り値
+    /// OKメッセージ（成功/失敗）
+    pub async fn handle(&self, event_json: Value, _connection_id: &str) -> RelayMessage {
+        // イベントIDを取得（検証前でもエラーメッセージに使用）
+        let event_id = event_json
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // イベント検証（要件 2.1-2.8, 3.1-3.5, 4.1-4.2）
+        let event = match EventValidator::validate_all(&event_json) {
+            Ok(event) => event,
+            Err(err) => {
+                return self.create_validation_error_response(&event_id, err);
+            }
+        };
+
+        // Kind分類（要件 9.1, 10.1, 11.1, 12.1）
+        let kind = EventKind::classify(event.kind.as_u16());
+
+        // Kind別処理
+        let save_result = match kind {
+            EventKind::Ephemeral => {
+                // Ephemeralイベントは保存せずに購読者への配信のみ（要件 11.1, 11.2）
+                self.broadcast_to_subscribers(&event).await;
+                return RelayMessage::ok_success(&event_id);
+            }
+            _ => {
+                // Regular, Replaceable, Addressableイベントは保存（要件 5.2, 9.1, 10.2, 12.2）
+                match self.event_repo.save(&event).await {
+                    Ok(result) => result,
+                    Err(_) => {
+                        // 保存失敗時のエラー応答（要件 16.8）
+                        return RelayMessage::ok_storage_error(&event_id);
+                    }
+                }
+            }
+        };
+
+        // 保存結果に基づく応答生成
+        match save_result {
+            SaveResult::Saved | SaveResult::Replaced => {
+                // 新規/置換保存時は購読者に配信（要件 6.5）
+                self.broadcast_to_subscribers(&event).await;
+                RelayMessage::ok_success(&event_id)
+            }
+            SaveResult::Duplicate => {
+                // 重複イベント（要件 5.4）
+                RelayMessage::ok_duplicate(&event_id)
+            }
+        }
+    }
+
+    /// 検証エラーに基づくOKエラー応答を生成
+    fn create_validation_error_response(&self, event_id: &str, err: ValidationError) -> RelayMessage {
+        match err {
+            ValidationError::IdMismatch => RelayMessage::ok_invalid_id(event_id),
+            ValidationError::SignatureVerificationFailed => RelayMessage::ok_invalid_signature(event_id),
+            _ => RelayMessage::ok_error(
+                event_id,
+                crate::domain::relay_message::error_prefix::INVALID,
+                &err.to_string(),
+            ),
+        }
+    }
+
+    /// マッチする購読者にイベントを配信
+    async fn broadcast_to_subscribers(&self, event: &Event) {
+        // マッチするサブスクリプションを検索（要件 18.6）
+        let matched = match self.subscription_repo.find_matching(event).await {
+            Ok(matched) => matched,
+            Err(_) => {
+                // エラー時はブロードキャストをスキップ
+                return;
+            }
+        };
+
+        if matched.is_empty() {
+            return;
+        }
+
+        // EVENTメッセージを作成
+        for subscription in matched {
+            let event_message = RelayMessage::Event {
+                subscription_id: subscription.subscription_id.clone(),
+                event: event.clone(),
+            };
+            let message_json = event_message.to_json();
+
+            // 送信（エラーは無視 - 接続切れ等は後続処理で対応）
+            let _ = self
+                .ws_sender
+                .send(&subscription.connection_id, &message_json)
+                .await;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::infrastructure::event_repository::tests::MockEventRepository;
+    use crate::infrastructure::subscription_repository::tests::MockSubscriptionRepository;
+    use crate::infrastructure::websocket_sender::tests::MockWebSocketSender;
+    use nostr::{EventBuilder, Keys, Kind};
+    use serde_json::json;
+
+    // ==================== テストヘルパー ====================
+
+    /// テスト用のEventHandlerを作成
+    fn create_test_handler() -> (
+        EventHandler<MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>,
+        MockEventRepository,
+        MockSubscriptionRepository,
+        MockWebSocketSender,
+    ) {
+        let event_repo = MockEventRepository::new();
+        let subscription_repo = MockSubscriptionRepository::new();
+        let ws_sender = MockWebSocketSender::new();
+
+        let handler = EventHandler::new(
+            event_repo.clone(),
+            subscription_repo.clone(),
+            ws_sender.clone(),
+        );
+
+        (handler, event_repo, subscription_repo, ws_sender)
+    }
+
+    /// 有効なテストイベントを作成
+    fn create_valid_event() -> (Event, Value) {
+        let keys = Keys::generate();
+        let event = EventBuilder::text_note("test content")
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        let event_json = serde_json::to_value(&event).expect("Failed to serialize event");
+        (event, event_json)
+    }
+
+    /// 特定のKindでテストイベントを作成
+    fn create_event_with_kind(kind: u16) -> (Event, Value) {
+        let keys = Keys::generate();
+        let event = EventBuilder::new(Kind::from(kind), "test content")
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        let event_json = serde_json::to_value(&event).expect("Failed to serialize event");
+        (event, event_json)
+    }
+
+    /// Addressableイベントを作成
+    fn create_addressable_event(d_tag: &str) -> (Event, Value) {
+        let keys = Keys::generate();
+        let tag = nostr::Tag::parse(["d", d_tag]).expect("Failed to parse tag");
+        let event = EventBuilder::new(Kind::from(30000), "test content")
+            .tags(vec![tag])
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        let event_json = serde_json::to_value(&event).expect("Failed to serialize event");
+        (event, event_json)
+    }
+
+    // ==================== 5.1 EVENTメッセージ処理テスト ====================
+
+    /// 要件 5.1: 有効なイベントの検証と保存
+    #[tokio::test]
+    async fn test_handle_valid_event() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let (event, event_json) = create_valid_event();
+        let event_id = event.id.to_hex();
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        // OK成功応答を確認
+        match response {
+            RelayMessage::Ok {
+                event_id: resp_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(resp_id, event_id);
+                assert!(accepted);
+                assert!(message.is_empty());
+            }
+            _ => panic!("Expected Ok message"),
+        }
+
+        // イベントが保存されたことを確認
+        assert_eq!(event_repo.event_count(), 1);
+    }
+
+    /// 要件 5.2: すべての検証に成功した場合にイベントを保存
+    #[tokio::test]
+    async fn test_handle_saves_event_after_validation() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let (event, event_json) = create_valid_event();
+        let event_id = event.id.to_hex();
+
+        handler.handle(event_json, "conn-123").await;
+
+        // イベントがリポジトリに保存されたことを確認
+        let saved = event_repo.get_event_sync(&event_id);
+        assert!(saved.is_some());
+        assert_eq!(saved.unwrap().id.to_hex(), event_id);
+    }
+
+    /// 要件 5.3: 保存成功時のOK成功応答
+    #[tokio::test]
+    async fn test_handle_returns_ok_success_on_save() {
+        let (handler, _, _, _) = create_test_handler();
+        let (event, event_json) = create_valid_event();
+        let event_id = event.id.to_hex();
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                event_id: resp_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(resp_id, event_id);
+                assert!(accepted);
+                assert!(message.is_empty());
+            }
+            _ => panic!("Expected Ok success message"),
+        }
+    }
+
+    /// 要件 5.4: 重複イベント時のOK重複応答
+    #[tokio::test]
+    async fn test_handle_returns_ok_duplicate_on_existing_event() {
+        let (handler, _, _, _) = create_test_handler();
+        let (event, event_json) = create_valid_event();
+        let event_id = event.id.to_hex();
+
+        // 最初の保存
+        handler.handle(event_json.clone(), "conn-123").await;
+
+        // 同じイベントを再度保存
+        let response = handler.handle(event_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                event_id: resp_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(resp_id, event_id);
+                assert!(accepted); // 重複でもacceptedはtrue
+                assert!(message.contains("duplicate:"));
+            }
+            _ => panic!("Expected Ok duplicate message"),
+        }
+    }
+
+    /// 要件 5.5: 検証失敗時のOKエラー応答
+    #[tokio::test]
+    async fn test_handle_returns_ok_error_on_validation_failure() {
+        let (handler, _, _, _) = create_test_handler();
+
+        // 無効なイベントJSON（idが短い）
+        let invalid_event = json!({
+            "id": "invalid",
+            "pubkey": "a".repeat(64),
+            "created_at": 1234567890,
+            "kind": 1,
+            "tags": [],
+            "content": "hello",
+            "sig": "b".repeat(128)
+        });
+
+        let response = handler.handle(invalid_event, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                accepted, message, ..
+            } => {
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+            }
+            _ => panic!("Expected Ok error message"),
+        }
+    }
+
+    // ==================== 構造検証エラーテスト (要件 2.1-2.8) ====================
+
+    /// 必須フィールド欠落時のエラー応答
+    #[tokio::test]
+    async fn test_handle_missing_required_field() {
+        let (handler, _, _, _) = create_test_handler();
+
+        let invalid_event = json!({
+            "pubkey": "a".repeat(64),
+            "created_at": 1234567890,
+            "kind": 1,
+            "tags": [],
+            "content": "hello",
+            "sig": "b".repeat(128)
+            // "id" is missing
+        });
+
+        let response = handler.handle(invalid_event, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                accepted, message, ..
+            } => {
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+            }
+            _ => panic!("Expected Ok error message"),
+        }
+    }
+
+    // ==================== ID検証エラーテスト (要件 3.5) ====================
+
+    /// 要件 3.5: イベントIDの検証失敗時の応答
+    #[tokio::test]
+    async fn test_handle_id_mismatch_error() {
+        let (handler, _, _, _) = create_test_handler();
+
+        // 有効なイベントを作成してIDを改ざん
+        let keys = Keys::generate();
+        let event = EventBuilder::text_note("test content")
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        let mut event_json = serde_json::to_value(&event).expect("Failed to serialize event");
+
+        // IDを改ざん（有効な16進数形式だがハッシュ不一致）
+        let tampered_id = "0".repeat(64);
+        event_json["id"] = json!(tampered_id);
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                event_id: resp_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(resp_id, tampered_id);
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+                assert!(message.contains("event id does not match"));
+            }
+            _ => panic!("Expected Ok error message with id mismatch"),
+        }
+    }
+
+    // ==================== 署名検証エラーテスト (要件 4.2) ====================
+
+    /// 要件 4.2: 署名検証失敗時の応答
+    #[tokio::test]
+    async fn test_handle_signature_verification_failed() {
+        let (handler, _, _, _) = create_test_handler();
+
+        // 有効なイベントを作成して署名を改ざん
+        let keys = Keys::generate();
+        let event = EventBuilder::text_note("test content")
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        let mut event_json = serde_json::to_value(&event).expect("Failed to serialize event");
+
+        let event_id = event.id.to_hex();
+        // 署名を改ざん（有効な16進数形式だが検証不一致）
+        let tampered_sig = "a".repeat(128);
+        event_json["sig"] = json!(tampered_sig);
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                event_id: resp_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(resp_id, event_id);
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+                assert!(message.contains("signature verification failed"));
+            }
+            _ => panic!("Expected Ok error message with signature verification failed"),
+        }
+    }
+
+    // ==================== Kind別処理テスト ====================
+
+    /// 要件 9.1: Regularイベント（kind=1）の保存
+    #[tokio::test]
+    async fn test_handle_regular_event_kind_1() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let (_, event_json) = create_event_with_kind(1);
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        // 成功応答を確認
+        match response {
+            RelayMessage::Ok { accepted, .. } => assert!(accepted),
+            _ => panic!("Expected Ok message"),
+        }
+
+        // イベントが保存されたことを確認
+        assert_eq!(event_repo.event_count(), 1);
+    }
+
+    /// 要件 10.1: Replaceableイベント（kind=0）の処理
+    #[tokio::test]
+    async fn test_handle_replaceable_event_kind_0() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let (_, event_json) = create_event_with_kind(0);
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => assert!(accepted),
+            _ => panic!("Expected Ok message"),
+        }
+
+        assert_eq!(event_repo.event_count(), 1);
+    }
+
+    /// 要件 11.1, 11.2: Ephemeralイベント（kind=20000）は保存しない
+    #[tokio::test]
+    async fn test_handle_ephemeral_event_not_stored() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let (_, event_json) = create_event_with_kind(20000);
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        // 成功応答を確認
+        match response {
+            RelayMessage::Ok { accepted, .. } => assert!(accepted),
+            _ => panic!("Expected Ok message"),
+        }
+
+        // イベントは保存されない
+        assert_eq!(event_repo.event_count(), 0);
+    }
+
+    /// 要件 12.1: Addressableイベント（kind=30000）の処理
+    #[tokio::test]
+    async fn test_handle_addressable_event_kind_30000() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let (_, event_json) = create_addressable_event("test-identifier");
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => assert!(accepted),
+            _ => panic!("Expected Ok message"),
+        }
+
+        assert_eq!(event_repo.event_count(), 1);
+    }
+
+    // ==================== 購読者への配信テスト ====================
+
+    /// 要件 6.5: 新しいイベント受信時に購読者へ配信
+    #[tokio::test]
+    async fn test_handle_broadcasts_to_matching_subscribers() {
+        let (handler, _, subscription_repo, ws_sender) = create_test_handler();
+
+        // kind=1のフィルターを持つサブスクリプションを作成
+        let filter = nostr::Filter::new().kind(Kind::TextNote);
+        subscription_repo
+            .upsert("conn-subscriber", "sub-1", &[filter])
+            .await
+            .unwrap();
+
+        // kind=1のイベントを処理
+        let (_, event_json) = create_valid_event();
+        handler.handle(event_json, "conn-sender").await;
+
+        // 購読者にメッセージが送信されたことを確認
+        let messages = ws_sender.get_sent_messages("conn-subscriber");
+        assert_eq!(messages.len(), 1);
+
+        // EVENTメッセージ形式を確認
+        let sent: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(sent[0], "EVENT");
+        assert_eq!(sent[1], "sub-1");
+    }
+
+    /// Ephemeralイベントも購読者に配信される
+    #[tokio::test]
+    async fn test_handle_broadcasts_ephemeral_event() {
+        let (handler, event_repo, subscription_repo, ws_sender) = create_test_handler();
+
+        // kind=20000のフィルターを持つサブスクリプションを作成
+        let filter = nostr::Filter::new().kind(Kind::from(20000));
+        subscription_repo
+            .upsert("conn-subscriber", "sub-1", &[filter])
+            .await
+            .unwrap();
+
+        // Ephemeralイベントを処理
+        let (_, event_json) = create_event_with_kind(20000);
+        handler.handle(event_json, "conn-sender").await;
+
+        // 購読者にメッセージが送信されたことを確認
+        let messages = ws_sender.get_sent_messages("conn-subscriber");
+        assert_eq!(messages.len(), 1);
+
+        // イベントは保存されない
+        assert_eq!(event_repo.event_count(), 0);
+    }
+
+    /// マッチする購読者がいない場合は配信しない
+    #[tokio::test]
+    async fn test_handle_no_broadcast_without_matching_subscribers() {
+        let (handler, _, subscription_repo, ws_sender) = create_test_handler();
+
+        // kind=0のフィルターを持つサブスクリプションを作成
+        let filter = nostr::Filter::new().kind(Kind::Metadata);
+        subscription_repo
+            .upsert("conn-subscriber", "sub-1", &[filter])
+            .await
+            .unwrap();
+
+        // kind=1のイベントを処理（マッチしない）
+        let (_, event_json) = create_valid_event();
+        handler.handle(event_json, "conn-sender").await;
+
+        // 購読者にメッセージは送信されない
+        let messages = ws_sender.get_sent_messages("conn-subscriber");
+        assert!(messages.is_empty());
+    }
+
+    /// 複数の購読者に配信
+    #[tokio::test]
+    async fn test_handle_broadcasts_to_multiple_subscribers() {
+        let (handler, _, subscription_repo, ws_sender) = create_test_handler();
+
+        // 複数のサブスクリプションを作成
+        let filter1 = nostr::Filter::new().kind(Kind::TextNote);
+        let filter2 = nostr::Filter::new().kind(Kind::TextNote);
+        subscription_repo
+            .upsert("conn-1", "sub-1", &[filter1])
+            .await
+            .unwrap();
+        subscription_repo
+            .upsert("conn-2", "sub-2", &[filter2])
+            .await
+            .unwrap();
+
+        // kind=1のイベントを処理
+        let (_, event_json) = create_valid_event();
+        handler.handle(event_json, "conn-sender").await;
+
+        // 両方の購読者にメッセージが送信されたことを確認
+        assert_eq!(ws_sender.get_sent_messages("conn-1").len(), 1);
+        assert_eq!(ws_sender.get_sent_messages("conn-2").len(), 1);
+    }
+
+    // ==================== ストレージエラーテスト (要件 16.8) ====================
+
+    /// 要件 16.8: DynamoDB書き込み失敗時のエラー応答
+    #[tokio::test]
+    async fn test_handle_storage_error() {
+        let (handler, event_repo, _, _) = create_test_handler();
+
+        // リポジトリにエラーを設定
+        event_repo.set_next_error(EventRepositoryError::WriteError(
+            "DynamoDB unavailable".to_string(),
+        ));
+
+        let (event, event_json) = create_valid_event();
+        let event_id = event.id.to_hex();
+
+        let response = handler.handle(event_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                event_id: resp_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(resp_id, event_id);
+                assert!(!accepted);
+                assert!(message.contains("error:"));
+                assert!(message.contains("failed to store event"));
+            }
+            _ => panic!("Expected Ok error message with storage error"),
+        }
+    }
+
+    // ==================== エラー型テスト ====================
+
+    #[test]
+    fn test_event_handler_error_from_validation_error() {
+        let err = ValidationError::InvalidIdFormat;
+        let handler_err: EventHandlerError = err.clone().into();
+        match handler_err {
+            EventHandlerError::ValidationError(e) => assert_eq!(e, err),
+            _ => panic!("Expected ValidationError"),
+        }
+    }
+
+    #[test]
+    fn test_event_handler_error_from_repository_error() {
+        let err = EventRepositoryError::WriteError("test".to_string());
+        let handler_err: EventHandlerError = err.into();
+        match handler_err {
+            EventHandlerError::RepositoryError(msg) => assert!(msg.contains("Write error")),
+            _ => panic!("Expected RepositoryError"),
+        }
+    }
+
+    #[test]
+    fn test_event_handler_error_from_send_error() {
+        let err = SendError::ConnectionGone;
+        let handler_err: EventHandlerError = err.into();
+        match handler_err {
+            EventHandlerError::SendError(msg) => assert!(msg.contains("Connection is gone")),
+            _ => panic!("Expected SendError"),
+        }
+    }
+}

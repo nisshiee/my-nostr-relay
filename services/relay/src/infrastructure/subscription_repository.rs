@@ -413,7 +413,7 @@ impl SubscriptionRepository for DynamoSubscriptionRepository {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind};
     use std::collections::HashMap;

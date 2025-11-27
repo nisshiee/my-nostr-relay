@@ -140,7 +140,7 @@
   - 不明なメッセージタイプへのエラー応答
   - _Requirements: 5.1, 6.1, 6.6, 6.7, 7.1, 15.1, 15.2, 15.3_
 
-- [ ] 4.2 イベントハンドラー実装
+- [x] 4.2 イベントハンドラー実装
   - EVENTメッセージを受信してイベント検証を実行
   - Kind分類を行いイベント種別を判定
   - Regularイベント：検証後にリポジトリへ保存
@@ -216,9 +216,34 @@
   - subscription_id検証テスト
   - _Requirements: 5.1, 6.1, 6.6, 6.7, 7.1, 15.1, 15.2, 15.3_
 
-## Task 7: Integration Tests
+## Task 7: ログ基盤実装
 
-- [ ] 7.1 リポジトリ統合テスト
+- [ ] 7.1 tracingクレート導入
+  - Cargo.tomlにtracing, tracing-subscriberを追加
+  - Lambda環境向けのサブスクライバー設定を実装
+  - JSON形式での構造化ログ出力を設定
+  - _Requirements: 19.1_
+
+- [ ] 7.2 イベントハンドラーへのログ追加
+  - サブスクリプション検索エラー時のwarnログを追加
+  - WebSocket送信エラー時のwarnログを追加
+  - イベント処理の主要ポイントにdebug/traceログを追加
+  - _Requirements: 19.2, 19.3, 19.4, 19.5, 19.6_
+
+- [ ] 7.3 サブスクリプションハンドラーへのログ追加
+  - REQ/CLOSE処理のdebugログを追加
+  - エラー発生時のwarn/errorログを追加
+  - _Requirements: 19.2, 19.5, 19.6_
+
+- [ ] 7.4 Lambda Handlerへのログ追加
+  - 接続/切断イベントのinfoログを追加
+  - メッセージ処理のdebugログを追加
+  - エラー発生時のerrorログを追加
+  - _Requirements: 19.2, 19.5, 19.6_
+
+## Task 8: Integration Tests
+
+- [ ] 8.1 リポジトリ統合テスト
   - EventRepository: イベント保存・取得・重複検出
   - EventRepository: Replaceable/Addressableイベントの条件付き書き込み
   - EventRepository: 各種GSIを使用したクエリ
@@ -228,7 +253,7 @@
   - DynamoDB Local または AWS実環境での動作確認
   - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.8, 17.1, 17.2, 17.3, 17.4, 17.5, 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8_
 
-- [ ] 7.2 ハンドラー統合テスト
+- [ ] 8.2 ハンドラー統合テスト
   - イベントハンドラー: 各Kind別イベントの処理フロー
   - イベントハンドラー: 購読者へのイベント配信
   - サブスクリプションハンドラー: REQ→EVENT→EOSEフロー
@@ -236,9 +261,9 @@
   - モックリポジトリを使用した単体での動作確認
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 6.1, 6.2, 6.3, 6.4, 6.5, 7.1, 7.2, 9.1, 10.1, 10.2, 10.3, 10.4, 11.1, 11.2, 12.1, 12.2, 12.3_
 
-## Task 8: End-to-End Tests
+## Task 9: End-to-End Tests
 
-- [ ] 8.1 WebSocket E2Eテスト
+- [ ] 9.1 WebSocket E2Eテスト
   - WebSocket接続確立の動作確認
   - EVENT送信→OK応答の受信確認
   - REQ送信→EVENT→EOSE応答の受信確認

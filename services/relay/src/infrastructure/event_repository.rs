@@ -608,7 +608,7 @@ impl EventRepository for DynamoEventRepository {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use nostr::{EventBuilder, Keys, Kind, Timestamp};
     use std::collections::HashMap;
@@ -870,10 +870,10 @@ mod tests {
                             if event.created_at < existing.created_at {
                                 return Ok(SaveResult::Duplicate);
                             }
-                            if event.created_at == existing.created_at {
-                                if event.id.to_hex() >= existing.id.to_hex() {
-                                    return Ok(SaveResult::Duplicate);
-                                }
+                            if event.created_at == existing.created_at
+                                && event.id.to_hex() >= existing.id.to_hex()
+                            {
+                                return Ok(SaveResult::Duplicate);
                             }
                             // 既存を削除
                             events.remove(&existing_id);
@@ -899,10 +899,10 @@ mod tests {
                             if event.created_at < existing.created_at {
                                 return Ok(SaveResult::Duplicate);
                             }
-                            if event.created_at == existing.created_at {
-                                if event.id.to_hex() >= existing.id.to_hex() {
-                                    return Ok(SaveResult::Duplicate);
-                                }
+                            if event.created_at == existing.created_at
+                                && event.id.to_hex() >= existing.id.to_hex()
+                            {
+                                return Ok(SaveResult::Duplicate);
                             }
                             // 既存を削除
                             events.remove(&existing_id);

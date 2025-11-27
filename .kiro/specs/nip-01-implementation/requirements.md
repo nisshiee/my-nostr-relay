@@ -257,3 +257,18 @@ NIP-01はNostrの基本プロトコルを定義する必須仕様である。本
 6. When 新しいイベントを受信した場合, the Relay shall DynamoDBからフィルター条件に合致するサブスクリプションを検索する
 7. When イベントを購読者に配信する場合, the Relay shall サブスクリプションに紐づく接続IDを使用してメッセージを送信する
 8. If DynamoDBサブスクリプション操作に失敗した場合, the Relay shall `["CLOSED", <subscription_id>, "error: failed to manage subscription"]` を返す
+
+---
+
+### Requirement 19: 構造化ログ出力
+
+**Objective:** As a Relay運用者, I want 統一された構造化ログを出力したい, so that 運用時のデバッグとモニタリングが容易になる
+
+#### Acceptance Criteria
+
+1. The Relay shall tracingクレートを使用して構造化ログを出力する
+2. When イベント処理中にエラーが発生した場合, the Relay shall エラー内容をログに記録する
+3. When サブスクリプション検索でエラーが発生した場合, the Relay shall エラー内容をログに記録する
+4. When WebSocket送信でエラーが発生した場合, the Relay shall エラー内容をログに記録する
+5. The Relay shall ログに接続ID、イベントID、サブスクリプションIDなどのコンテキスト情報を含める
+6. The Relay shall ログレベル（error, warn, info, debug, trace）を適切に使い分ける

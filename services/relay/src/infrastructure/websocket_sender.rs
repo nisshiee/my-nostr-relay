@@ -150,7 +150,7 @@ impl WebSocketSender for ApiGatewayWebSocketSender {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
