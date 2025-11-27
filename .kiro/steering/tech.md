@@ -37,9 +37,12 @@ Client <--WebSocket--> API Gateway v2 <---> Lambda (Rust) <---> DynamoDB
 - `nostr` - Nostrプロトコル型定義・署名検証・フィルター評価
 - `aws-sdk-dynamodb` - DynamoDB操作
 - `aws-sdk-apigatewaymanagement` - WebSocketメッセージ送信
+- `aws-config` - AWS SDK認証・設定
 - `tokio` - 非同期ランタイム
 - `serde_json` - JSON処理
 - `thiserror` - エラー型定義
+- `tracing` / `tracing-subscriber` - 構造化ログ
+- `async-trait` - 非同期トレイトサポート
 
 ### TypeScript (Web)
 - `next` - SSR/SSGフレームワーク
@@ -93,8 +96,9 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 | Serverless WebSocket | API Gateway v2でWebSocket接続管理、スケーラブル |
 | DynamoDB | サーバーレス、従量課金、GSIによる柔軟なクエリパターン |
 | nostr crate活用 | プロトコル型定義・署名検証の再実装を回避、エコシステム準拠 |
-| Layered Architecture | Domain/Infrastructure分離でテスト容易性・保守性向上 |
+| 3-Layer Architecture | Domain/Application/Infrastructure分離でテスト容易性・責務明確化 |
 | Modular Terraform | domain/api/webで責務分離、再利用性向上 |
+| 構造化ログ (tracing) | Lambda環境での可観測性向上、JSON形式ログ出力 |
 | Vercel for Frontend | Next.js最適化ホスティング、GitHubとの連携 |
 | Edition 2024 | 最新のRust機能を活用 |
 

@@ -97,6 +97,8 @@ src/
   lib.rs              # エントリポイント、モジュール公開
   domain.rs           # ドメイン層モジュール定義
   domain/             # ビジネスロジック（プロトコル依存なし）
+  application.rs      # アプリケーション層モジュール定義
+  application/        # ユースケース・ハンドラー
   infrastructure.rs   # インフラ層モジュール定義
   infrastructure/     # 外部システム連携（AWS SDK等）
   bin/                # Lambda関数エントリポイント
@@ -106,9 +108,15 @@ src/
 - イベント検証、フィルター評価、メッセージ型定義
 - 外部依存を持たない純粋なビジネスルール
 
+**Application層**: ユースケースとハンドラー
+- 接続・切断・メッセージ処理のハンドラー
+- Nostrプロトコルメッセージのパースとルーティング
+- Domain層とInfrastructure層を組み合わせたビジネスフロー
+
 **Infrastructure層**: 外部システムとの連携
-- DynamoDB接続設定、WebSocket送信機能
-- AWS SDKを使用した具体的な実装
+- DynamoDB接続設定・Repository実装
+- WebSocket送信機能（API Gateway Management API）
+- 構造化ログ初期化（tracing）
 
 ### Terraform モジュールパターン
 - 各モジュールは単一責務（domain, api, web）
