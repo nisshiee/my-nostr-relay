@@ -2,10 +2,15 @@
 //
 // 設定コンポーネントからリレー情報を取得し、
 // NIP-11仕様に準拠したJSONレスポンスを構築する。
-// 要件: 1.1, 1.3, 2.1-2.9, 4.1-4.3, 7.1, 7.2
+// 要件: 1.1, 1.3, 2.1-2.9, 3.1-3.3, 4.1-4.3, 7.1, 7.2
 
 use crate::domain::RelayInfoDocument;
 use crate::infrastructure::RelayInfoConfig;
+use lambda_http::http::header::{
+    HeaderMap, HeaderValue, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
+    ACCESS_CONTROL_ALLOW_ORIGIN, CONTENT_TYPE,
+};
+use lambda_http::{Body, Response};
 
 /// NIP-11レスポンス生成ハンドラー
 ///
@@ -53,12 +58,75 @@ impl Nip11Handler {
         let doc = self.build_relay_info();
         serde_json::to_string(&doc).expect("RelayInfoDocumentのシリアライズに失敗")
     }
+
+    /// GETリクエストを処理してレスポンスを生成
+    ///
+    /// NIP-11仕様に準拠したJSONレスポンスとCORSヘッダーを含む
+    /// HTTPレスポンスを返す。
+    ///
+    /// # Returns
+    /// CORSヘッダー付きのHTTP 200レスポンス
+    pub fn handle(&self) -> Response<Body> {
+        let json = self.build_relay_info_json();
+        let headers = Self::build_cors_headers();
+
+        let mut response = Response::builder()
+            .status(200)
+            .body(Body::Text(json))
+            .expect("レスポンスの構築に失敗");
+
+        // ヘッダーを設定
+        *response.headers_mut() = headers;
+
+        response
+    }
+
+    /// CORSヘッダーを生成
+    ///
+    /// NIP-11レスポンスに必要なCORSヘッダーを含むHeaderMapを返す:
+    /// - Content-Type: application/nostr+json
+    /// - Access-Control-Allow-Origin: *
+    /// - Access-Control-Allow-Headers: Accept
+    /// - Access-Control-Allow-Methods: GET, OPTIONS
+    ///
+    /// # Returns
+    /// CORSヘッダーを含むHeaderMap
+    pub fn build_cors_headers() -> HeaderMap {
+        let mut headers = HeaderMap::new();
+
+        // Content-Type: application/nostr+json
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/nostr+json"),
+        );
+
+        // Access-Control-Allow-Origin: *
+        headers.insert(
+            ACCESS_CONTROL_ALLOW_ORIGIN,
+            HeaderValue::from_static("*"),
+        );
+
+        // Access-Control-Allow-Headers: Accept
+        headers.insert(
+            ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("Accept"),
+        );
+
+        // Access-Control-Allow-Methods: GET, OPTIONS
+        headers.insert(
+            ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET, OPTIONS"),
+        );
+
+        headers
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::domain::{SOFTWARE_URL, SUPPORTED_NIPS};
+    use lambda_http::Body;
 
     // ===========================================
     // Task 3.1: NIP-11レスポンス生成ハンドラーのテスト
@@ -300,5 +368,141 @@ mod tests {
         assert!(!doc.supported_nips.is_empty());
         assert!(!doc.software.is_empty());
         assert!(!doc.version.is_empty());
+    }
+
+    // ===========================================
+    // Task 3.2: CORSヘッダー付きHTTPレスポンスのテスト
+    // ===========================================
+
+    /// handleメソッドがHTTP 200ステータスを返す
+    #[test]
+    fn test_handle_returns_200_status() {
+        let config = RelayInfoConfig::new(
+            Some("Test Relay".to_string()),
+            None, None, None, None, None, vec![], vec![],
+        );
+        let handler = Nip11Handler::new(config);
+
+        let response = handler.handle();
+
+        assert_eq!(response.status(), 200);
+    }
+
+    /// handleメソッドがContent-Type: application/nostr+jsonを返す
+    #[test]
+    fn test_handle_returns_content_type_nostr_json() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![],
+        );
+        let handler = Nip11Handler::new(config);
+
+        let response = handler.handle();
+
+        let content_type = response.headers().get("content-type");
+        assert!(content_type.is_some());
+        assert_eq!(content_type.unwrap(), "application/nostr+json");
+    }
+
+    /// handleメソッドがAccess-Control-Allow-Origin: *を返す
+    #[test]
+    fn test_handle_returns_cors_allow_origin() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![],
+        );
+        let handler = Nip11Handler::new(config);
+
+        let response = handler.handle();
+
+        let header = response.headers().get("access-control-allow-origin");
+        assert!(header.is_some());
+        assert_eq!(header.unwrap(), "*");
+    }
+
+    /// handleメソッドがAccess-Control-Allow-Headers: Acceptを返す
+    #[test]
+    fn test_handle_returns_cors_allow_headers() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![],
+        );
+        let handler = Nip11Handler::new(config);
+
+        let response = handler.handle();
+
+        let header = response.headers().get("access-control-allow-headers");
+        assert!(header.is_some());
+        assert_eq!(header.unwrap(), "Accept");
+    }
+
+    /// handleメソッドがAccess-Control-Allow-Methods: GET, OPTIONSを返す
+    #[test]
+    fn test_handle_returns_cors_allow_methods() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![],
+        );
+        let handler = Nip11Handler::new(config);
+
+        let response = handler.handle();
+
+        let header = response.headers().get("access-control-allow-methods");
+        assert!(header.is_some());
+        assert_eq!(header.unwrap(), "GET, OPTIONS");
+    }
+
+    /// handleメソッドがリレー情報JSONをボディに含む
+    #[test]
+    fn test_handle_returns_relay_info_json_body() {
+        let config = RelayInfoConfig::new(
+            Some("Test Relay".to_string()),
+            Some("Test Description".to_string()),
+            None, None, None, None,
+            vec!["JP".to_string()],
+            vec!["ja".to_string()],
+        );
+        let handler = Nip11Handler::new(config);
+
+        let response = handler.handle();
+
+        // ボディを取得してJSONとしてパース
+        let body = match response.body() {
+            Body::Text(text) => text.clone(),
+            Body::Binary(bytes) => String::from_utf8(bytes.clone()).unwrap(),
+            Body::Empty => String::new(),
+        };
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+
+        // リレー情報が正しく含まれていることを確認
+        assert_eq!(parsed["name"], "Test Relay");
+        assert_eq!(parsed["description"], "Test Description");
+        assert_eq!(parsed["relay_countries"], serde_json::json!(["JP"]));
+        assert_eq!(parsed["language_tags"], serde_json::json!(["ja"]));
+        assert!(parsed["supported_nips"].is_array());
+        assert!(parsed["software"].is_string());
+        assert!(parsed["version"].is_string());
+        assert!(parsed["limitation"].is_object());
+    }
+
+    /// build_cors_headersメソッドが正しいCORSヘッダーを返す
+    #[test]
+    fn test_build_cors_headers_contains_all_required_headers() {
+        let headers = Nip11Handler::build_cors_headers();
+
+        // 全ての必要なヘッダーが含まれていることを確認
+        assert_eq!(
+            headers.get("content-type").map(|v| v.to_str().unwrap()),
+            Some("application/nostr+json")
+        );
+        assert_eq!(
+            headers.get("access-control-allow-origin").map(|v| v.to_str().unwrap()),
+            Some("*")
+        );
+        assert_eq!(
+            headers.get("access-control-allow-headers").map(|v| v.to_str().unwrap()),
+            Some("Accept")
+        );
+        assert_eq!(
+            headers.get("access-control-allow-methods").map(|v| v.to_str().unwrap()),
+            Some("GET, OPTIONS")
+        );
     }
 }

@@ -7,6 +7,9 @@ edition = "2024"
 # AWS Lambdaランタイム
 lambda_runtime = "1.0.1"
 
+# AWS Lambda HTTPランタイム（NIP-11用）
+lambda_http = "0.14"
+
 # Nostrプロトコルライブラリ - イベントモデル、署名検証、フィルター評価
 nostr = "0.44"
 
