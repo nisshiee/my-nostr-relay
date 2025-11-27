@@ -80,8 +80,8 @@
   - Accept: application/nostr+jsonでオリジン切り替えを検証
   - WebSocket Upgradeヘッダーでデフォルトオリジン維持を検証
 
-- [ ] 6. Terraformインフラ構築
-- [ ] 6.1 NIP-11 Lambda関数とFunction URLのTerraformリソースを定義する
+- [x] 6. Terraformインフラ構築
+- [x] 6.1 NIP-11 Lambda関数とFunction URLのTerraformリソースを定義する
   - Lambda関数リソース（nostr_relay_nip11_info）を作成
   - 環境変数でリレー設定を注入
   - Lambda Function URL（AWS_IAM認証）を作成
@@ -89,7 +89,7 @@
   - 依存: タスク4の実装完了後にデプロイ可能
   - _Requirements: 6.2, 6.3_
 
-- [ ] 6.2 CloudFront Distributionを構築する
+- [x] 6.2 CloudFront Distributionを構築する
   - relay.nostr.nisshiee.org用のCloudFront Distributionを作成
   - デフォルトオリジンとしてWebSocket API Gatewayを設定
   - NIP-11オリジンとしてLambda Function URLを設定
@@ -97,14 +97,14 @@
   - Lambda@EdgeをViewer Requestに関連付け
   - _Requirements: 6.1, 6.3_
 
-- [ ] 6.3 Lambda@EdgeをTerraformで定義する
+- [x] 6.3 Lambda@EdgeをTerraformで定義する
   - us-east-1リージョンにLambda@Edge関数をデプロイ
   - aws providerのaliasでリージョン指定
   - templatefile関数でNIP-11 Function URLドメインを埋め込み
   - CloudFrontとの関連付けを設定
   - _Requirements: 6.1_
 
-- [ ] 6.4 DNSをCloudFrontに移行する
+- [x] 6.4 DNSをCloudFrontに移行する
   - Route53のrelay.nostr.nisshiee.orgレコードをCloudFrontに向ける
   - 既存のAPI Gateway直接参照からCloudFront経由に変更
   - ACM証明書の関連付け（us-east-1リージョン）
