@@ -2,8 +2,10 @@
 ///
 /// NIP-01準拠のイベント処理を実行する
 /// 要件: 5.1, 5.2, 5.3, 5.4, 5.5, 9.1, 10.1, 10.2, 10.3, 11.1, 11.2, 12.1, 12.2, 12.3
+/// 要件: 19.2, 19.3, 19.4, 19.5, 19.6
 use nostr::Event;
 use serde_json::Value;
+use tracing::{debug, trace, warn};
 
 use crate::domain::{EventKind, EventValidator, RelayMessage, ValidationError};
 use crate::infrastructure::{
@@ -93,7 +95,7 @@ where
     ///
     /// # 戻り値
     /// OKメッセージ（成功/失敗）
-    pub async fn handle(&self, event_json: Value, _connection_id: &str) -> RelayMessage {
+    pub async fn handle(&self, event_json: Value, connection_id: &str) -> RelayMessage {
         // イベントIDを取得（検証前でもエラーメッセージに使用）
         let event_id = event_json
             .get("id")
@@ -101,30 +103,73 @@ where
             .unwrap_or("")
             .to_string();
 
+        trace!(
+            connection_id = connection_id,
+            event_id = %event_id,
+            "EVENTメッセージ処理開始"
+        );
+
         // イベント検証（要件 2.1-2.8, 3.1-3.5, 4.1-4.2）
         let event = match EventValidator::validate_all(&event_json) {
-            Ok(event) => event,
+            Ok(event) => {
+                trace!(
+                    event_id = %event_id,
+                    "イベント検証成功"
+                );
+                event
+            }
             Err(err) => {
+                debug!(
+                    connection_id = connection_id,
+                    event_id = %event_id,
+                    error = %err,
+                    "イベント検証失敗"
+                );
                 return self.create_validation_error_response(&event_id, err);
             }
         };
 
         // Kind分類（要件 9.1, 10.1, 11.1, 12.1）
-        let kind = EventKind::classify(event.kind.as_u16());
+        let kind_value = event.kind.as_u16();
+        let kind = EventKind::classify(kind_value);
+
+        debug!(
+            event_id = %event_id,
+            kind = kind_value,
+            kind_type = ?kind,
+            "Kind分類完了"
+        );
 
         // Kind別処理
         let save_result = match kind {
             EventKind::Ephemeral => {
                 // Ephemeralイベントは保存せずに購読者への配信のみ（要件 11.1, 11.2）
+                debug!(
+                    event_id = %event_id,
+                    "Ephemeralイベント: 保存せず配信のみ"
+                );
                 self.broadcast_to_subscribers(&event).await;
                 return RelayMessage::ok_success(&event_id);
             }
             _ => {
                 // Regular, Replaceable, Addressableイベントは保存（要件 5.2, 9.1, 10.2, 12.2）
                 match self.event_repo.save(&event).await {
-                    Ok(result) => result,
-                    Err(_) => {
-                        // 保存失敗時のエラー応答（要件 16.8）
+                    Ok(result) => {
+                        trace!(
+                            event_id = %event_id,
+                            result = ?result,
+                            "イベント保存成功"
+                        );
+                        result
+                    }
+                    Err(err) => {
+                        // 保存失敗時のエラー応答（要件 16.8, 19.2）
+                        warn!(
+                            connection_id = connection_id,
+                            event_id = %event_id,
+                            error = %err,
+                            "イベント保存失敗"
+                        );
                         return RelayMessage::ok_storage_error(&event_id);
                     }
                 }
@@ -135,11 +180,20 @@ where
         match save_result {
             SaveResult::Saved | SaveResult::Replaced => {
                 // 新規/置換保存時は購読者に配信（要件 6.5）
+                debug!(
+                    event_id = %event_id,
+                    result = ?save_result,
+                    "イベント保存完了、購読者へ配信"
+                );
                 self.broadcast_to_subscribers(&event).await;
                 RelayMessage::ok_success(&event_id)
             }
             SaveResult::Duplicate => {
                 // 重複イベント（要件 5.4）
+                debug!(
+                    event_id = %event_id,
+                    "重複イベント検出"
+                );
                 RelayMessage::ok_duplicate(&event_id)
             }
         }
@@ -160,16 +214,34 @@ where
 
     /// マッチする購読者にイベントを配信
     async fn broadcast_to_subscribers(&self, event: &Event) {
-        // マッチするサブスクリプションを検索（要件 18.6）
+        let event_id = event.id.to_hex();
+
+        // マッチするサブスクリプションを検索（要件 18.6, 19.3）
         let matched = match self.subscription_repo.find_matching(event).await {
-            Ok(matched) => matched,
-            Err(_) => {
-                // エラー時はブロードキャストをスキップ
+            Ok(matched) => {
+                trace!(
+                    event_id = %event_id,
+                    matched_count = matched.len(),
+                    "サブスクリプション検索完了"
+                );
+                matched
+            }
+            Err(err) => {
+                // エラー時はブロードキャストをスキップ（要件 19.3）
+                warn!(
+                    event_id = %event_id,
+                    error = %err,
+                    "サブスクリプション検索エラー"
+                );
                 return;
             }
         };
 
         if matched.is_empty() {
+            trace!(
+                event_id = %event_id,
+                "マッチする購読者なし"
+            );
             return;
         }
 
@@ -181,11 +253,27 @@ where
             };
             let message_json = event_message.to_json();
 
-            // 送信（エラーは無視 - 接続切れ等は後続処理で対応）
-            let _ = self
+            // 送信（要件 19.4）
+            if let Err(err) = self
                 .ws_sender
                 .send(&subscription.connection_id, &message_json)
-                .await;
+                .await
+            {
+                warn!(
+                    event_id = %event_id,
+                    connection_id = %subscription.connection_id,
+                    subscription_id = %subscription.subscription_id,
+                    error = %err,
+                    "WebSocket送信エラー"
+                );
+            } else {
+                trace!(
+                    event_id = %event_id,
+                    connection_id = %subscription.connection_id,
+                    subscription_id = %subscription.subscription_id,
+                    "イベント配信成功"
+                );
+            }
         }
     }
 }

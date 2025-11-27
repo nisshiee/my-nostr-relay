@@ -3,16 +3,20 @@
 /// API Gateway WebSocketのメッセージリクエストを処理し、
 /// EVENT, REQ, CLOSEメッセージを適切なハンドラーに委譲する。
 ///
-/// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3
+/// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3, 19.2, 19.5, 19.6
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::application::DefaultHandler;
 use relay::infrastructure::{
-    ApiGatewayWebSocketSender, DynamoDbConfig, DynamoEventRepository, DynamoSubscriptionRepository,
+    init_logging, ApiGatewayWebSocketSender, DynamoDbConfig, DynamoEventRepository, DynamoSubscriptionRepository,
 };
 use serde_json::Value;
+use tracing::{debug, error, trace};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // 構造化ログを初期化
+    init_logging();
+
     // Lambda関数を初期化して実行
     let func = service_fn(handler);
     lambda_runtime::run(func).await?;
@@ -27,11 +31,48 @@ async fn main() -> Result<(), Error> {
 /// 3. DefaultHandlerを使用してメッセージを処理
 /// 4. 成功時は200 OK、失敗時は適切なレスポンスを返却
 async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
+    // 接続IDを取得（ログ用）
+    let connection_id = event
+        .payload
+        .get("requestContext")
+        .and_then(|ctx| ctx.get("connectionId"))
+        .and_then(|id| id.as_str())
+        .unwrap_or("unknown");
+
+    // メッセージボディを取得（ログ用、最大100バイトに切り詰め）
+    let body_preview = event
+        .payload
+        .get("body")
+        .and_then(|b| b.as_str())
+        .map(|s| {
+            if s.len() <= 100 {
+                s
+            } else {
+                // 100バイト以下の最大の文字境界を見つける
+                let mut end = 100;
+                while !s.is_char_boundary(end) {
+                    end -= 1;
+                }
+                &s[..end]
+            }
+        })
+        .unwrap_or("(empty)");
+
+    debug!(
+        connection_id = connection_id,
+        body_preview = body_preview,
+        "WebSocketメッセージ受信"
+    );
+
     // DynamoDB設定を環境から読み込み
     let config = match DynamoDbConfig::from_env().await {
         Ok(config) => config,
         Err(err) => {
-            eprintln!("Failed to load DynamoDB config: {}", err);
+            error!(
+                connection_id = connection_id,
+                error = %err,
+                "DynamoDB設定読み込み失敗"
+            );
             return Ok(serde_json::json!({
                 "statusCode": 500,
                 "body": "Internal server error"
@@ -41,9 +82,19 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
 
     // requestContextからエンドポイントURLを構築
     let endpoint_url = match extract_endpoint_url(&event.payload) {
-        Some(url) => url,
+        Some(url) => {
+            trace!(
+                connection_id = connection_id,
+                endpoint_url = %url,
+                "エンドポイントURL構築完了"
+            );
+            url
+        }
         None => {
-            eprintln!("Failed to extract endpoint URL from request context");
+            error!(
+                connection_id = connection_id,
+                "エンドポイントURL抽出失敗"
+            );
             return Ok(serde_json::json!({
                 "statusCode": 500,
                 "body": "Internal server error"
@@ -70,6 +121,10 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     match default_handler.handle(&event.payload).await {
         Ok(()) => {
             // 成功時は200 OKを返却
+            debug!(
+                connection_id = connection_id,
+                "メッセージ処理完了"
+            );
             Ok(serde_json::json!({
                 "statusCode": 200,
                 "body": "Message processed"
@@ -77,7 +132,11 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
         }
         Err(err) => {
             // エラー時はログ出力して適切なレスポンスを返却
-            eprintln!("Default handler error: {}", err);
+            error!(
+                connection_id = connection_id,
+                error = %err,
+                "メッセージ処理エラー"
+            );
             Ok(serde_json::json!({
                 "statusCode": 200,
                 "body": "Message processing error"

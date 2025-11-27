@@ -218,24 +218,24 @@
 
 ## Task 7: ログ基盤実装
 
-- [ ] 7.1 tracingクレート導入
+- [x] 7.1 tracingクレート導入
   - Cargo.tomlにtracing, tracing-subscriberを追加
   - Lambda環境向けのサブスクライバー設定を実装
   - JSON形式での構造化ログ出力を設定
   - _Requirements: 19.1_
 
-- [ ] 7.2 イベントハンドラーへのログ追加
+- [x] 7.2 イベントハンドラーへのログ追加
   - サブスクリプション検索エラー時のwarnログを追加
   - WebSocket送信エラー時のwarnログを追加
   - イベント処理の主要ポイントにdebug/traceログを追加
   - _Requirements: 19.2, 19.3, 19.4, 19.5, 19.6_
 
-- [ ] 7.3 サブスクリプションハンドラーへのログ追加
+- [x] 7.3 サブスクリプションハンドラーへのログ追加
   - REQ/CLOSE処理のdebugログを追加
   - エラー発生時のwarn/errorログを追加
   - _Requirements: 19.2, 19.5, 19.6_
 
-- [ ] 7.4 Lambda Handlerへのログ追加
+- [x] 7.4 Lambda Handlerへのログ追加
   - 接続/切断イベントのinfoログを追加
   - メッセージ処理のdebugログを追加
   - エラー発生時のerrorログを追加

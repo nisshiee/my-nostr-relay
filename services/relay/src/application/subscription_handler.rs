@@ -2,9 +2,11 @@
 ///
 /// NIP-01準拠のREQ/CLOSEメッセージ処理を実行する
 /// 要件: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 7.1, 7.2
+/// 要件: 19.2, 19.5, 19.6
 use nostr::Filter;
 use serde_json::Value;
 use thiserror::Error;
+use tracing::{debug, trace, warn};
 
 use crate::domain::{FilterEvaluator, FilterValidationError, RelayMessage};
 use crate::infrastructure::{
@@ -112,8 +114,21 @@ where
         filter_values: Vec<Value>,
         connection_id: &str,
     ) -> Result<(), SubscriptionHandlerError> {
+        debug!(
+            connection_id = connection_id,
+            subscription_id = %subscription_id,
+            filter_count = filter_values.len(),
+            "REQメッセージ処理開始"
+        );
+
         // subscription_idの検証 (要件 6.6, 6.7)
         if let Err(e) = Self::validate_subscription_id(&subscription_id) {
+            warn!(
+                connection_id = connection_id,
+                subscription_id = %subscription_id,
+                error = %e,
+                "subscription_id検証失敗"
+            );
             // CLOSED応答を送信
             let closed_msg = RelayMessage::closed_invalid_subscription_id(&subscription_id);
             let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
@@ -122,8 +137,22 @@ where
 
         // フィルター条件をパース (要件 6.1)
         let filters = match self.parse_filters(&filter_values) {
-            Ok(filters) => filters,
+            Ok(filters) => {
+                trace!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    filter_count = filters.len(),
+                    "フィルターパース成功"
+                );
+                filters
+            }
             Err(e) => {
+                warn!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    error = %e,
+                    "フィルターパース失敗"
+                );
                 // CLOSED応答を送信
                 let closed_msg = RelayMessage::closed_invalid(&subscription_id, &e.to_string());
                 let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
@@ -134,6 +163,12 @@ where
         // フィルター検証 (要件 8.11)
         for filter in &filters {
             if let Err(e) = FilterEvaluator::validate_filter(filter) {
+                warn!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    error = %e,
+                    "フィルター検証失敗"
+                );
                 let closed_msg = RelayMessage::closed_invalid(&subscription_id, &e.to_string());
                 let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
                 return Err(e.into());
@@ -143,18 +178,45 @@ where
         // サブスクリプションを作成/更新 (要件 6.4, 18.1, 18.4)
         if let Err(e) = self.subscription_repo.upsert(connection_id, &subscription_id, &filters).await {
             // CLOSED応答を送信 (要件 18.8)
+            warn!(
+                connection_id = connection_id,
+                subscription_id = %subscription_id,
+                error = %e,
+                "サブスクリプション保存失敗"
+            );
             let closed_msg = RelayMessage::closed_subscription_error(&subscription_id);
             let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
             return Err(e.into());
         }
 
+        trace!(
+            connection_id = connection_id,
+            subscription_id = %subscription_id,
+            "サブスクリプション作成/更新完了"
+        );
+
         // フィルターに合致する保存済みイベントをクエリ (要件 6.2)
         // limitはフィルターから取得（複数フィルターの場合は最小値を使用）
         let limit = self.extract_limit(&filters);
         let events = match self.event_repo.query(&filters, limit).await {
-            Ok(events) => events,
+            Ok(events) => {
+                debug!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    event_count = events.len(),
+                    limit = ?limit,
+                    "イベントクエリ成功"
+                );
+                events
+            }
             Err(e) => {
                 // クエリエラー時もCLOSED応答を送信
+                warn!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    error = %e,
+                    "イベントクエリ失敗"
+                );
                 let closed_msg = RelayMessage::closed_subscription_error(&subscription_id);
                 let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
                 return Err(e.into());
@@ -162,20 +224,42 @@ where
         };
 
         // 取得したイベントを順次EVENT応答として送信 (要件 6.2)
-        for event in events {
+        for event in &events {
             let event_msg = RelayMessage::Event {
                 subscription_id: subscription_id.clone(),
-                event,
+                event: event.clone(),
             };
             // 送信エラーは無視（接続切れ等は後続処理で対応）
-            let _ = self.ws_sender.send(connection_id, &event_msg.to_json()).await;
+            if let Err(err) = self.ws_sender.send(connection_id, &event_msg.to_json()).await {
+                warn!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    event_id = %event.id,
+                    error = %err,
+                    "EVENT応答送信失敗"
+                );
+            }
         }
 
         // EOSE応答を送信 (要件 6.3)
         let eose_msg = RelayMessage::Eose {
             subscription_id: subscription_id.clone(),
         };
-        let _ = self.ws_sender.send(connection_id, &eose_msg.to_json()).await;
+        if let Err(err) = self.ws_sender.send(connection_id, &eose_msg.to_json()).await {
+            warn!(
+                connection_id = connection_id,
+                subscription_id = %subscription_id,
+                error = %err,
+                "EOSE応答送信失敗"
+            );
+        }
+
+        debug!(
+            connection_id = connection_id,
+            subscription_id = %subscription_id,
+            sent_events = events.len(),
+            "REQメッセージ処理完了"
+        );
 
         Ok(())
     }
@@ -197,8 +281,20 @@ where
         subscription_id: String,
         connection_id: &str,
     ) -> Result<(), SubscriptionHandlerError> {
+        debug!(
+            connection_id = connection_id,
+            subscription_id = %subscription_id,
+            "CLOSEメッセージ処理開始"
+        );
+
         // subscription_idの検証 (要件 6.6, 6.7 - CLOSEにも適用)
         if let Err(e) = Self::validate_subscription_id(&subscription_id) {
+            warn!(
+                connection_id = connection_id,
+                subscription_id = %subscription_id,
+                error = %e,
+                "CLOSE: subscription_id検証失敗"
+            );
             let closed_msg = RelayMessage::closed_invalid_subscription_id(&subscription_id);
             let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
             return Err(e);
@@ -207,10 +303,22 @@ where
         // サブスクリプションを削除 (要件 7.1, 18.3)
         if let Err(e) = self.subscription_repo.delete(connection_id, &subscription_id).await {
             // エラー時はCLOSED応答を送信
+            warn!(
+                connection_id = connection_id,
+                subscription_id = %subscription_id,
+                error = %e,
+                "サブスクリプション削除失敗"
+            );
             let closed_msg = RelayMessage::closed_subscription_error(&subscription_id);
             let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
             return Err(e.into());
         }
+
+        debug!(
+            connection_id = connection_id,
+            subscription_id = %subscription_id,
+            "CLOSEメッセージ処理完了"
+        );
 
         // 成功時は応答なし（NIP-01仕様）
         Ok(())
