@@ -80,20 +80,20 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
         }
     };
 
-    // requestContextからエンドポイントURLを構築
-    let endpoint_url = match extract_endpoint_url(&event.payload) {
-        Some(url) => {
+    // 環境変数からエンドポイントURLを取得
+    let endpoint_url = match std::env::var("API_GATEWAY_ENDPOINT") {
+        Ok(url) => {
             trace!(
                 connection_id = connection_id,
                 endpoint_url = %url,
-                "エンドポイントURL構築完了"
+                "エンドポイントURL取得完了"
             );
             url
         }
-        None => {
+        Err(_) => {
             error!(
                 connection_id = connection_id,
-                "エンドポイントURL抽出失敗"
+                "API_GATEWAY_ENDPOINT環境変数が設定されていません"
             );
             return Ok(serde_json::json!({
                 "statusCode": 500,
@@ -145,10 +145,3 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     }
 }
 
-/// requestContextからAPI Gateway Management APIのエンドポイントURLを抽出
-fn extract_endpoint_url(event: &Value) -> Option<String> {
-    let request_context = event.get("requestContext")?;
-    let domain_name = request_context.get("domainName")?.as_str()?;
-    let stage = request_context.get("stage")?.as_str()?;
-    Some(ApiGatewayWebSocketSender::build_endpoint_url(domain_name, stage))
-}

@@ -58,6 +58,7 @@ resource "aws_lambda_function" "connect" {
   runtime       = "provided.al2023"
   filename      = data.archive_file.connect.output_path
   source_code_hash = data.archive_file.connect.output_base64sha256
+  timeout       = 10
 
   environment {
     variables = {
@@ -81,6 +82,7 @@ resource "aws_lambda_function" "disconnect" {
   runtime       = "provided.al2023"
   filename      = data.archive_file.disconnect.output_path
   source_code_hash = data.archive_file.disconnect.output_base64sha256
+  timeout       = 10
 
   environment {
     variables = {
@@ -104,12 +106,14 @@ resource "aws_lambda_function" "default" {
   runtime       = "provided.al2023"
   filename      = data.archive_file.default.output_path
   source_code_hash = data.archive_file.default.output_base64sha256
+  timeout       = 10
 
   environment {
     variables = {
-      EVENTS_TABLE        = aws_dynamodb_table.events.name
-      CONNECTIONS_TABLE   = aws_dynamodb_table.connections.name
-      SUBSCRIPTIONS_TABLE = aws_dynamodb_table.subscriptions.name
+      EVENTS_TABLE          = aws_dynamodb_table.events.name
+      CONNECTIONS_TABLE     = aws_dynamodb_table.connections.name
+      SUBSCRIPTIONS_TABLE   = aws_dynamodb_table.subscriptions.name
+      API_GATEWAY_ENDPOINT  = "https://${aws_apigatewayv2_api.relay.id}.execute-api.ap-northeast-1.amazonaws.com/${aws_apigatewayv2_stage.default.name}"
     }
   }
 }
