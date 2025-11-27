@@ -91,6 +91,25 @@ import { ... } from './components';
   - `$disconnect` -> `disconnect.rs`
   - `$default` -> `default.rs`
 
+### レイヤードアーキテクチャ（Relay Service）
+```
+src/
+  lib.rs              # エントリポイント、モジュール公開
+  domain.rs           # ドメイン層モジュール定義
+  domain/             # ビジネスロジック（プロトコル依存なし）
+  infrastructure.rs   # インフラ層モジュール定義
+  infrastructure/     # 外部システム連携（AWS SDK等）
+  bin/                # Lambda関数エントリポイント
+```
+
+**Domain層**: プロトコル仕様に基づくコアロジック
+- イベント検証、フィルター評価、メッセージ型定義
+- 外部依存を持たない純粋なビジネスルール
+
+**Infrastructure層**: 外部システムとの連携
+- DynamoDB接続設定、WebSocket送信機能
+- AWS SDKを使用した具体的な実装
+
 ### Terraform モジュールパターン
 - 各モジュールは単一責務（domain, api, web）
 - 変数で依存関係を注入（zone_id, certificate_arn等）

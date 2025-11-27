@@ -2,10 +2,10 @@
 
 ## Architecture
 
-サーバーレスアーキテクチャを採用。WebSocket接続はAWS API Gateway v2で管理し、イベント処理はLambda関数で実行。
+サーバーレスアーキテクチャを採用。WebSocket接続はAWS API Gateway v2で管理し、イベント処理はLambda関数で実行。データ永続化はDynamoDBを使用。
 
 ```
-Client <--WebSocket--> API Gateway v2 <---> Lambda (Rust)
+Client <--WebSocket--> API Gateway v2 <---> Lambda (Rust) <---> DynamoDB
                               |
                          Route53 DNS
 ```
@@ -26,15 +26,20 @@ Client <--WebSocket--> API Gateway v2 <---> Lambda (Rust)
 
 ### Infrastructure (`terraform/`)
 - **IaC**: Terraform
-- **Cloud**: AWS (Lambda, API Gateway v2, Route53, ACM)
+- **Cloud**: AWS (Lambda, API Gateway v2, Route53, ACM, DynamoDB)
+- **Database**: DynamoDB (Events, Connections, Subscriptions)
 - **Frontend Hosting**: Vercel
 
 ## Key Libraries
 
 ### Rust (Relay)
 - `lambda_runtime` - AWS Lambda Rust runtime
+- `nostr` - Nostrプロトコル型定義・署名検証・フィルター評価
+- `aws-sdk-dynamodb` - DynamoDB操作
+- `aws-sdk-apigatewaymanagement` - WebSocketメッセージ送信
 - `tokio` - 非同期ランタイム
 - `serde_json` - JSON処理
+- `thiserror` - エラー型定義
 
 ### TypeScript (Web)
 - `next` - SSR/SSGフレームワーク
@@ -86,6 +91,9 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 |----------|-----------|
 | Rust for Relay | メモリ安全性、高性能、Lambda cold start最適化 |
 | Serverless WebSocket | API Gateway v2でWebSocket接続管理、スケーラブル |
+| DynamoDB | サーバーレス、従量課金、GSIによる柔軟なクエリパターン |
+| nostr crate活用 | プロトコル型定義・署名検証の再実装を回避、エコシステム準拠 |
+| Layered Architecture | Domain/Infrastructure分離でテスト容易性・保守性向上 |
 | Modular Terraform | domain/api/webで責務分離、再利用性向上 |
 | Vercel for Frontend | Next.js最適化ホスティング、GitHubとの連携 |
 | Edition 2024 | 最新のRust機能を活用 |
