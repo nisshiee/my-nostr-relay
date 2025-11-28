@@ -91,6 +91,43 @@ impl RelayInfoDocument {
         relay_countries: Vec<String>,
         language_tags: Vec<String>,
     ) -> Self {
+        Self::with_limitation(
+            name,
+            description,
+            pubkey,
+            contact,
+            icon,
+            banner,
+            relay_countries,
+            language_tags,
+            RelayLimitation::default(),
+        )
+    }
+
+    /// 制限情報を指定してリレー情報ドキュメントを作成
+    ///
+    /// # Arguments
+    /// * `name` - リレー名
+    /// * `description` - リレー説明
+    /// * `pubkey` - 管理者公開鍵
+    /// * `contact` - 連絡先URI
+    /// * `icon` - アイコンURL
+    /// * `banner` - バナーURL
+    /// * `relay_countries` - 国コード配列
+    /// * `language_tags` - 言語タグ配列
+    /// * `limitation` - 制限情報
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_limitation(
+        name: Option<String>,
+        description: Option<String>,
+        pubkey: Option<String>,
+        contact: Option<String>,
+        icon: Option<String>,
+        banner: Option<String>,
+        relay_countries: Vec<String>,
+        language_tags: Vec<String>,
+        limitation: RelayLimitation,
+    ) -> Self {
         Self {
             name,
             description,
@@ -101,7 +138,7 @@ impl RelayInfoDocument {
             version: env!("CARGO_PKG_VERSION").to_string(),
             icon,
             banner,
-            limitation: RelayLimitation::default(),
+            limitation,
             relay_countries,
             language_tags,
         }
