@@ -8,7 +8,7 @@ use serde_json::Value;
 use thiserror::Error;
 use tracing::{debug, trace, warn};
 
-use crate::domain::{FilterEvaluator, FilterValidationError, RelayMessage, MAX_SUBID_LENGTH};
+use crate::domain::{FilterEvaluator, FilterValidationError, LimitationConfig, RelayMessage};
 use crate::infrastructure::{
     EventRepository, EventRepositoryError, SendError, SubscriptionRepository,
     SubscriptionRepositoryError, WebSocketSender,
@@ -20,6 +20,14 @@ pub enum SubscriptionHandlerError {
     /// 無効なサブスクリプションID (要件 6.6, 6.7)
     #[error("invalid subscription id: {0}")]
     InvalidSubscriptionId(String),
+
+    /// サブスクリプションIDが長すぎる (要件 4.1, 4.2, 4.3)
+    #[error("subscription id too long: {length} characters, max {max_length}")]
+    SubscriptionIdTooLong { length: usize, max_length: u32 },
+
+    /// サブスクリプション数上限超過 (要件 3.2)
+    #[error("too many subscriptions: {current} active, limit is {limit}")]
+    TooManySubscriptions { current: usize, limit: u32 },
 
     /// フィルター検証エラー (要件 8.11)
     #[error("invalid filter: {0}")]
@@ -93,17 +101,20 @@ where
     /// REQメッセージを処理 (要件 6.1-6.7)
     ///
     /// # 処理フロー
-    /// 1. subscription_idの検証（1-64文字）
-    /// 2. フィルター条件のパースと検証
-    /// 3. サブスクリプションを作成/更新
-    /// 4. フィルターに合致する保存済みイベントをクエリ
-    /// 5. 取得したイベントをEVENT応答として送信
-    /// 6. EOSE応答を送信
+    /// 1. subscription_idの長さ検証
+    /// 2. サブスクリプション数制限チェック（新規の場合のみ）
+    /// 3. フィルター条件のパースと検証
+    /// 4. フィルターのlimit値をクランプ/デフォルト適用
+    /// 5. サブスクリプションを作成/更新
+    /// 6. フィルターに合致する保存済みイベントをクエリ
+    /// 7. 取得したイベントをEVENT応答として送信
+    /// 8. EOSE応答を送信
     ///
     /// # 引数
     /// * `subscription_id` - サブスクリプションID
     /// * `filter_values` - フィルター条件のJSON配列
     /// * `connection_id` - API Gateway接続ID
+    /// * `config` - 制限値設定
     ///
     /// # 戻り値
     /// 成功時はOk(()), エラー時はErr(SubscriptionHandlerError)
@@ -113,6 +124,7 @@ where
         subscription_id: String,
         filter_values: Vec<Value>,
         connection_id: &str,
+        config: &LimitationConfig,
     ) -> Result<(), SubscriptionHandlerError> {
         debug!(
             connection_id = connection_id,
@@ -121,22 +133,76 @@ where
             "REQメッセージ処理開始"
         );
 
-        // subscription_idの検証 (要件 6.6, 6.7)
-        if let Err(e) = Self::validate_subscription_id(&subscription_id) {
+        // subscription_idの長さ検証 (要件 4.1, 4.2, 4.3, 6.6, 6.7)
+        if let Err(e) = Self::validate_subscription_id(&subscription_id, config.max_subid_length) {
             warn!(
                 connection_id = connection_id,
                 subscription_id = %subscription_id,
                 error = %e,
                 "subscription_id検証失敗"
             );
-            // CLOSED応答を送信
-            let closed_msg = RelayMessage::closed_invalid_subscription_id(&subscription_id);
+            // CLOSED応答を送信（長すぎる場合と空の場合で異なるメッセージ）
+            let closed_msg = match &e {
+                SubscriptionHandlerError::SubscriptionIdTooLong { .. } => {
+                    RelayMessage::closed_subscription_id_too_long(&subscription_id)
+                }
+                _ => RelayMessage::closed_invalid_subscription_id(&subscription_id),
+            };
             let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
             return Err(e);
         }
 
+        // サブスクリプション数制限チェック (要件 3.2, 3.2a)
+        // 既存サブスクリプションへの更新（同一subscription_id）はチェックをスキップ
+        let subscription_exists = self
+            .subscription_repo
+            .exists(connection_id, &subscription_id)
+            .await
+            .map_err(|e| {
+                warn!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    error = %e,
+                    "サブスクリプション存在確認失敗"
+                );
+                SubscriptionHandlerError::RepositoryError(e.to_string())
+            })?;
+
+        if !subscription_exists {
+            // 新規サブスクリプションの場合、接続のサブスクリプション数をチェック
+            let current_count = self
+                .subscription_repo
+                .count_by_connection(connection_id)
+                .await
+                .map_err(|e| {
+                    warn!(
+                        connection_id = connection_id,
+                        subscription_id = %subscription_id,
+                        error = %e,
+                        "サブスクリプション数カウント失敗"
+                    );
+                    SubscriptionHandlerError::RepositoryError(e.to_string())
+                })?;
+
+            if current_count >= config.max_subscriptions as usize {
+                warn!(
+                    connection_id = connection_id,
+                    subscription_id = %subscription_id,
+                    current_count = current_count,
+                    max_subscriptions = config.max_subscriptions,
+                    "サブスクリプション数上限超過"
+                );
+                let closed_msg = RelayMessage::closed_too_many_subscriptions(&subscription_id);
+                let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
+                return Err(SubscriptionHandlerError::TooManySubscriptions {
+                    current: current_count,
+                    limit: config.max_subscriptions,
+                });
+            }
+        }
+
         // フィルター条件をパース (要件 6.1)
-        let filters = match self.parse_filters(&filter_values) {
+        let mut filters = match self.parse_filters(&filter_values) {
             Ok(filters) => {
                 trace!(
                     connection_id = connection_id,
@@ -174,6 +240,9 @@ where
                 return Err(e.into());
             }
         }
+
+        // フィルターのlimit値をクランプ/デフォルト適用 (要件 3.3, 1.10)
+        self.apply_limit_constraints(&mut filters, config);
 
         // サブスクリプションを作成/更新 (要件 6.4, 18.1, 18.4)
         if let Err(e) = self.subscription_repo.upsert(connection_id, &subscription_id, &filters).await {
@@ -273,6 +342,7 @@ where
     /// # 引数
     /// * `subscription_id` - サブスクリプションID
     /// * `connection_id` - API Gateway接続ID
+    /// * `config` - 制限値設定
     ///
     /// # 戻り値
     /// 成功時はOk(()), エラー時はErr(SubscriptionHandlerError)
@@ -280,6 +350,7 @@ where
         &self,
         subscription_id: String,
         connection_id: &str,
+        config: &LimitationConfig,
     ) -> Result<(), SubscriptionHandlerError> {
         debug!(
             connection_id = connection_id,
@@ -287,15 +358,21 @@ where
             "CLOSEメッセージ処理開始"
         );
 
-        // subscription_idの検証 (要件 6.6, 6.7 - CLOSEにも適用)
-        if let Err(e) = Self::validate_subscription_id(&subscription_id) {
+        // subscription_idの検証 (要件 6.6, 6.7, 4.1, 4.2, 4.3 - CLOSEにも適用)
+        if let Err(e) = Self::validate_subscription_id(&subscription_id, config.max_subid_length) {
             warn!(
                 connection_id = connection_id,
                 subscription_id = %subscription_id,
                 error = %e,
                 "CLOSE: subscription_id検証失敗"
             );
-            let closed_msg = RelayMessage::closed_invalid_subscription_id(&subscription_id);
+            // CLOSED応答を送信（長すぎる場合と空の場合で異なるメッセージ）
+            let closed_msg = match &e {
+                SubscriptionHandlerError::SubscriptionIdTooLong { .. } => {
+                    RelayMessage::closed_subscription_id_too_long(&subscription_id)
+                }
+                _ => RelayMessage::closed_invalid_subscription_id(&subscription_id),
+            };
             let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
             return Err(e);
         }
@@ -324,16 +401,51 @@ where
         Ok(())
     }
 
-    /// subscription_idの検証 (要件 6.6, 6.7)
-    /// 1-64文字の非空文字列であることを確認
-    fn validate_subscription_id(subscription_id: &str) -> Result<(), SubscriptionHandlerError> {
+    /// subscription_idの検証 (要件 4.1, 4.2, 4.3, 6.6, 6.7)
+    ///
+    /// 1文字以上かつmax_subid_length以下の非空文字列であることを確認。
+    /// 空の場合は`InvalidSubscriptionId`、長すぎる場合は`SubscriptionIdTooLong`を返す。
+    fn validate_subscription_id(
+        subscription_id: &str,
+        max_subid_length: u32,
+    ) -> Result<(), SubscriptionHandlerError> {
         let char_count = subscription_id.chars().count();
-        if char_count == 0 || char_count > MAX_SUBID_LENGTH as usize {
+
+        if char_count == 0 {
             return Err(SubscriptionHandlerError::InvalidSubscriptionId(
-                "subscription id must be 1-64 characters".to_string(),
+                "subscription id must not be empty".to_string(),
             ));
         }
+
+        if char_count > max_subid_length as usize {
+            return Err(SubscriptionHandlerError::SubscriptionIdTooLong {
+                length: char_count,
+                max_length: max_subid_length,
+            });
+        }
+
         Ok(())
+    }
+
+    /// フィルターのlimit値にmax_limitクランプとdefault_limit適用を行う (要件 3.3, 1.10)
+    ///
+    /// - limitがmax_limitを超える場合はmax_limitにクランプ
+    /// - limitが指定されていない場合はdefault_limitを適用
+    fn apply_limit_constraints(&self, filters: &mut [Filter], config: &LimitationConfig) {
+        for filter in filters.iter_mut() {
+            match filter.limit {
+                Some(limit) => {
+                    // limitがmax_limitを超える場合はクランプ
+                    if limit as u32 > config.max_limit {
+                        filter.limit = Some(config.max_limit as usize);
+                    }
+                }
+                None => {
+                    // limitが指定されていない場合はdefault_limitを適用
+                    filter.limit = Some(config.default_limit as usize);
+                }
+            }
+        }
     }
 
     /// フィルター条件をパース
@@ -390,6 +502,11 @@ mod tests {
         (handler, event_repo, subscription_repo, ws_sender)
     }
 
+    /// テスト用のデフォルトLimitationConfigを作成
+    fn default_config() -> crate::domain::LimitationConfig {
+        crate::domain::LimitationConfig::default()
+    }
+
     /// テスト用のイベントを作成
     fn create_test_event(content: &str) -> nostr::Event {
         let keys = Keys::generate();
@@ -413,9 +530,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_creates_subscription() {
         let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = default_config();
 
         let filters = vec![json!({"kinds": [1]})];
-        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123").await;
+        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await;
 
         assert!(result.is_ok());
 
@@ -429,9 +547,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_no_filters() {
         let (handler, _, subscription_repo, ws_sender) = create_test_handler();
+        let config = default_config();
 
         let filters: Vec<Value> = vec![];
-        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123").await;
+        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await;
 
         assert!(result.is_ok());
 
@@ -453,6 +572,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_sends_matching_events() {
         let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         // イベントを保存
         let event1 = create_test_event("event 1");
@@ -462,7 +582,7 @@ mod tests {
 
         // kind=1のフィルターでREQ
         let filters = vec![json!({"kinds": [1]})];
-        handler.handle_req("sub-1".to_string(), filters, "conn-123").await.unwrap();
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
 
         // 送信されたメッセージを確認
         let messages = ws_sender.get_sent_messages("conn-123");
@@ -486,6 +606,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_filters_events() {
         let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         // kind=1のイベントを保存
         let event = create_test_event("text note");
@@ -493,7 +614,7 @@ mod tests {
 
         // kind=0のフィルターでREQ
         let filters = vec![json!({"kinds": [0]})];
-        handler.handle_req("sub-1".to_string(), filters, "conn-123").await.unwrap();
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
 
         // EOSEのみ送信される
         let messages = ws_sender.get_sent_messages("conn-123");
@@ -508,13 +629,14 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_sends_eose_after_events() {
         let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         // イベントを保存
         let event = create_test_event("test");
         event_repo.save(&event).await.unwrap();
 
         let filters = vec![json!({"kinds": [1]})];
-        handler.handle_req("sub-1".to_string(), filters, "conn-123").await.unwrap();
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
 
         let messages = ws_sender.get_sent_messages("conn-123");
 
@@ -530,14 +652,15 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_replaces_existing_subscription() {
         let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = default_config();
 
         // 最初のサブスクリプション（kind=1のフィルター）
         let filters1 = vec![json!({"kinds": [1]})];
-        handler.handle_req("sub-1".to_string(), filters1, "conn-123").await.unwrap();
+        handler.handle_req("sub-1".to_string(), filters1, "conn-123", &config).await.unwrap();
 
         // 同じIDで2番目のサブスクリプション（kind=0のフィルター）
         let filters2 = vec![json!({"kinds": [0]})];
-        handler.handle_req("sub-1".to_string(), filters2, "conn-123").await.unwrap();
+        handler.handle_req("sub-1".to_string(), filters2, "conn-123", &config).await.unwrap();
 
         // サブスクリプションは1つのみ
         assert_eq!(subscription_repo.subscription_count(), 1);
@@ -554,8 +677,9 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_empty_subscription_id() {
         let (handler, _, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
-        let result = handler.handle_req("".to_string(), vec![], "conn-123").await;
+        let result = handler.handle_req("".to_string(), vec![], "conn-123", &config).await;
 
         assert!(result.is_err());
 
@@ -571,9 +695,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_subscription_id_too_long() {
         let (handler, _, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         let long_id = "a".repeat(65);
-        let result = handler.handle_req(long_id.clone(), vec![], "conn-123").await;
+        let result = handler.handle_req(long_id.clone(), vec![], "conn-123", &config).await;
 
         assert!(result.is_err());
 
@@ -589,8 +714,9 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_subscription_id_min_length() {
         let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = default_config();
 
-        let result = handler.handle_req("a".to_string(), vec![], "conn-123").await;
+        let result = handler.handle_req("a".to_string(), vec![], "conn-123", &config).await;
 
         assert!(result.is_ok());
         assert!(subscription_repo.get("conn-123", "a").await.unwrap().is_some());
@@ -600,9 +726,10 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_subscription_id_max_length() {
         let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = default_config();
 
         let max_id = "a".repeat(64);
-        let result = handler.handle_req(max_id.clone(), vec![], "conn-123").await;
+        let result = handler.handle_req(max_id.clone(), vec![], "conn-123", &config).await;
 
         assert!(result.is_ok());
         assert!(subscription_repo.get("conn-123", &max_id).await.unwrap().is_some());
@@ -614,14 +741,15 @@ mod tests {
     #[tokio::test]
     async fn test_handle_close_removes_subscription() {
         let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = default_config();
 
         // サブスクリプションを作成
         let filters = vec![json!({"kinds": [1]})];
-        handler.handle_req("sub-1".to_string(), filters, "conn-123").await.unwrap();
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
         assert!(subscription_repo.get("conn-123", "sub-1").await.unwrap().is_some());
 
         // CLOSEで削除
-        let result = handler.handle_close("sub-1".to_string(), "conn-123").await;
+        let result = handler.handle_close("sub-1".to_string(), "conn-123", &config).await;
 
         assert!(result.is_ok());
         assert!(subscription_repo.get("conn-123", "sub-1").await.unwrap().is_none());
@@ -631,8 +759,9 @@ mod tests {
     #[tokio::test]
     async fn test_handle_close_non_existent_subscription() {
         let (handler, _, _, _) = create_test_handler();
+        let config = default_config();
 
-        let result = handler.handle_close("non-existent".to_string(), "conn-123").await;
+        let result = handler.handle_close("non-existent".to_string(), "conn-123", &config).await;
 
         // 存在しないサブスクリプションの削除も成功扱い
         assert!(result.is_ok());
@@ -642,8 +771,9 @@ mod tests {
     #[tokio::test]
     async fn test_handle_close_invalid_subscription_id() {
         let (handler, _, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
-        let result = handler.handle_close("".to_string(), "conn-123").await;
+        let result = handler.handle_close("".to_string(), "conn-123", &config).await;
 
         assert!(result.is_err());
 
@@ -656,39 +786,39 @@ mod tests {
 
     // ==================== リポジトリエラーテスト (要件 18.8) ====================
 
-    /// 要件 18.8: サブスクリプション保存エラー時にCLOSED応答
+    /// 要件 18.8: サブスクリプションリポジトリエラー時にCLOSED応答（exists確認エラー）
     #[tokio::test]
     async fn test_handle_req_subscription_repo_error() {
-        let (handler, _, subscription_repo, ws_sender) = create_test_handler();
+        let (handler, _, subscription_repo, _ws_sender) = create_test_handler();
+        let config = default_config();
 
-        // エラーを設定
+        // exists確認でエラーを発生させる
         subscription_repo.set_next_error(
-            crate::infrastructure::SubscriptionRepositoryError::WriteError("DB error".to_string())
+            crate::infrastructure::SubscriptionRepositoryError::ReadError("DB error".to_string())
         );
 
-        let result = handler.handle_req("sub-1".to_string(), vec![], "conn-123").await;
+        let result = handler.handle_req("sub-1".to_string(), vec![], "conn-123", &config).await;
 
+        // リポジトリエラーとして処理される
         assert!(result.is_err());
-
-        // CLOSED応答が送信されたことを確認
-        let messages = ws_sender.get_sent_messages("conn-123");
-        assert_eq!(messages.len(), 1);
-        let msg: Value = serde_json::from_str(&messages[0]).unwrap();
-        assert_eq!(msg[0], "CLOSED");
-        assert!(msg[2].as_str().unwrap().contains("error:"));
+        match result.unwrap_err() {
+            SubscriptionHandlerError::RepositoryError(_) => {}
+            e => panic!("Expected RepositoryError, got {:?}", e),
+        }
     }
 
     /// 要件 18.8: イベントクエリエラー時にCLOSED応答
     #[tokio::test]
     async fn test_handle_req_event_repo_error() {
         let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         // エラーを設定
         event_repo.set_next_error(
             crate::infrastructure::EventRepositoryError::ReadError("DB error".to_string())
         );
 
-        let result = handler.handle_req("sub-1".to_string(), vec![], "conn-123").await;
+        let result = handler.handle_req("sub-1".to_string(), vec![], "conn-123", &config).await;
 
         assert!(result.is_err());
 
@@ -697,6 +827,43 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let msg: Value = serde_json::from_str(&messages[0]).unwrap();
         assert_eq!(msg[0], "CLOSED");
+    }
+
+    /// 要件 18.8: サブスクリプションupsertエラー時にCLOSED応答
+    ///
+    /// このテストでは、set_upsert_errorを使用してupsert操作専用のエラーを設定する。
+    /// これにより、existsやcount_by_connectionでエラーが消費されることなく、
+    /// upsertでのみエラーが発生する。
+    #[tokio::test]
+    async fn test_handle_req_subscription_upsert_error() {
+        let (handler, _, subscription_repo, ws_sender) = create_test_handler();
+        let config = default_config();
+
+        // upsert操作専用のエラーを設定
+        // existsやcount_by_connectionでは消費されず、upsertでのみ発生する
+        subscription_repo.set_upsert_error(
+            crate::infrastructure::SubscriptionRepositoryError::WriteError("DynamoDB error".to_string())
+        );
+
+        // 新規サブスクリプションを作成しようとする
+        let filters = vec![json!({"kinds": [1]})];
+        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await;
+
+        // upsertエラーとして処理される
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            SubscriptionHandlerError::RepositoryError(msg) => {
+                assert!(msg.contains("DynamoDB error"));
+            }
+            e => panic!("Expected RepositoryError, got {:?}", e),
+        }
+
+        // CLOSED応答が送信されたことを確認
+        let messages = ws_sender.get_sent_messages("conn-123");
+        assert_eq!(messages.len(), 1);
+        let msg: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(msg[0], "CLOSED");
+        assert_eq!(msg[1], "sub-1");
     }
 
     // ==================== フィルターパーステスト ====================
@@ -705,10 +872,11 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_invalid_filter_json() {
         let (handler, _, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         // 不正なフィルター（配列ではなく文字列）
         let filters = vec![json!("not a filter object")];
-        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123").await;
+        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await;
 
         assert!(result.is_err());
 
@@ -723,13 +891,14 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_multiple_filters() {
         let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = default_config();
 
         let filters = vec![
             json!({"kinds": [1]}),
             json!({"kinds": [0]}),
             json!({"kinds": [3]}),
         ];
-        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123").await;
+        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await;
 
         assert!(result.is_ok());
 
@@ -743,6 +912,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_with_limit() {
         let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         // 5つのイベントを保存
         for i in 0..5 {
@@ -752,7 +922,7 @@ mod tests {
 
         // limit=2のフィルターでREQ
         let filters = vec![json!({"kinds": [1], "limit": 2})];
-        handler.handle_req("sub-1".to_string(), filters, "conn-123").await.unwrap();
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
 
         // EVENT x 2 + EOSE = 3
         let messages = ws_sender.get_sent_messages("conn-123");
@@ -812,16 +982,272 @@ mod tests {
         }
     }
 
+    // ==================== Task 6.1: サブスクリプション数制限テスト ====================
+
+    /// 要件 3.2: 新規サブスクリプションがmax_subscriptionsを超える場合はCLOSED応答
+    #[tokio::test]
+    async fn test_handle_req_max_subscriptions_exceeded() {
+        let (handler, _, _subscription_repo, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig {
+            max_subscriptions: 2,
+            ..Default::default()
+        };
+
+        // max_subscriptions分のサブスクリプションを作成
+        let filters = vec![json!({"kinds": [1]})];
+        handler.handle_req("sub-1".to_string(), filters.clone(), "conn-123", &config).await.unwrap();
+        handler.handle_req("sub-2".to_string(), filters.clone(), "conn-123", &config).await.unwrap();
+
+        // 3つ目のサブスクリプションは拒否される
+        let result = handler.handle_req("sub-3".to_string(), filters, "conn-123", &config).await;
+
+        assert!(result.is_err());
+
+        // CLOSED応答に「too many subscriptions」が含まれることを確認
+        let messages = ws_sender.get_sent_messages("conn-123");
+        // sub-1: EOSE, sub-2: EOSE, sub-3: CLOSED
+        let last_msg: Value = serde_json::from_str(messages.last().unwrap()).unwrap();
+        assert_eq!(last_msg[0], "CLOSED");
+        assert_eq!(last_msg[1], "sub-3");
+        assert!(last_msg[2].as_str().unwrap().contains("too many subscriptions"));
+    }
+
+    /// 要件 3.2a: 既存サブスクリプションIDへのREQ（フィルター更新）はカウントチェックをスキップ
+    #[tokio::test]
+    async fn test_handle_req_update_existing_subscription_skips_count_check() {
+        let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = crate::domain::LimitationConfig {
+            max_subscriptions: 2,
+            ..Default::default()
+        };
+
+        // max_subscriptions分のサブスクリプションを作成
+        let filters1 = vec![json!({"kinds": [1]})];
+        handler.handle_req("sub-1".to_string(), filters1.clone(), "conn-123", &config).await.unwrap();
+        handler.handle_req("sub-2".to_string(), filters1.clone(), "conn-123", &config).await.unwrap();
+
+        // 既存のsubscription_id（sub-1）でフィルター更新は成功する
+        let filters2 = vec![json!({"kinds": [0]})];
+        let result = handler.handle_req("sub-1".to_string(), filters2, "conn-123", &config).await;
+
+        assert!(result.is_ok());
+
+        // フィルターが更新されていることを確認
+        let sub = subscription_repo.get("conn-123", "sub-1").await.unwrap().unwrap();
+        assert!(sub.filters[0].kinds.is_some());
+    }
+
+    /// サブスクリプション数制限が0の場合、新規サブスクリプションは全て拒否
+    #[tokio::test]
+    async fn test_handle_req_max_subscriptions_zero() {
+        let (handler, _, _, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig {
+            max_subscriptions: 0,
+            ..Default::default()
+        };
+
+        let filters = vec![json!({"kinds": [1]})];
+        let result = handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await;
+
+        assert!(result.is_err());
+
+        let messages = ws_sender.get_sent_messages("conn-123");
+        let msg: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(msg[0], "CLOSED");
+        assert!(msg[2].as_str().unwrap().contains("too many subscriptions"));
+    }
+
+    // ==================== Task 6.2: サブスクリプションID長検証テスト ====================
+
+    /// 要件 4.1, 4.2, 4.3: サブスクリプションIDがmax_subid_lengthを超える場合はCLOSED応答
+    #[tokio::test]
+    async fn test_handle_req_subscription_id_too_long_closed_message() {
+        let (handler, _, _, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig::default();
+
+        // 65文字のサブスクリプションID（max_subid_length=64を超える）
+        let long_id = "a".repeat(65);
+        let filters = vec![json!({"kinds": [1]})];
+        let result = handler.handle_req(long_id.clone(), filters, "conn-123", &config).await;
+
+        assert!(result.is_err());
+
+        // CLOSED応答に「subscription id too long」が含まれることを確認
+        let messages = ws_sender.get_sent_messages("conn-123");
+        assert_eq!(messages.len(), 1);
+        let msg: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(msg[0], "CLOSED");
+        assert_eq!(msg[1], long_id);
+        assert!(msg[2].as_str().unwrap().contains("subscription id too long"));
+    }
+
+    /// 空のサブスクリプションIDはinvalid扱い（too longとは別）
+    #[tokio::test]
+    async fn test_handle_req_empty_subscription_id_with_config() {
+        let (handler, _, _, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig::default();
+
+        let result = handler.handle_req("".to_string(), vec![], "conn-123", &config).await;
+
+        assert!(result.is_err());
+
+        // CLOSED応答がinvalid:で始まることを確認
+        let messages = ws_sender.get_sent_messages("conn-123");
+        let msg: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(msg[0], "CLOSED");
+        assert!(msg[2].as_str().unwrap().starts_with("invalid:"));
+    }
+
+    // ==================== Task 6.3: フィルターlimit値制限テスト ====================
+
+    /// 要件 3.3: limit値がmax_limitを超える場合はmax_limitにクランプ
+    #[tokio::test]
+    async fn test_handle_req_limit_clamped_to_max_limit() {
+        let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig {
+            max_limit: 10,
+            default_limit: 5,
+            ..Default::default()
+        };
+
+        // 15個のイベントを保存
+        for i in 0..15 {
+            let event = create_test_event_with_timestamp(&format!("event {}", i), 1700000000 + i * 100);
+            event_repo.save(&event).await.unwrap();
+        }
+
+        // limit=100のフィルターでREQ（max_limit=10にクランプされるはず）
+        let filters = vec![json!({"kinds": [1], "limit": 100})];
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
+
+        // EVENT x max_limit(10) + EOSE = 11
+        let messages = ws_sender.get_sent_messages("conn-123");
+        let event_count = messages.iter()
+            .filter(|m| {
+                let v: Value = serde_json::from_str(m).unwrap();
+                v[0] == "EVENT"
+            })
+            .count();
+        assert_eq!(event_count, 10);
+    }
+
+    /// 要件 1.10: limit未指定の場合はdefault_limitを適用
+    #[tokio::test]
+    async fn test_handle_req_default_limit_applied_when_no_limit() {
+        let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig {
+            max_limit: 100,
+            default_limit: 3,
+            ..Default::default()
+        };
+
+        // 10個のイベントを保存
+        for i in 0..10 {
+            let event = create_test_event_with_timestamp(&format!("event {}", i), 1700000000 + i * 100);
+            event_repo.save(&event).await.unwrap();
+        }
+
+        // limitなしのフィルターでREQ（default_limit=3が適用されるはず）
+        let filters = vec![json!({"kinds": [1]})];
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
+
+        // EVENT x default_limit(3) + EOSE = 4
+        let messages = ws_sender.get_sent_messages("conn-123");
+        let event_count = messages.iter()
+            .filter(|m| {
+                let v: Value = serde_json::from_str(m).unwrap();
+                v[0] == "EVENT"
+            })
+            .count();
+        assert_eq!(event_count, 3);
+    }
+
+    /// limit値がmax_limit以下の場合はそのまま使用
+    #[tokio::test]
+    async fn test_handle_req_limit_within_range_unchanged() {
+        let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig {
+            max_limit: 100,
+            default_limit: 50,
+            ..Default::default()
+        };
+
+        // 20個のイベントを保存
+        for i in 0..20 {
+            let event = create_test_event_with_timestamp(&format!("event {}", i), 1700000000 + i * 100);
+            event_repo.save(&event).await.unwrap();
+        }
+
+        // limit=5のフィルターでREQ（max_limit=100以下なのでそのまま5）
+        let filters = vec![json!({"kinds": [1], "limit": 5})];
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
+
+        // EVENT x 5 + EOSE = 6
+        let messages = ws_sender.get_sent_messages("conn-123");
+        let event_count = messages.iter()
+            .filter(|m| {
+                let v: Value = serde_json::from_str(m).unwrap();
+                v[0] == "EVENT"
+            })
+            .count();
+        assert_eq!(event_count, 5);
+    }
+
+    /// 複数フィルターの場合、全てのフィルターにlimit処理が適用される
+    #[tokio::test]
+    async fn test_handle_req_limit_applied_to_multiple_filters() {
+        let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = crate::domain::LimitationConfig {
+            max_limit: 5,
+            default_limit: 2,
+            ..Default::default()
+        };
+
+        // 10個のイベントを保存
+        for i in 0..10 {
+            let event = create_test_event_with_timestamp(&format!("event {}", i), 1700000000 + i * 100);
+            event_repo.save(&event).await.unwrap();
+        }
+
+        // 1つ目: limit=100（max_limit=5にクランプ）、2つ目: limitなし（default_limit=2）
+        // 結果は最小値=2が適用される
+        let filters = vec![
+            json!({"kinds": [1], "limit": 100}),
+            json!({"kinds": [1]}),
+        ];
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
+
+        // EVENT x min(5, 2)=2 + EOSE = 3
+        let messages = ws_sender.get_sent_messages("conn-123");
+        let event_count = messages.iter()
+            .filter(|m| {
+                let v: Value = serde_json::from_str(m).unwrap();
+                v[0] == "EVENT"
+            })
+            .count();
+        assert_eq!(event_count, 2);
+    }
+
+    // ==================== TooManySubscriptionsエラー型テスト ====================
+
+    #[test]
+    fn test_subscription_handler_error_too_many_subscriptions_display() {
+        let err = SubscriptionHandlerError::TooManySubscriptions { current: 20, limit: 20 };
+        assert!(err.to_string().contains("too many subscriptions"));
+        assert!(err.to_string().contains("20"));
+    }
+
     // ==================== Unicode subscription_idテスト ====================
 
     /// マルチバイト文字のsubscription_idが64文字まで許可される
     #[tokio::test]
     async fn test_handle_req_multibyte_subscription_id() {
         let (handler, _, subscription_repo, _) = create_test_handler();
+        let config = default_config();
 
         // 64文字の日本語
         let id = "あ".repeat(64);
-        let result = handler.handle_req(id.clone(), vec![], "conn-123").await;
+        let result = handler.handle_req(id.clone(), vec![], "conn-123", &config).await;
 
         assert!(result.is_ok());
         assert!(subscription_repo.get("conn-123", &id).await.unwrap().is_some());
@@ -831,10 +1257,11 @@ mod tests {
     #[tokio::test]
     async fn test_handle_req_multibyte_subscription_id_too_long() {
         let (handler, _, _, ws_sender) = create_test_handler();
+        let config = default_config();
 
         // 65文字の日本語
         let id = "あ".repeat(65);
-        let result = handler.handle_req(id, vec![], "conn-123").await;
+        let result = handler.handle_req(id, vec![], "conn-123", &config).await;
 
         assert!(result.is_err());
 

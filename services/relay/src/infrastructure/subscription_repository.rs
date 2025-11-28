@@ -650,6 +650,8 @@ pub(crate) mod tests {
         subscriptions: Arc<Mutex<HashMap<(String, String), SubscriptionInfo>>>,
         /// 次の操作で返すエラー（エラーパスのテスト用）
         next_error: Arc<Mutex<Option<SubscriptionRepositoryError>>>,
+        /// upsert操作専用のエラー（他の操作では消費されない）
+        upsert_error: Arc<Mutex<Option<SubscriptionRepositoryError>>>,
     }
 
     impl MockSubscriptionRepository {
@@ -657,11 +659,17 @@ pub(crate) mod tests {
             Self {
                 subscriptions: Arc::new(Mutex::new(HashMap::new())),
                 next_error: Arc::new(Mutex::new(None)),
+                upsert_error: Arc::new(Mutex::new(None)),
             }
         }
 
         pub fn set_next_error(&self, error: SubscriptionRepositoryError) {
             *self.next_error.lock().unwrap() = Some(error);
+        }
+
+        /// upsert操作専用のエラーを設定（他の操作では消費されない）
+        pub fn set_upsert_error(&self, error: SubscriptionRepositoryError) {
+            *self.upsert_error.lock().unwrap() = Some(error);
         }
 
         pub fn subscription_count(&self) -> usize {
@@ -684,6 +692,10 @@ pub(crate) mod tests {
             self.next_error.lock().unwrap().take()
         }
 
+        fn take_upsert_error(&self) -> Option<SubscriptionRepositoryError> {
+            self.upsert_error.lock().unwrap().take()
+        }
+
         fn current_timestamp() -> i64 {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -700,6 +712,11 @@ pub(crate) mod tests {
             subscription_id: &str,
             filters: &[Filter],
         ) -> Result<(), SubscriptionRepositoryError> {
+            // upsert専用エラーを優先的にチェック
+            if let Some(error) = self.take_upsert_error() {
+                return Err(error);
+            }
+            // 汎用エラーもチェック
             if let Some(error) = self.take_error() {
                 return Err(error);
             }

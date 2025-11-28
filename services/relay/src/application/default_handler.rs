@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 use crate::application::{ClientMessage, EventHandler, MessageParser, ParseError, SubscriptionHandler};
-use crate::domain::RelayMessage;
+use crate::domain::{LimitationConfig, RelayMessage};
 use crate::infrastructure::{EventRepository, SubscriptionRepository, WebSocketSender};
 
 /// デフォルトハンドラーのエラー型
@@ -58,6 +58,8 @@ where
     subscription_handler: SubscriptionHandler<ER, SR, WS>,
     /// WebSocket送信
     ws_sender: WS,
+    /// 制限値設定
+    limitation_config: LimitationConfig,
 }
 
 impl<ER, SR, WS> DefaultHandler<ER, SR, WS>
@@ -68,6 +70,16 @@ where
 {
     /// 新しいDefaultHandlerを作成
     pub fn new(event_repo: ER, subscription_repo: SR, ws_sender: WS) -> Self {
+        Self::with_config(event_repo, subscription_repo, ws_sender, LimitationConfig::default())
+    }
+
+    /// 制限値設定を指定してDefaultHandlerを作成
+    pub fn with_config(
+        event_repo: ER,
+        subscription_repo: SR,
+        ws_sender: WS,
+        limitation_config: LimitationConfig,
+    ) -> Self {
         let event_handler = EventHandler::new(
             event_repo.clone(),
             subscription_repo.clone(),
@@ -83,6 +95,7 @@ where
             event_handler,
             subscription_handler,
             ws_sender,
+            limitation_config,
         }
     }
 
@@ -142,13 +155,13 @@ where
                 // REQメッセージを処理 (要件 6.1)
                 // SubscriptionHandlerは内部でEVENT/EOSEを送信するため、ここでは結果を無視
                 let _ = self.subscription_handler
-                    .handle_req(subscription_id, filters, connection_id)
+                    .handle_req(subscription_id, filters, connection_id, &self.limitation_config)
                     .await;
             }
             ClientMessage::Close { subscription_id } => {
                 // CLOSEメッセージを処理 (要件 7.1)
                 let _ = self.subscription_handler
-                    .handle_close(subscription_id, connection_id)
+                    .handle_close(subscription_id, connection_id, &self.limitation_config)
                     .await;
             }
         }

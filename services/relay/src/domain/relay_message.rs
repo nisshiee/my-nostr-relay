@@ -158,6 +158,16 @@ impl RelayMessage {
         Self::closed_error(subscription_id, "failed to manage subscription")
     }
 
+    /// サブスクリプションID長超過用のCLOSEDメッセージを作成 (要件 4.1, 4.2, 4.3)
+    pub fn closed_subscription_id_too_long(subscription_id: &str) -> Self {
+        Self::closed_invalid(subscription_id, "subscription id too long")
+    }
+
+    /// サブスクリプション数上限超過用のCLOSEDメッセージを作成 (要件 3.2)
+    pub fn closed_too_many_subscriptions(subscription_id: &str) -> Self {
+        Self::closed_error(subscription_id, "too many subscriptions")
+    }
+
     // ==================== NOTICEメッセージヘルパー ====================
 
     /// 無効なメッセージフォーマット用のNOTICEを作成 (要件 15.1)
@@ -431,6 +441,42 @@ mod tests {
                 assert_eq!(subscription_id, "sub123");
                 assert!(message.starts_with("error:"));
                 assert!(message.contains("failed to manage subscription"));
+            }
+            _ => panic!("Expected Closed message"),
+        }
+    }
+
+    // 要件 4.1, 4.2, 4.3: サブスクリプションID長超過
+    #[test]
+    fn test_closed_subscription_id_too_long() {
+        let msg = RelayMessage::closed_subscription_id_too_long("long-sub-id");
+
+        match msg {
+            RelayMessage::Closed {
+                subscription_id,
+                message,
+            } => {
+                assert_eq!(subscription_id, "long-sub-id");
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("subscription id too long"));
+            }
+            _ => panic!("Expected Closed message"),
+        }
+    }
+
+    // 要件 3.2: サブスクリプション数上限超過
+    #[test]
+    fn test_closed_too_many_subscriptions() {
+        let msg = RelayMessage::closed_too_many_subscriptions("sub123");
+
+        match msg {
+            RelayMessage::Closed {
+                subscription_id,
+                message,
+            } => {
+                assert_eq!(subscription_id, "sub123");
+                assert!(message.starts_with("error:"));
+                assert!(message.contains("too many subscriptions"));
             }
             _ => panic!("Expected Closed message"),
         }
