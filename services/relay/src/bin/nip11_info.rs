@@ -82,7 +82,7 @@ mod tests {
 
     /// ハンドラーがHTTP 200ステータスを返す
     #[tokio::test]
-    #[serial]
+    #[serial(relay_env)]
     async fn test_handler_returns_200_status() {
         init_logging();
         unsafe { cleanup_relay_env(); }
@@ -102,7 +102,7 @@ mod tests {
 
     /// ハンドラーがContent-Type: application/nostr+jsonを返す
     #[tokio::test]
-    #[serial]
+    #[serial(relay_env)]
     async fn test_handler_returns_correct_content_type() {
         init_logging();
         unsafe { cleanup_relay_env(); }
@@ -123,7 +123,7 @@ mod tests {
 
     /// ハンドラーがCORSヘッダーを含むレスポンスを返す
     #[tokio::test]
-    #[serial]
+    #[serial(relay_env)]
     async fn test_handler_returns_cors_headers() {
         init_logging();
         unsafe { cleanup_relay_env(); }
@@ -145,7 +145,7 @@ mod tests {
 
     /// ハンドラーが有効なJSON本文を返す
     #[tokio::test]
-    #[serial]
+    #[serial(relay_env)]
     async fn test_handler_returns_valid_json_body() {
         init_logging();
         unsafe { cleanup_relay_env(); }
@@ -179,7 +179,7 @@ mod tests {
 
     /// ハンドラーが環境変数からの設定を正しく反映する
     #[tokio::test]
-    #[serial]
+    #[serial(relay_env)]
     async fn test_handler_reflects_environment_config() {
         init_logging();
 
@@ -222,7 +222,7 @@ mod tests {
 
     /// ハンドラーがsupported_nipsにNIP-1とNIP-11を含む
     #[tokio::test]
-    #[serial]
+    #[serial(relay_env)]
     async fn test_handler_includes_supported_nips() {
         init_logging();
         unsafe { cleanup_relay_env(); }
@@ -253,7 +253,7 @@ mod tests {
 
     /// ハンドラーがlimitationにmax_subid_lengthを含む
     #[tokio::test]
-    #[serial]
+    #[serial(relay_env)]
     async fn test_handler_includes_limitation() {
         init_logging();
         unsafe { cleanup_relay_env(); }
