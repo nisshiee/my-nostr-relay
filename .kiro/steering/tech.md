@@ -2,12 +2,20 @@
 
 ## Architecture
 
-サーバーレスアーキテクチャを採用。WebSocket接続はAWS API Gateway v2で管理し、イベント処理はLambda関数で実行。データ永続化はDynamoDBを使用。
+サーバーレスアーキテクチャを採用。CloudFront + Lambda@Edgeでプロトコルルーティングを行い、WebSocketはAPI Gateway v2、HTTP (NIP-11)はLambda Function URLで処理。
 
 ```
-Client <--WebSocket--> API Gateway v2 <---> Lambda (Rust) <---> DynamoDB
+Client --> CloudFront --> Lambda@Edge (Router)
                               |
-                         Route53 DNS
+              +---------------+---------------+
+              |                               |
+         WebSocket                          HTTP
+              |                               |
+      API Gateway v2                 Lambda Function URL
+              |                               |
+       Lambda (Rust)                   Lambda (Rust)
+              |                          NIP-11 Info
+         DynamoDB
 ```
 
 ## Core Technologies
@@ -26,14 +34,16 @@ Client <--WebSocket--> API Gateway v2 <---> Lambda (Rust) <---> DynamoDB
 
 ### Infrastructure (`terraform/`)
 - **IaC**: Terraform
-- **Cloud**: AWS (Lambda, API Gateway v2, Route53, ACM, DynamoDB)
+- **Cloud**: AWS (Lambda, API Gateway v2, CloudFront, Lambda@Edge, Route53, ACM, DynamoDB)
 - **Database**: DynamoDB (Events, Connections, Subscriptions)
+- **CDN**: CloudFront + Lambda@Edge (プロトコルルーティング)
 - **Frontend Hosting**: Vercel
 
 ## Key Libraries
 
 ### Rust (Relay)
-- `lambda_runtime` - AWS Lambda Rust runtime
+- `lambda_runtime` - AWS Lambda Rust runtime (WebSocket系)
+- `lambda_http` - AWS Lambda HTTP runtime (NIP-11)
 - `nostr` - Nostrプロトコル型定義・署名検証・フィルター評価
 - `aws-sdk-dynamodb` - DynamoDB操作
 - `aws-sdk-apigatewaymanagement` - WebSocketメッセージ送信
@@ -94,6 +104,7 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 |----------|-----------|
 | Rust for Relay | メモリ安全性、高性能、Lambda cold start最適化 |
 | Serverless WebSocket | API Gateway v2でWebSocket接続管理、スケーラブル |
+| CloudFront + Lambda@Edge | 単一ドメインでWebSocket/HTTP両対応、エッジでのプロトコルルーティング |
 | DynamoDB | サーバーレス、従量課金、GSIによる柔軟なクエリパターン |
 | nostr crate活用 | プロトコル型定義・署名検証の再実装を回避、エコシステム準拠 |
 | 3-Layer Architecture | Domain/Application/Infrastructure分離でテスト容易性・責務明確化 |
@@ -105,7 +116,9 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 ## Domain Configuration
 
 - **Web**: `nostr.nisshiee.org` (Vercel)
-- **Relay**: `relay.nostr.nisshiee.org` (API Gateway WebSocket)
+- **Relay**: `relay.nostr.nisshiee.org` (CloudFront + Lambda@Edge)
+  - WebSocket: CloudFront -> API Gateway v2
+  - HTTP (NIP-11): CloudFront -> Lambda Function URL
 
 ---
 _Document standards and patterns, not every dependency_

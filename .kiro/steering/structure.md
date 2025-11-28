@@ -25,7 +25,7 @@ terraform/
   main.tf              # プロバイダー設定、モジュール呼び出し
   modules/
     domain/            # Route53, ACM証明書
-    api/               # Lambda, API Gateway (WebSocket)
+    api/               # Lambda, API Gateway, CloudFront, Lambda@Edge
     web/               # Vercelプロジェクト
 ```
 
@@ -52,9 +52,12 @@ terraform/
 
 ### Lambda Functions
 - バイナリ名 = Lambda関数名のベース
-- `connect.rs` -> `nostr_relay_connect`
-- `disconnect.rs` -> `nostr_relay_disconnect`
-- `default.rs` -> `nostr_relay_default`
+- WebSocket系:
+  - `connect.rs` -> `nostr_relay_connect`
+  - `disconnect.rs` -> `nostr_relay_disconnect`
+  - `default.rs` -> `nostr_relay_default`
+- HTTP系:
+  - `nip11_info.rs` -> `nostr_relay_nip11` (NIP-11リレー情報)
 
 ## Import Organization
 
@@ -86,10 +89,13 @@ import { ... } from './components';
 ### Lambda関数パターン
 - 各Lambda関数は `src/bin/` に独立したバイナリとして配置
 - 共通ロジックは `src/lib.rs` に集約
-- WebSocket API Gateway の3ルート対応:
-  - `$connect` -> `connect.rs`
-  - `$disconnect` -> `disconnect.rs`
-  - `$default` -> `default.rs`
+- 2種類のLambdaランタイム:
+  - **WebSocket系** (`lambda_runtime`): API Gateway v2経由
+    - `$connect` -> `connect.rs`
+    - `$disconnect` -> `disconnect.rs`
+    - `$default` -> `default.rs`
+  - **HTTP系** (`lambda_http`): Lambda Function URL経由
+    - NIP-11 -> `nip11_info.rs`
 
 ### レイヤードアーキテクチャ（Relay Service）
 ```
@@ -122,6 +128,12 @@ src/
 - 各モジュールは単一責務（domain, api, web）
 - 変数で依存関係を注入（zone_id, certificate_arn等）
 - 出力値で他モジュールへ情報を公開
+- 複雑なモジュールはリソース種別でファイル分割:
+  - `api/main.tf` - API Gateway, Lambda
+  - `api/cloudfront.tf` - CloudFrontディストリビューション
+  - `api/lambda_edge.tf` - Lambda@Edgeルーター
+  - `api/dynamodb.tf` - DynamoDBテーブル
+  - `api/nip11.tf` - NIP-11 Lambda Function URL
 
 ### フロントエンド構成
 - Next.js App Routerを使用
