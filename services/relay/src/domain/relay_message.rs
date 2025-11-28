@@ -130,6 +130,21 @@ impl RelayMessage {
         Self::ok_error(event_id, error_prefix::ERROR, "failed to store event")
     }
 
+    /// タグ数超過用のOKエラーを作成 (要件 3.4)
+    pub fn ok_too_many_tags(event_id: &str) -> Self {
+        Self::ok_error(event_id, error_prefix::INVALID, "too many tags")
+    }
+
+    /// コンテンツ長超過用のOKエラーを作成 (要件 3.5)
+    pub fn ok_content_too_long(event_id: &str) -> Self {
+        Self::ok_error(event_id, error_prefix::INVALID, "content too long")
+    }
+
+    /// created_at範囲外用のOKエラーを作成 (要件 3.6, 3.7)
+    pub fn ok_created_at_out_of_range(event_id: &str) -> Self {
+        Self::ok_error(event_id, error_prefix::INVALID, "created_at out of range")
+    }
+
     // ==================== CLOSEDメッセージヘルパー ====================
 
     /// 無効なサブスクリプション用のCLOSEDメッセージを作成 (要件 6.7)
@@ -403,6 +418,66 @@ mod tests {
             RelayMessage::Ok { message, .. } => {
                 assert!(message.starts_with("error:"));
                 assert!(message.contains("failed to store event"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    // 要件 3.4: タグ数超過エラー
+    #[test]
+    fn test_ok_too_many_tags() {
+        let msg = RelayMessage::ok_too_many_tags("event123");
+
+        match msg {
+            RelayMessage::Ok {
+                event_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(event_id, "event123");
+                assert!(!accepted);
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("too many tags"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    // 要件 3.5: コンテンツ長超過エラー
+    #[test]
+    fn test_ok_content_too_long() {
+        let msg = RelayMessage::ok_content_too_long("event123");
+
+        match msg {
+            RelayMessage::Ok {
+                event_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(event_id, "event123");
+                assert!(!accepted);
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("content too long"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    // 要件 3.6, 3.7: created_at範囲外エラー
+    #[test]
+    fn test_ok_created_at_out_of_range() {
+        let msg = RelayMessage::ok_created_at_out_of_range("event123");
+
+        match msg {
+            RelayMessage::Ok {
+                event_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(event_id, "event123");
+                assert!(!accepted);
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("created_at out of range"));
             }
             _ => panic!("Expected Ok message"),
         }

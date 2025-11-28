@@ -147,8 +147,10 @@ where
         // メッセージタイプに応じてハンドラーに委譲
         match client_message {
             ClientMessage::Event(event_json) => {
-                // EVENTメッセージを処理 (要件 5.1)
-                let response = self.event_handler.handle(event_json, connection_id).await;
+                // EVENTメッセージを処理 (要件 5.1, 3.4-3.7)
+                let response = self.event_handler
+                    .handle_with_config(event_json, connection_id, &self.limitation_config)
+                    .await;
                 let _ = self.ws_sender.send(connection_id, &response.to_json()).await;
             }
             ClientMessage::Req { subscription_id, filters } => {

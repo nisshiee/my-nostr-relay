@@ -85,7 +85,7 @@
   - _Requirements: 3.3, 1.10_
 
 ## Task 7: イベントハンドラへの制限バリデーション統合
-- [ ] 7. イベント投稿時に制限値バリデーションを適用する
+- [x] 7. イベント投稿時に制限値バリデーションを適用する
   - EVENTメッセージ処理時にTask 4で実装した制限値バリデーションを呼び出す
   - タグ数超過時は「invalid: too many tags」でOK false応答
   - コンテンツ長超過時は「invalid: content too long」でOK false応答
