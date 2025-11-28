@@ -1,9 +1,12 @@
 /// NIP-01準拠のイベントバリデーション
 ///
 /// 要件: 2.1-2.8, 3.1-3.5, 4.1-4.2
+/// NIP-11制限値バリデーション: 3.4-3.7
 use nostr::Event;
 use serde_json::Value;
 use thiserror::Error;
+
+use crate::domain::LimitationConfig;
 
 /// イベント構造と検証のバリデーションエラー
 #[derive(Debug, Clone, PartialEq, Error)]
@@ -41,6 +44,46 @@ pub enum ValidationError {
     /// イベントJSONのパースに失敗
     #[error("parse error: {0}")]
     ParseError(String),
+
+    // ===========================================
+    // NIP-11制限値バリデーションエラー (要件 3.4-3.7)
+    // ===========================================
+
+    /// タグ数が制限を超過
+    #[error("too many tags: {count} exceeds limit {limit}")]
+    TooManyTags {
+        /// 実際のタグ数
+        count: usize,
+        /// 制限値
+        limit: u32,
+    },
+
+    /// コンテンツ長が制限を超過
+    #[error("content too long: {length} characters exceeds limit {limit}")]
+    ContentTooLong {
+        /// 実際の文字数
+        length: usize,
+        /// 制限値
+        limit: u32,
+    },
+
+    /// created_atが過去すぎる
+    #[error("created_at too old: event is {age} seconds old, limit is {limit}")]
+    CreatedAtTooOld {
+        /// 経過秒数
+        age: u64,
+        /// 制限値（秒）
+        limit: u64,
+    },
+
+    /// created_atが未来すぎる
+    #[error("created_at too far in future: {ahead} seconds ahead, limit is {limit}")]
+    CreatedAtTooFarInFuture {
+        /// 先行秒数
+        ahead: u64,
+        /// 制限値（秒）
+        limit: u64,
+    },
 }
 
 /// NIP-01準拠のイベントバリデータ
@@ -164,6 +207,75 @@ impl EventValidator {
         Self::verify_signature(&event)?;
 
         Ok(event)
+    }
+
+    /// 制限値に基づくバリデーション（要件 3.4-3.7）
+    ///
+    /// # チェック項目
+    /// - tags配列の要素数が max_event_tags 以下
+    /// - content文字数が max_content_length 以下（Unicode文字数でカウント）
+    /// - created_at が (現在時刻 - created_at_lower_limit) 以上
+    /// - created_at が (現在時刻 + created_at_upper_limit) 以下
+    ///
+    /// # 引数
+    /// - `event`: バリデーション対象のイベント
+    /// - `config`: 制限値設定
+    ///
+    /// # 戻り値
+    /// - 成功時は`Ok(())`
+    /// - 失敗時は対応する`ValidationError`
+    pub fn validate_limitation(
+        event: &Event,
+        config: &LimitationConfig,
+    ) -> Result<(), ValidationError> {
+        // タグ数チェック
+        let tag_count = event.tags.len();
+        if tag_count > config.max_event_tags as usize {
+            return Err(ValidationError::TooManyTags {
+                count: tag_count,
+                limit: config.max_event_tags,
+            });
+        }
+
+        // コンテンツ長チェック（Unicode文字数）
+        let content_length = event.content.chars().count();
+        if content_length > config.max_content_length as usize {
+            return Err(ValidationError::ContentTooLong {
+                length: content_length,
+                limit: config.max_content_length,
+            });
+        }
+
+        // 現在時刻を取得
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // イベントのcreated_atをu64に変換
+        let event_created_at = event.created_at.as_secs();
+
+        // created_at下限チェック（過去すぎないか）
+        let lower_bound = now.saturating_sub(config.created_at_lower_limit);
+        if event_created_at < lower_bound {
+            let age = now.saturating_sub(event_created_at);
+            return Err(ValidationError::CreatedAtTooOld {
+                age,
+                limit: config.created_at_lower_limit,
+            });
+        }
+
+        // created_at上限チェック（未来すぎないか）
+        let upper_bound = now.saturating_add(config.created_at_upper_limit);
+        if event_created_at > upper_bound {
+            let ahead = event_created_at.saturating_sub(now);
+            return Err(ValidationError::CreatedAtTooFarInFuture {
+                ahead,
+                limit: config.created_at_upper_limit,
+            });
+        }
+
+        Ok(())
     }
 
     /// 値が指定された長さの有効な小文字16進数文字列かをチェック
@@ -589,5 +701,420 @@ mod tests {
             ValidationError::SignatureVerificationFailed.to_string(),
             "signature verification failed"
         );
+    }
+
+    // ==================== 制限値バリデーションエラー表示テスト (要件 3.4-3.7) ====================
+
+    #[test]
+    fn test_too_many_tags_error_display() {
+        let error = ValidationError::TooManyTags {
+            count: 1500,
+            limit: 1000,
+        };
+        assert_eq!(
+            error.to_string(),
+            "too many tags: 1500 exceeds limit 1000"
+        );
+    }
+
+    #[test]
+    fn test_content_too_long_error_display() {
+        let error = ValidationError::ContentTooLong {
+            length: 70000,
+            limit: 65536,
+        };
+        assert_eq!(
+            error.to_string(),
+            "content too long: 70000 characters exceeds limit 65536"
+        );
+    }
+
+    #[test]
+    fn test_created_at_too_old_error_display() {
+        let error = ValidationError::CreatedAtTooOld {
+            age: 40000000,
+            limit: 31536000,
+        };
+        assert_eq!(
+            error.to_string(),
+            "created_at too old: event is 40000000 seconds old, limit is 31536000"
+        );
+    }
+
+    #[test]
+    fn test_created_at_too_far_in_future_error_display() {
+        let error = ValidationError::CreatedAtTooFarInFuture {
+            ahead: 1200,
+            limit: 900,
+        };
+        assert_eq!(
+            error.to_string(),
+            "created_at too far in future: 1200 seconds ahead, limit is 900"
+        );
+    }
+
+    // ==================== 制限値バリデーションテスト (要件 3.4-3.7) ====================
+
+    use crate::domain::LimitationConfig;
+
+    // イベントを生成するヘルパー関数（タグ数を指定）
+    fn create_event_with_tags(tag_count: usize) -> Event {
+        use nostr::{Keys, Tag, TagKind};
+
+        let keys = Keys::generate();
+        let tags: Vec<Tag> = (0..tag_count)
+            .map(|i| Tag::custom(TagKind::Custom(format!("t{}", i).into()), vec![format!("value{}", i)]))
+            .collect();
+
+        nostr::EventBuilder::text_note("test content")
+            .tags(tags)
+            .sign_with_keys(&keys)
+            .expect("Failed to create event")
+    }
+
+    // イベントを生成するヘルパー関数（コンテンツ長を指定）
+    fn create_event_with_content(content: &str) -> Event {
+        use nostr::Keys;
+
+        let keys = Keys::generate();
+        nostr::EventBuilder::text_note(content)
+            .sign_with_keys(&keys)
+            .expect("Failed to create event")
+    }
+
+    // イベントを生成するヘルパー関数（created_atを指定）
+    fn create_event_with_created_at(timestamp: u64) -> Event {
+        use nostr::{Keys, Timestamp};
+
+        let keys = Keys::generate();
+        nostr::EventBuilder::text_note("test content")
+            .custom_created_at(Timestamp::from(timestamp))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event")
+    }
+
+    // ----- タグ数バリデーションテスト (要件 3.4) -----
+
+    #[test]
+    fn test_validate_limitation_tags_at_limit() {
+        // タグ数がちょうど制限値の場合は成功
+        let config = LimitationConfig {
+            max_event_tags: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_tags(10);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_tags_below_limit() {
+        // タグ数が制限値未満の場合は成功
+        let config = LimitationConfig {
+            max_event_tags: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_tags(9);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_tags_exceed_limit() {
+        // タグ数が制限値を超える場合はエラー
+        let config = LimitationConfig {
+            max_event_tags: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_tags(11);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert_eq!(
+            result,
+            Err(ValidationError::TooManyTags {
+                count: 11,
+                limit: 10
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_limitation_zero_tags() {
+        // タグなしの場合は成功
+        let config = LimitationConfig {
+            max_event_tags: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_tags(0);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    // ----- コンテンツ長バリデーションテスト (要件 3.5) -----
+
+    #[test]
+    fn test_validate_limitation_content_at_limit() {
+        // コンテンツ長がちょうど制限値の場合は成功
+        let config = LimitationConfig {
+            max_content_length: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_content("0123456789"); // 10文字
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_content_below_limit() {
+        // コンテンツ長が制限値未満の場合は成功
+        let config = LimitationConfig {
+            max_content_length: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_content("012345678"); // 9文字
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_content_exceed_limit() {
+        // コンテンツ長が制限値を超える場合はエラー
+        let config = LimitationConfig {
+            max_content_length: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_content("01234567890"); // 11文字
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert_eq!(
+            result,
+            Err(ValidationError::ContentTooLong {
+                length: 11,
+                limit: 10
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_limitation_content_unicode() {
+        // Unicode文字数でカウント（バイト数ではなく）
+        let config = LimitationConfig {
+            max_content_length: 5,
+            ..LimitationConfig::default()
+        };
+        // "あいうえお" は5文字（15バイト）
+        let event = create_event_with_content("あいうえお");
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok()); // 5文字なのでOK
+    }
+
+    #[test]
+    fn test_validate_limitation_content_unicode_exceed() {
+        // Unicode文字でも制限を超える場合はエラー
+        let config = LimitationConfig {
+            max_content_length: 4,
+            ..LimitationConfig::default()
+        };
+        // "あいうえお" は5文字
+        let event = create_event_with_content("あいうえお");
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert_eq!(
+            result,
+            Err(ValidationError::ContentTooLong {
+                length: 5,
+                limit: 4
+            })
+        );
+    }
+
+    #[test]
+    fn test_validate_limitation_content_emoji() {
+        // 絵文字も1文字としてカウント
+        let config = LimitationConfig {
+            max_content_length: 3,
+            ..LimitationConfig::default()
+        };
+        // 絵文字3つ
+        let event = create_event_with_content("😀😁😂");
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok()); // 3文字なのでOK
+    }
+
+    #[test]
+    fn test_validate_limitation_empty_content() {
+        // 空コンテンツは成功
+        let config = LimitationConfig {
+            max_content_length: 10,
+            ..LimitationConfig::default()
+        };
+        let event = create_event_with_content("");
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    // ----- created_at下限バリデーションテスト (要件 3.6) -----
+
+    #[test]
+    fn test_validate_limitation_created_at_within_lower_limit() {
+        // created_atが下限以内の場合は成功
+        let config = LimitationConfig {
+            created_at_lower_limit: 3600, // 1時間
+            ..LimitationConfig::default()
+        };
+        // 現在時刻から30分前
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event = create_event_with_created_at(now - 1800);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_created_at_at_lower_limit() {
+        // created_atがちょうど下限の場合は成功（境界値）
+        let config = LimitationConfig {
+            created_at_lower_limit: 3600, // 1時間
+            ..LimitationConfig::default()
+        };
+        // 現在時刻からちょうど1時間前
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event = create_event_with_created_at(now - 3600);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_created_at_exceed_lower_limit() {
+        // created_atが下限を超えて古い場合はエラー
+        let config = LimitationConfig {
+            created_at_lower_limit: 3600, // 1時間
+            ..LimitationConfig::default()
+        };
+        // 現在時刻から2時間前
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event = create_event_with_created_at(now - 7200);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(matches!(result, Err(ValidationError::CreatedAtTooOld { .. })));
+    }
+
+    // ----- created_at上限バリデーションテスト (要件 3.7) -----
+
+    #[test]
+    fn test_validate_limitation_created_at_within_upper_limit() {
+        // created_atが上限以内の場合は成功
+        let config = LimitationConfig {
+            created_at_upper_limit: 900, // 15分
+            ..LimitationConfig::default()
+        };
+        // 現在時刻から5分後
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event = create_event_with_created_at(now + 300);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_created_at_at_upper_limit() {
+        // created_atがちょうど上限の場合は成功（境界値）
+        let config = LimitationConfig {
+            created_at_upper_limit: 900, // 15分
+            ..LimitationConfig::default()
+        };
+        // 現在時刻からちょうど15分後
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event = create_event_with_created_at(now + 900);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_created_at_exceed_upper_limit() {
+        // created_atが上限を超えて未来の場合はエラー
+        let config = LimitationConfig {
+            created_at_upper_limit: 900, // 15分
+            ..LimitationConfig::default()
+        };
+        // 現在時刻から30分後
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event = create_event_with_created_at(now + 1800);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(matches!(
+            result,
+            Err(ValidationError::CreatedAtTooFarInFuture { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validate_limitation_created_at_current_time() {
+        // 現在時刻のcreated_atは成功
+        let config = LimitationConfig::default();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event = create_event_with_created_at(now);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    // ----- 複合テスト -----
+
+    #[test]
+    fn test_validate_limitation_all_valid() {
+        // すべての制限を満たすイベント
+        let config = LimitationConfig::default();
+        let event = create_event_with_content("hello world");
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_limitation_tags_checked_first() {
+        // タグ数とコンテンツ長の両方が超過している場合、タグ数エラーが先に返される
+        let config = LimitationConfig {
+            max_event_tags: 5,
+            max_content_length: 10,
+            ..LimitationConfig::default()
+        };
+        // タグ10個、コンテンツ20文字のイベントを作成するのは難しいので
+        // タグ数エラーのみ確認
+        let event = create_event_with_tags(10);
+
+        let result = EventValidator::validate_limitation(&event, &config);
+        assert!(matches!(result, Err(ValidationError::TooManyTags { .. })));
     }
 }
