@@ -23,6 +23,7 @@ Client --> CloudFront --> Lambda@Edge (Router)
 ### Relay Service (`services/relay/`)
 - **Language**: Rust (Edition 2024)
 - **Runtime**: AWS Lambda (provided.al2023)
+- **Architecture**: ARM64 (Graviton2)
 - **Async**: tokio (full features)
 - **Serialization**: serde_json
 
@@ -30,13 +31,15 @@ Client --> CloudFront --> Lambda@Edge (Router)
 - **Framework**: Next.js 16
 - **UI Library**: React 19
 - **Styling**: Tailwind CSS 4
+  - `@tailwindcss/typography` - ポリシーページのタイポグラフィ
 - **Language**: TypeScript 5
 
 ### Infrastructure (`terraform/`)
 - **IaC**: Terraform
-- **Cloud**: AWS (Lambda, API Gateway v2, CloudFront, Lambda@Edge, Route53, ACM, DynamoDB)
+- **Cloud**: AWS (Lambda, API Gateway v2, CloudFront, Lambda@Edge, Route53, ACM, DynamoDB, CloudWatch Logs)
 - **Database**: DynamoDB (Events, Connections, Subscriptions)
 - **CDN**: CloudFront + Lambda@Edge (プロトコルルーティング)
+- **Logging**: CloudWatch Logs (90日保存、法的対処・不正利用防止)
 - **Frontend Hosting**: Vercel
 
 ## Key Libraries
@@ -64,7 +67,7 @@ Client --> CloudFront --> Lambda@Edge (Router)
 ### Rust Code Quality
 - Edition 2024の最新機能を活用
 - Lambda関数は個別バイナリとしてビルド (`src/bin/`)
-- cargo-lambdaでクロスコンパイル
+- cargo-lambdaでARM64向けクロスコンパイル
 
 ### TypeScript Code Quality
 - ESLint + Next.js推奨設定
@@ -87,8 +90,8 @@ Client --> CloudFront --> Lambda@Edge (Router)
 ### Common Commands
 
 ```bash
-# Relay Build
-cd services/relay && cargo lambda build --release
+# Relay Build (ARM64 for Lambda)
+cd services/relay && cargo lambda build --release --arm64
 
 # Web Dev
 cd apps/web && npm run dev
@@ -103,6 +106,7 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 | Decision | Rationale |
 |----------|-----------|
 | Rust for Relay | メモリ安全性、高性能、Lambda cold start最適化 |
+| ARM64 (Graviton2) | x86_64比で20%コスト削減、優れた性能/電力効率 |
 | Serverless WebSocket | API Gateway v2でWebSocket接続管理、スケーラブル |
 | CloudFront + Lambda@Edge | 単一ドメインでWebSocket/HTTP両対応、エッジでのプロトコルルーティング |
 | DynamoDB | サーバーレス、従量課金、GSIによる柔軟なクエリパターン |
@@ -110,6 +114,8 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 | 3-Layer Architecture | Domain/Application/Infrastructure分離でテスト容易性・責務明確化 |
 | Modular Terraform | domain/api/webで責務分離、再利用性向上 |
 | 構造化ログ (tracing) | Lambda環境での可観測性向上、JSON形式ログ出力 |
+| CloudWatch Logs 90日保存 | 法的対処・不正利用防止のためのアクセスログ保存（プライバシーポリシー準拠） |
+| アクセスログ記録 | IPアドレス、User-Agent、リクエスト時刻、イベント種別を記録 |
 | Vercel for Frontend | Next.js最適化ホスティング、GitHubとの連携 |
 | Edition 2024 | 最新のRust機能を活用 |
 

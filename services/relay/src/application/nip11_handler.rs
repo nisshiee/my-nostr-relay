@@ -66,6 +66,9 @@ impl Nip11Handler {
             self.config.banner.clone(),
             self.config.relay_countries.clone(),
             self.config.language_tags.clone(),
+            self.config.privacy_policy.clone(),
+            self.config.terms_of_service.clone(),
+            self.config.posting_policy.clone(),
             limitation,
         )
     }
@@ -268,6 +271,9 @@ mod tests {
             Some("https://example.com/banner.png".to_string()),
             vec!["JP".to_string(), "US".to_string()],
             vec!["ja".to_string(), "en".to_string()],
+            None,
+            None,
+            None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -288,7 +294,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_with_empty_config() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -309,7 +315,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_includes_supported_nips() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -325,7 +331,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_software_url() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -339,7 +345,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_version() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -353,7 +359,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_limitation() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -372,6 +378,9 @@ mod tests {
             None, None, None, None,
             vec!["JP".to_string()],
             vec!["ja".to_string()],
+            None,
+            None,
+            None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -397,7 +406,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_json_omits_none_fields() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -435,6 +444,9 @@ mod tests {
             Some("https://example.com/banner.png".to_string()),
             vec!["JP".to_string()],
             vec!["ja".to_string()],
+            None,
+            None,
+            None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -469,7 +481,7 @@ mod tests {
         let config = RelayInfoConfig::new(
             Some("Partial Relay".to_string()),
             Some("Only name and description set".to_string()),
-            None, None, None, None, vec![], vec![],
+            None, None, None, None, vec![], vec![], None, None, None,
         );
 
         let handler = Nip11Handler::new(config);
@@ -502,7 +514,7 @@ mod tests {
     fn test_handle_returns_200_status() {
         let config = RelayInfoConfig::new(
             Some("Test Relay".to_string()),
-            None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let handler = Nip11Handler::new(config);
 
@@ -515,7 +527,7 @@ mod tests {
     #[test]
     fn test_handle_returns_content_type_nostr_json() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let handler = Nip11Handler::new(config);
 
@@ -530,7 +542,7 @@ mod tests {
     #[test]
     fn test_handle_returns_cors_allow_origin() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let handler = Nip11Handler::new(config);
 
@@ -545,7 +557,7 @@ mod tests {
     #[test]
     fn test_handle_returns_cors_allow_headers() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let handler = Nip11Handler::new(config);
 
@@ -560,7 +572,7 @@ mod tests {
     #[test]
     fn test_handle_returns_cors_allow_methods() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let handler = Nip11Handler::new(config);
 
@@ -580,6 +592,9 @@ mod tests {
             None, None, None, None,
             vec!["JP".to_string()],
             vec!["ja".to_string()],
+            None,
+            None,
+            None,
         );
         let handler = Nip11Handler::new(config);
 

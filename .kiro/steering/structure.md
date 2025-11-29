@@ -91,11 +91,11 @@ import { ... } from './components';
 - 共通ロジックは `src/lib.rs` に集約
 - 2種類のLambdaランタイム:
   - **WebSocket系** (`lambda_runtime`): API Gateway v2経由
-    - `$connect` -> `connect.rs`
-    - `$disconnect` -> `disconnect.rs`
-    - `$default` -> `default.rs`
+    - `$connect` -> `connect.rs` (アクセスログ記録: IP, User-Agent)
+    - `$disconnect` -> `disconnect.rs` (アクセスログ記録)
+    - `$default` -> `default.rs` (アクセスログ記録: イベント種別)
   - **HTTP系** (`lambda_http`): Lambda Function URL経由
-    - NIP-11 -> `nip11_info.rs`
+    - NIP-11 -> `nip11_info.rs` (環境変数から11個のリレー情報フィールド読み込み)
 
 ### レイヤードアーキテクチャ（Relay Service）
 ```
@@ -134,10 +134,15 @@ src/
   - `api/lambda_edge.tf` - Lambda@Edgeルーター
   - `api/dynamodb.tf` - DynamoDBテーブル
   - `api/nip11.tf` - NIP-11 Lambda Function URL
+  - `api/cloudwatch_logs.tf` - CloudWatch Logsロググループ（90日保存）
 
 ### フロントエンド構成
 - Next.js App Routerを使用
 - `app/` ディレクトリでルーティング
+- ポリシーページ用のRoute Group: `app/relay/(policy)/`
+  - 共通レイアウト（`layout.tsx`）で一貫したスタイル
+  - 3つのポリシーページ: `/relay/terms`, `/relay/privacy`, `/relay/posting-policy`
+  - Tailwind Typographyで読みやすいタイポグラフィ
 
 ---
 _Document patterns, not file trees. New files following patterns should not require updates_

@@ -59,6 +59,19 @@ pub struct RelayInfoDocument {
     /// 主要言語タグ（IETF言語タグ形式）の配列
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub language_tags: Vec<String>,
+
+    // ポリシーURL (NIP-11対応)
+    /// プライバシーポリシーURL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privacy_policy: Option<String>,
+
+    /// 利用規約URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terms_of_service: Option<String>,
+
+    /// 投稿ポリシーURL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub posting_policy: Option<String>,
 }
 
 /// リレーソフトウェアのプロジェクトURL（固定値）
@@ -80,6 +93,9 @@ impl RelayInfoDocument {
     /// * `banner` - バナーURL
     /// * `relay_countries` - 国コード配列
     /// * `language_tags` - 言語タグ配列
+    /// * `privacy_policy` - プライバシーポリシーURL
+    /// * `terms_of_service` - 利用規約URL
+    /// * `posting_policy` - 投稿ポリシーURL
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: Option<String>,
@@ -90,6 +106,9 @@ impl RelayInfoDocument {
         banner: Option<String>,
         relay_countries: Vec<String>,
         language_tags: Vec<String>,
+        privacy_policy: Option<String>,
+        terms_of_service: Option<String>,
+        posting_policy: Option<String>,
     ) -> Self {
         Self::with_limitation(
             name,
@@ -115,6 +134,9 @@ impl RelayInfoDocument {
     /// * `banner` - バナーURL
     /// * `relay_countries` - 国コード配列
     /// * `language_tags` - 言語タグ配列
+    /// * `privacy_policy` - プライバシーポリシーURL
+    /// * `terms_of_service` - 利用規約URL
+    /// * `posting_policy` - 投稿ポリシーURL
     /// * `limitation` - 制限情報
     #[allow(clippy::too_many_arguments)]
     pub fn with_limitation(
@@ -126,6 +148,9 @@ impl RelayInfoDocument {
         banner: Option<String>,
         relay_countries: Vec<String>,
         language_tags: Vec<String>,
+        privacy_policy: Option<String>,
+        terms_of_service: Option<String>,
+        posting_policy: Option<String>,
         limitation: RelayLimitation,
     ) -> Self {
         Self {
@@ -141,6 +166,9 @@ impl RelayInfoDocument {
             limitation,
             relay_countries,
             language_tags,
+            privacy_policy,
+            terms_of_service,
+            posting_policy,
         }
     }
 }
@@ -234,6 +262,9 @@ mod tests {
             Some("https://example.com/banner.png".to_string()),
             vec!["JP".to_string()],
             vec!["ja".to_string()],
+            None,
+            None,
+            None,
         );
 
         let json = serde_json::to_value(&doc).unwrap();
@@ -271,6 +302,9 @@ mod tests {
             None,
             vec![],
             vec![],
+            None,
+            None,
+            None,
         );
 
         let json = serde_json::to_value(&doc).unwrap();
@@ -298,7 +332,7 @@ mod tests {
     fn test_relay_info_document_supported_nips_contains_1_and_11() {
         // サポートNIP配列に1と11が含まれる
         let doc = RelayInfoDocument::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         assert!(doc.supported_nips.contains(&1));
@@ -309,7 +343,7 @@ mod tests {
     fn test_relay_info_document_software_url_is_correct() {
         // ソフトウェアURLが正しい
         let doc = RelayInfoDocument::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         assert_eq!(doc.software, "https://github.com/nisshiee/my-nostr-relay");
@@ -319,7 +353,7 @@ mod tests {
     fn test_relay_info_document_version_from_cargo() {
         // バージョンはCargo.tomlから取得
         let doc = RelayInfoDocument::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         // Cargo.tomlのバージョンと一致することを確認
@@ -361,9 +395,17 @@ mod tests {
     fn test_relay_info_document_with_multiple_countries() {
         // 複数国コードの設定
         let doc = RelayInfoDocument::new(
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             vec!["JP".to_string(), "US".to_string()],
             vec![],
+            None,
+            None,
+            None,
         );
 
         assert_eq!(doc.relay_countries, vec!["JP", "US"]);
@@ -376,9 +418,17 @@ mod tests {
     fn test_relay_info_document_with_multiple_language_tags() {
         // 複数言語タグの設定
         let doc = RelayInfoDocument::new(
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             vec![],
             vec!["ja".to_string(), "en".to_string()],
+            None,
+            None,
+            None,
         );
 
         assert_eq!(doc.language_tags, vec!["ja", "en"]);
@@ -392,9 +442,16 @@ mod tests {
         // 空のロケールフィールドはJSONから省略
         let doc = RelayInfoDocument::new(
             Some("Test".to_string()),
-            None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
             vec![],
             vec![],
+            None,
+            None,
+            None,
         );
 
         let json = serde_json::to_value(&doc).unwrap();
@@ -416,6 +473,9 @@ mod tests {
             Some("https://example.com/banner.png".to_string()),
             vec!["JP".to_string()],
             vec!["ja".to_string()],
+            None,
+            None,
+            None,
         );
 
         let json_str = serde_json::to_string_pretty(&doc).unwrap();
@@ -574,5 +634,61 @@ mod tests {
         assert_eq!(json["created_at_lower_limit"], 15768000);
         assert_eq!(json["created_at_upper_limit"], 300);
         assert_eq!(json["default_limit"], 50);
+    }
+
+    // ===========================================
+    // ポリシーURLフィールドのテスト
+    // ===========================================
+
+    #[test]
+    fn test_relay_info_document_with_policy_urls() {
+        // ポリシーURLを設定した場合
+        let doc = RelayInfoDocument::new(
+            Some("Test Relay".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            Some("https://example.com/privacy".to_string()),
+            Some("https://example.com/terms".to_string()),
+            Some("https://example.com/posting-policy".to_string()),
+        );
+
+        assert_eq!(
+            doc.privacy_policy,
+            Some("https://example.com/privacy".to_string())
+        );
+        assert_eq!(
+            doc.terms_of_service,
+            Some("https://example.com/terms".to_string())
+        );
+        assert_eq!(
+            doc.posting_policy,
+            Some("https://example.com/posting-policy".to_string())
+        );
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert_eq!(json["privacy_policy"], "https://example.com/privacy");
+        assert_eq!(json["terms_of_service"], "https://example.com/terms");
+        assert_eq!(
+            json["posting_policy"],
+            "https://example.com/posting-policy"
+        );
+    }
+
+    #[test]
+    fn test_relay_info_document_omits_none_policy_urls() {
+        // ポリシーURLがNoneの場合、JSONから省略される
+        let doc = RelayInfoDocument::new(
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
+        );
+
+        let json = serde_json::to_value(&doc).unwrap();
+        assert!(json.get("privacy_policy").is_none());
+        assert!(json.get("terms_of_service").is_none());
+        assert!(json.get("posting_policy").is_none());
     }
 }

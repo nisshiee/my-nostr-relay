@@ -11,7 +11,7 @@ use relay::infrastructure::{
     init_logging, ApiGatewayWebSocketSender, DynamoDbConfig, DynamoEventRepository, DynamoSubscriptionRepository,
 };
 use serde_json::Value;
-use tracing::{debug, error, trace};
+use tracing::{error, info, trace};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -32,36 +32,48 @@ async fn main() -> Result<(), Error> {
 /// 3. DefaultHandlerを使用してメッセージを処理
 /// 4. 成功時は200 OK、失敗時は適切なレスポンスを返却
 async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
+    // requestContextから情報を取得
+    let request_context = event.payload.get("requestContext");
+
     // 接続IDを取得（ログ用）
-    let connection_id = event
-        .payload
-        .get("requestContext")
+    let connection_id = request_context
         .and_then(|ctx| ctx.get("connectionId"))
         .and_then(|id| id.as_str())
         .unwrap_or("unknown");
 
-    // メッセージボディを取得（ログ用、最大100バイトに切り詰め）
-    let body_preview = event
+    // アクセスログ情報を取得
+    let source_ip = request_context
+        .and_then(|ctx| ctx.get("identity"))
+        .and_then(|identity| identity.get("sourceIp"))
+        .and_then(|ip| ip.as_str())
+        .unwrap_or("unknown");
+
+    let user_agent = request_context
+        .and_then(|ctx| ctx.get("identity"))
+        .and_then(|identity| identity.get("userAgent"))
+        .and_then(|ua| ua.as_str())
+        .unwrap_or("unknown");
+
+    let request_time = request_context
+        .and_then(|ctx| ctx.get("requestTimeEpoch"))
+        .and_then(|time| time.as_i64())
+        .unwrap_or(0);
+
+    // メッセージボディを取得（ログ用、全文記録）
+    let body = event
         .payload
         .get("body")
         .and_then(|b| b.as_str())
-        .map(|s| {
-            if s.len() <= 100 {
-                s
-            } else {
-                // 100バイト以下の最大の文字境界を見つける
-                let mut end = 100;
-                while !s.is_char_boundary(end) {
-                    end -= 1;
-                }
-                &s[..end]
-            }
-        })
         .unwrap_or("(empty)");
 
-    debug!(
+    // アクセスログ出力（法的対処・不正利用防止のため）
+    info!(
         connection_id = connection_id,
-        body_preview = body_preview,
+        source_ip = source_ip,
+        user_agent = user_agent,
+        request_time = request_time,
+        event_type = "message",
+        body = body,
         "WebSocketメッセージ受信"
     );
 
@@ -130,7 +142,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     match default_handler.handle(&event.payload).await {
         Ok(()) => {
             // 成功時は200 OKを返却
-            debug!(
+            info!(
                 connection_id = connection_id,
                 "メッセージ処理完了"
             );

@@ -23,18 +23,22 @@ resource "aws_lambda_function" "nip11_info" {
   filename         = data.archive_file.nip11_info.output_path
   source_code_hash = data.archive_file.nip11_info.output_base64sha256
   timeout          = 10
+  architectures    = ["arm64"]
 
   environment {
     variables = {
       # NIP-11リレー設定（環境変数から設定可能）
-      RELAY_NAME          = var.relay_name
-      RELAY_DESCRIPTION   = var.relay_description
-      RELAY_PUBKEY        = var.relay_pubkey
-      RELAY_CONTACT       = var.relay_contact
-      RELAY_ICON          = var.relay_icon
-      RELAY_BANNER        = var.relay_banner
-      RELAY_COUNTRIES     = var.relay_countries
-      RELAY_LANGUAGE_TAGS = var.relay_language_tags
+      RELAY_NAME             = var.relay_name
+      RELAY_DESCRIPTION      = var.relay_description
+      RELAY_PUBKEY           = var.relay_pubkey
+      RELAY_CONTACT          = var.relay_contact
+      RELAY_ICON             = var.relay_icon
+      RELAY_BANNER           = var.relay_banner
+      RELAY_COUNTRIES        = var.relay_countries
+      RELAY_LANGUAGE_TAGS    = var.relay_language_tags
+      RELAY_PRIVACY_POLICY   = var.relay_privacy_policy
+      RELAY_TERMS_OF_SERVICE = var.relay_terms_of_service
+      RELAY_POSTING_POLICY   = var.relay_posting_policy
     }
   }
 }
@@ -110,4 +114,22 @@ variable "relay_language_tags" {
   type        = string
   default     = "ja"
   description = "主要言語タグ（IETF言語タグ形式、カンマ区切り）"
+}
+
+variable "relay_privacy_policy" {
+  type        = string
+  default     = ""
+  description = "プライバシーポリシーURL"
+}
+
+variable "relay_terms_of_service" {
+  type        = string
+  default     = ""
+  description = "利用規約URL"
+}
+
+variable "relay_posting_policy" {
+  type        = string
+  default     = ""
+  description = "投稿ポリシーURL"
 }

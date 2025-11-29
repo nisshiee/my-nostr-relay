@@ -8,7 +8,7 @@ use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::application::ConnectHandler;
 use relay::infrastructure::{init_logging, DynamoConnectionRepository, DynamoDbConfig};
 use serde_json::Value;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -28,16 +28,40 @@ async fn main() -> Result<(), Error> {
 /// 2. ConnectHandlerを使用して接続を処理
 /// 3. 成功時は200 OK、失敗時は500エラーを返却
 async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
+    // requestContextから情報を取得
+    let request_context = event.payload.get("requestContext");
+
     // 接続IDを取得（ログ用）
-    let connection_id = event
-        .payload
-        .get("requestContext")
+    let connection_id = request_context
         .and_then(|ctx| ctx.get("connectionId"))
         .and_then(|id| id.as_str())
         .unwrap_or("unknown");
 
-    debug!(
+    // アクセスログ情報を取得
+    let source_ip = request_context
+        .and_then(|ctx| ctx.get("identity"))
+        .and_then(|identity| identity.get("sourceIp"))
+        .and_then(|ip| ip.as_str())
+        .unwrap_or("unknown");
+
+    let user_agent = request_context
+        .and_then(|ctx| ctx.get("identity"))
+        .and_then(|identity| identity.get("userAgent"))
+        .and_then(|ua| ua.as_str())
+        .unwrap_or("unknown");
+
+    let request_time = request_context
+        .and_then(|ctx| ctx.get("requestTimeEpoch"))
+        .and_then(|time| time.as_i64())
+        .unwrap_or(0);
+
+    // アクセスログ出力（法的対処・不正利用防止のため）
+    info!(
         connection_id = connection_id,
+        source_ip = source_ip,
+        user_agent = user_agent,
+        request_time = request_time,
+        event_type = "connect",
         "WebSocket接続リクエスト受信"
     );
 
