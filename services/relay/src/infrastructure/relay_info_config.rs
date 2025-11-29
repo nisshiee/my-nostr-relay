@@ -28,6 +28,14 @@ pub struct RelayInfoConfig {
     pub relay_countries: Vec<String>,
     /// 言語タグ配列 (RELAY_LANGUAGE_TAGS環境変数、カンマ区切り)
     pub language_tags: Vec<String>,
+
+    // ポリシーURL (NIP-11対応)
+    /// プライバシーポリシーURL (RELAY_PRIVACY_POLICY環境変数)
+    pub privacy_policy: Option<String>,
+    /// 利用規約URL (RELAY_TERMS_OF_SERVICE環境変数)
+    pub terms_of_service: Option<String>,
+    /// 投稿ポリシーURL (RELAY_POSTING_POLICY環境変数)
+    pub posting_policy: Option<String>,
 }
 
 impl RelayInfoConfig {
@@ -42,6 +50,9 @@ impl RelayInfoConfig {
     /// - RELAY_BANNER: バナーURL
     /// - RELAY_COUNTRIES: 国コード（カンマ区切り、デフォルト: なし）
     /// - RELAY_LANGUAGE_TAGS: 言語タグ（カンマ区切り、デフォルト: なし）
+    /// - RELAY_PRIVACY_POLICY: プライバシーポリシーURL
+    /// - RELAY_TERMS_OF_SERVICE: 利用規約URL
+    /// - RELAY_POSTING_POLICY: 投稿ポリシーURL
     pub fn from_env() -> Self {
         // 文字列オプションを読み込むヘルパー（空文字はNone扱い）
         let get_optional_string = |key: &str| -> Option<String> {
@@ -67,6 +78,11 @@ impl RelayInfoConfig {
             .map(|v| parse_comma_separated(&v))
             .unwrap_or_default();
 
+        // ポリシーURLの読み込み
+        let privacy_policy = get_optional_string("RELAY_PRIVACY_POLICY");
+        let terms_of_service = get_optional_string("RELAY_TERMS_OF_SERVICE");
+        let posting_policy = get_optional_string("RELAY_POSTING_POLICY");
+
         Self {
             name,
             description,
@@ -76,6 +92,9 @@ impl RelayInfoConfig {
             banner,
             relay_countries,
             language_tags,
+            privacy_policy,
+            terms_of_service,
+            posting_policy,
         }
     }
 
@@ -90,6 +109,9 @@ impl RelayInfoConfig {
         banner: Option<String>,
         relay_countries: Vec<String>,
         language_tags: Vec<String>,
+        privacy_policy: Option<String>,
+        terms_of_service: Option<String>,
+        posting_policy: Option<String>,
     ) -> Self {
         Self {
             name,
@@ -100,6 +122,9 @@ impl RelayInfoConfig {
             banner,
             relay_countries,
             language_tags,
+            privacy_policy,
+            terms_of_service,
+            posting_policy,
         }
     }
 }
@@ -171,6 +196,9 @@ mod tests {
             Some("https://example.com/banner.png".to_string()),
             vec!["JP".to_string()],
             vec!["ja".to_string()],
+            None,
+            None,
+            None,
         );
 
         assert_eq!(config.name, Some("Test Relay".to_string()));
@@ -195,6 +223,9 @@ mod tests {
             None,
             vec![],
             vec![],
+            None,
+            None,
+            None,
         );
 
         assert!(config.name.is_none());
@@ -249,6 +280,9 @@ mod tests {
             Some("https://example.com/banner.png".to_string()),
             vec!["JP".to_string()],
             vec!["ja".to_string()],
+            None,
+            None,
+            None,
         );
 
         assert_eq!(config.name.as_deref(), Some("My Relay"));
@@ -327,6 +361,9 @@ mod tests {
             None, None, None, None, None, None,
             vec![],
             vec![],
+            None,
+            None,
+            None,
         );
 
         assert!(config.relay_countries.is_empty());
@@ -337,9 +374,17 @@ mod tests {
     fn test_relay_info_config_with_multiple_countries() {
         // 複数国コードの設定
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             vec!["JP".to_string(), "US".to_string(), "DE".to_string()],
             vec![],
+            None,
+            None,
+            None,
         );
 
         assert_eq!(config.relay_countries.len(), 3);
@@ -352,9 +397,17 @@ mod tests {
     fn test_relay_info_config_with_multiple_language_tags() {
         // 複数言語タグの設定
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             vec![],
             vec!["ja".to_string(), "en".to_string(), "zh-CN".to_string()],
+            None,
+            None,
+            None,
         );
 
         assert_eq!(config.language_tags.len(), 3);
