@@ -23,6 +23,7 @@ resource "aws_lambda_function" "nip11_info" {
   filename         = data.archive_file.nip11_info.output_path
   source_code_hash = data.archive_file.nip11_info.output_base64sha256
   timeout          = 10
+  architectures    = ["arm64"]
 
   environment {
     variables = {

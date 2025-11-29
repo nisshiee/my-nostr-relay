@@ -10,7 +10,7 @@ use relay::infrastructure::{
     init_logging, ApiGatewayWebSocketSender, DynamoDbConfig, DynamoEventRepository, DynamoSubscriptionRepository,
 };
 use serde_json::Value;
-use tracing::{debug, error, trace};
+use tracing::{error, info, trace};
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -58,33 +58,21 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
         .and_then(|time| time.as_i64())
         .unwrap_or(0);
 
-    // メッセージボディを取得（ログ用、最大100バイトに切り詰め）
-    let body_preview = event
+    // メッセージボディを取得（ログ用、全文記録）
+    let body = event
         .payload
         .get("body")
         .and_then(|b| b.as_str())
-        .map(|s| {
-            if s.len() <= 100 {
-                s
-            } else {
-                // 100バイト以下の最大の文字境界を見つける
-                let mut end = 100;
-                while !s.is_char_boundary(end) {
-                    end -= 1;
-                }
-                &s[..end]
-            }
-        })
         .unwrap_or("(empty)");
 
     // アクセスログ出力（法的対処・不正利用防止のため）
-    debug!(
+    info!(
         connection_id = connection_id,
         source_ip = source_ip,
         user_agent = user_agent,
         request_time = request_time,
         event_type = "message",
-        body_preview = body_preview,
+        body = body,
         "WebSocketメッセージ受信"
     );
 
@@ -145,7 +133,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     match default_handler.handle(&event.payload).await {
         Ok(()) => {
             // 成功時は200 OKを返却
-            debug!(
+            info!(
                 connection_id = connection_id,
                 "メッセージ処理完了"
             );

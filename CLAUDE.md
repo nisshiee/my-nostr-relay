@@ -43,6 +43,8 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 - コードのコメント（`///` ドキュメントコメント、`//` 通常コメント）は日本語で記述すること
 - コミットメッセージは日本語で記述すること
 - Pull Requestのタイトル・本文は日本語で記述すること
+- Lambda関数は必ずARM64アーキテクチャでビルド (`cargo lambda build --release --arm64`)
+- Terraformで新規Lambda関数を作成する際は必ず `architectures = ["arm64"]` を指定すること
 
 ## Steering Configuration
 - Load entire `.kiro/steering/` as project memory

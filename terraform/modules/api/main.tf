@@ -60,6 +60,7 @@ resource "aws_lambda_function" "connect" {
   filename         = data.archive_file.connect.output_path
   source_code_hash = data.archive_file.connect.output_base64sha256
   timeout          = 10
+  architectures    = ["arm64"]
 
   environment {
     variables = {
@@ -84,6 +85,7 @@ resource "aws_lambda_function" "disconnect" {
   filename         = data.archive_file.disconnect.output_path
   source_code_hash = data.archive_file.disconnect.output_base64sha256
   timeout          = 10
+  architectures    = ["arm64"]
 
   environment {
     variables = {
@@ -108,6 +110,7 @@ resource "aws_lambda_function" "default" {
   filename         = data.archive_file.default.output_path
   source_code_hash = data.archive_file.default.output_base64sha256
   timeout          = 10
+  architectures    = ["arm64"]
 
   environment {
     variables = {
