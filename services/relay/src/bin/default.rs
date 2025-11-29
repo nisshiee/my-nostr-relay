@@ -31,13 +31,32 @@ async fn main() -> Result<(), Error> {
 /// 3. DefaultHandlerを使用してメッセージを処理
 /// 4. 成功時は200 OK、失敗時は適切なレスポンスを返却
 async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
+    // requestContextから情報を取得
+    let request_context = event.payload.get("requestContext");
+
     // 接続IDを取得（ログ用）
-    let connection_id = event
-        .payload
-        .get("requestContext")
+    let connection_id = request_context
         .and_then(|ctx| ctx.get("connectionId"))
         .and_then(|id| id.as_str())
         .unwrap_or("unknown");
+
+    // アクセスログ情報を取得
+    let source_ip = request_context
+        .and_then(|ctx| ctx.get("identity"))
+        .and_then(|identity| identity.get("sourceIp"))
+        .and_then(|ip| ip.as_str())
+        .unwrap_or("unknown");
+
+    let user_agent = request_context
+        .and_then(|ctx| ctx.get("identity"))
+        .and_then(|identity| identity.get("userAgent"))
+        .and_then(|ua| ua.as_str())
+        .unwrap_or("unknown");
+
+    let request_time = request_context
+        .and_then(|ctx| ctx.get("requestTimeEpoch"))
+        .and_then(|time| time.as_i64())
+        .unwrap_or(0);
 
     // メッセージボディを取得（ログ用、最大100バイトに切り詰め）
     let body_preview = event
@@ -58,8 +77,13 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
         })
         .unwrap_or("(empty)");
 
+    // アクセスログ出力（法的対処・不正利用防止のため）
     debug!(
         connection_id = connection_id,
+        source_ip = source_ip,
+        user_agent = user_agent,
+        request_time = request_time,
+        event_type = "message",
         body_preview = body_preview,
         "WebSocketメッセージ受信"
     );

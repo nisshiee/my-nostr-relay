@@ -93,12 +93,15 @@ module "api" {
   cloudfront_certificate_arn = aws_acm_certificate_validation.cloudfront.certificate_arn
 
   # NIP-11 リレー情報設定
-  relay_name          = "nisshieeのプライベートリレー(beta)"
-  relay_description   = "試験運用中のため、無断でイベント削除・サービス停止する可能性があります。また、正常な動作を保証していません。"
-  relay_pubkey        = "73491509b8e2d80840873b5a13ba98a5d1ac3a16c9292e106b1f2eda31152c52"
-  relay_contact       = "https://nisshiee.org"
-  relay_icon          = "https://www.gravatar.com/avatar/c48758d8162582b770092002effb7dff"
-  relay_banner        = "https://nisshiee.org/ogimage.png"
+  relay_name             = "nisshieeのプライベートリレー(beta)"
+  relay_description      = "試験運用中のため、無断でイベント削除・サービス停止する可能性があります。また、正常な動作を保証していません。"
+  relay_pubkey           = "73491509b8e2d80840873b5a13ba98a5d1ac3a16c9292e106b1f2eda31152c52"
+  relay_contact          = "mailto:nostr-relay-admin@nisshiee.org"
+  relay_icon             = "https://www.gravatar.com/avatar/c48758d8162582b770092002effb7dff"
+  relay_banner           = "https://nisshiee.org/ogimage.png"
+  relay_privacy_policy   = "https://nostr.nisshiee.org/relay/privacy"
+  relay_terms_of_service = "https://nostr.nisshiee.org/relay/terms"
+  relay_posting_policy   = "https://nostr.nisshiee.org/relay/posting-policy"
 
   providers = {
     aws           = aws
