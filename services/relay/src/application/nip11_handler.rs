@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_includes_all_limitation_fields() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let limitation_config = LimitationConfig::default();
         let handler = Nip11Handler::with_limitation(config, limitation_config.clone());
@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_with_custom_limitation_config() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         // カスタム制限値
         let limitation_config = LimitationConfig {
@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn test_build_relay_info_json_includes_all_limitation_fields() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let limitation_config = LimitationConfig::default();
         let handler = Nip11Handler::with_limitation(config, limitation_config);
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn test_new_uses_default_limitation_config() {
         let config = RelayInfoConfig::new(
-            None, None, None, None, None, None, vec![], vec![],
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
         let handler = Nip11Handler::new(config);
         let doc = handler.build_relay_info();

@@ -119,6 +119,9 @@ impl RelayInfoDocument {
             banner,
             relay_countries,
             language_tags,
+            privacy_policy,
+            terms_of_service,
+            posting_policy,
             RelayLimitation::default(),
         )
     }
