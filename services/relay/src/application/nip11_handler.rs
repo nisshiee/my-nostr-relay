@@ -4,7 +4,7 @@
 // NIP-11仕様に準拠したJSONレスポンスを構築する。
 // 要件: 1.1, 1.3, 2.1-2.9, 3.1-3.3, 4.1-4.3, 7.1, 7.2
 
-use crate::domain::RelayInfoDocument;
+use crate::domain::{LimitationConfig, RelayInfoDocument, RelayLimitation};
 use crate::infrastructure::RelayInfoConfig;
 use lambda_http::http::header::{
     HeaderMap, HeaderValue, ACCESS_CONTROL_ALLOW_HEADERS, ACCESS_CONTROL_ALLOW_METHODS,
@@ -19,26 +19,45 @@ use lambda_http::{Body, Response};
 pub struct Nip11Handler {
     /// リレー情報設定
     config: RelayInfoConfig,
+    /// 制限値設定
+    limitation_config: LimitationConfig,
 }
 
 impl Nip11Handler {
     /// 新しいハンドラーを作成
     ///
+    /// デフォルトのLimitationConfigを使用する。
+    /// 環境変数から制限値を読み込む場合は`with_limitation`を使用すること。
+    ///
     /// # Arguments
     /// * `config` - リレー情報設定
     pub fn new(config: RelayInfoConfig) -> Self {
-        Self { config }
+        Self::with_limitation(config, LimitationConfig::default())
+    }
+
+    /// 制限値設定を指定してハンドラーを作成
+    ///
+    /// # Arguments
+    /// * `config` - リレー情報設定
+    /// * `limitation_config` - 制限値設定
+    pub fn with_limitation(config: RelayInfoConfig, limitation_config: LimitationConfig) -> Self {
+        Self {
+            config,
+            limitation_config,
+        }
     }
 
     /// リレー情報ドキュメントを生成
     ///
     /// 設定コンポーネントの値を使用して、NIP-11仕様に準拠した
     /// RelayInfoDocumentを構築する。
+    /// limitationオブジェクトには全9フィールドが含まれる。
     ///
     /// # Returns
     /// NIP-11準拠のリレー情報ドキュメント
     pub fn build_relay_info(&self) -> RelayInfoDocument {
-        RelayInfoDocument::new(
+        let limitation = RelayLimitation::from_config(&self.limitation_config);
+        RelayInfoDocument::with_limitation(
             self.config.name.clone(),
             self.config.description.clone(),
             self.config.pubkey.clone(),
@@ -50,6 +69,7 @@ impl Nip11Handler {
             self.config.privacy_policy.clone(),
             self.config.terms_of_service.clone(),
             self.config.posting_policy.clone(),
+            limitation,
         )
     }
 
@@ -128,8 +148,111 @@ impl Nip11Handler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{SOFTWARE_URL, SUPPORTED_NIPS};
+    use crate::domain::{LimitationConfig, SOFTWARE_URL, SUPPORTED_NIPS};
     use lambda_http::Body;
+
+    // ===========================================
+    // Task 3: NIP-11レスポンスに全制限値を含めるテスト
+    // ===========================================
+
+    /// ハンドラーがLimitationConfigを受け取り、全9フィールドを含むlimitationを返す
+    #[test]
+    fn test_build_relay_info_includes_all_limitation_fields() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
+        );
+        let limitation_config = LimitationConfig::default();
+        let handler = Nip11Handler::with_limitation(config, limitation_config.clone());
+        let doc = handler.build_relay_info();
+
+        // 全9フィールドが正しく設定されていることを確認
+        assert_eq!(doc.limitation.max_message_length, limitation_config.max_message_length);
+        assert_eq!(doc.limitation.max_subscriptions, limitation_config.max_subscriptions);
+        assert_eq!(doc.limitation.max_limit, limitation_config.max_limit);
+        assert_eq!(doc.limitation.max_event_tags, limitation_config.max_event_tags);
+        assert_eq!(doc.limitation.max_content_length, limitation_config.max_content_length);
+        assert_eq!(doc.limitation.max_subid_length, limitation_config.max_subid_length);
+        assert_eq!(doc.limitation.created_at_lower_limit, limitation_config.created_at_lower_limit);
+        assert_eq!(doc.limitation.created_at_upper_limit, limitation_config.created_at_upper_limit);
+        assert_eq!(doc.limitation.default_limit, limitation_config.default_limit);
+    }
+
+    /// ハンドラーがカスタムLimitationConfigの値を正しく反映する
+    #[test]
+    fn test_build_relay_info_with_custom_limitation_config() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
+        );
+        // カスタム制限値
+        let limitation_config = LimitationConfig {
+            max_message_length: 262144,
+            max_subscriptions: 50,
+            max_limit: 10000,
+            max_event_tags: 2000,
+            max_content_length: 131072,
+            max_subid_length: 64,
+            created_at_lower_limit: 63072000,
+            created_at_upper_limit: 1800,
+            default_limit: 200,
+        };
+        let handler = Nip11Handler::with_limitation(config, limitation_config.clone());
+        let doc = handler.build_relay_info();
+
+        // カスタム値が正しく反映されていることを確認
+        assert_eq!(doc.limitation.max_message_length, 262144);
+        assert_eq!(doc.limitation.max_subscriptions, 50);
+        assert_eq!(doc.limitation.max_limit, 10000);
+        assert_eq!(doc.limitation.max_event_tags, 2000);
+        assert_eq!(doc.limitation.max_content_length, 131072);
+        assert_eq!(doc.limitation.max_subid_length, 64);
+        assert_eq!(doc.limitation.created_at_lower_limit, 63072000);
+        assert_eq!(doc.limitation.created_at_upper_limit, 1800);
+        assert_eq!(doc.limitation.default_limit, 200);
+    }
+
+    /// JSONレスポンスにlimitationの全9フィールドが含まれる
+    #[test]
+    fn test_build_relay_info_json_includes_all_limitation_fields() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
+        );
+        let limitation_config = LimitationConfig::default();
+        let handler = Nip11Handler::with_limitation(config, limitation_config);
+        let json_str = handler.build_relay_info_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+
+        // limitationオブジェクト内の全9フィールドを検証
+        let limitation = &parsed["limitation"];
+        assert_eq!(limitation["max_message_length"], 131072);
+        assert_eq!(limitation["max_subscriptions"], 20);
+        assert_eq!(limitation["max_limit"], 5000);
+        assert_eq!(limitation["max_event_tags"], 1000);
+        assert_eq!(limitation["max_content_length"], 65536);
+        assert_eq!(limitation["max_subid_length"], 64);
+        assert_eq!(limitation["created_at_lower_limit"], 31536000);
+        assert_eq!(limitation["created_at_upper_limit"], 900);
+        assert_eq!(limitation["default_limit"], 100);
+
+        // フィールド数が正確に9であることを確認
+        let limitation_obj = limitation.as_object().unwrap();
+        assert_eq!(limitation_obj.len(), 9, "limitationオブジェクトは正確に9フィールドを持つべき");
+    }
+
+    /// 後方互換性: new()メソッドはデフォルトのLimitationConfigを使用する
+    #[test]
+    fn test_new_uses_default_limitation_config() {
+        let config = RelayInfoConfig::new(
+            None, None, None, None, None, None, vec![], vec![], None, None, None,
+        );
+        let handler = Nip11Handler::new(config);
+        let doc = handler.build_relay_info();
+
+        // デフォルト値が使用されていることを確認
+        let default_config = LimitationConfig::default();
+        assert_eq!(doc.limitation.max_message_length, default_config.max_message_length);
+        assert_eq!(doc.limitation.max_subscriptions, default_config.max_subscriptions);
+        assert_eq!(doc.limitation.max_limit, default_config.max_limit);
+    }
 
     // ===========================================
     // Task 3.1: NIP-11レスポンス生成ハンドラーのテスト

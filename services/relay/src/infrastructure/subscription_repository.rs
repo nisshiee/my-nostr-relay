@@ -135,6 +135,38 @@ pub trait SubscriptionRepository: Send + Sync {
         connection_id: &str,
         subscription_id: &str,
     ) -> Result<Option<SubscriptionInfo>, SubscriptionRepositoryError>;
+
+    /// サブスクリプションの存在確認
+    ///
+    /// # 引数
+    /// * `connection_id` - API Gateway接続ID
+    /// * `subscription_id` - サブスクリプションID
+    ///
+    /// # 戻り値
+    /// * 成功時は`Ok(exists)` - 存在する場合true
+    /// * 失敗時は`Err(SubscriptionRepositoryError)`
+    ///
+    /// 要件: 3.2
+    async fn exists(
+        &self,
+        connection_id: &str,
+        subscription_id: &str,
+    ) -> Result<bool, SubscriptionRepositoryError>;
+
+    /// 接続のサブスクリプション数をカウント
+    ///
+    /// # 引数
+    /// * `connection_id` - API Gateway接続ID
+    ///
+    /// # 戻り値
+    /// * 成功時は`Ok(count)`
+    /// * 失敗時は`Err(SubscriptionRepositoryError)`
+    ///
+    /// 要件: 3.2
+    async fn count_by_connection(
+        &self,
+        connection_id: &str,
+    ) -> Result<usize, SubscriptionRepositoryError>;
 }
 
 /// SubscriptionRepositoryのDynamoDB実装
@@ -410,6 +442,55 @@ impl SubscriptionRepository for DynamoSubscriptionRepository {
             None => Ok(None),
         }
     }
+
+    async fn exists(
+        &self,
+        connection_id: &str,
+        subscription_id: &str,
+    ) -> Result<bool, SubscriptionRepositoryError> {
+        // GetItemで存在確認（フィールドは取得せず存在確認のみ）
+        let result = self
+            .client
+            .get_item()
+            .table_name(&self.table_name)
+            .key(
+                "connection_id",
+                AttributeValue::S(connection_id.to_string()),
+            )
+            .key(
+                "subscription_id",
+                AttributeValue::S(subscription_id.to_string()),
+            )
+            // 存在確認のみなのでconnection_idだけ取得（転送量削減）
+            .projection_expression("connection_id")
+            .send()
+            .await
+            .map_err(|e| SubscriptionRepositoryError::ReadError(e.to_string()))?;
+
+        Ok(result.item.is_some())
+    }
+
+    async fn count_by_connection(
+        &self,
+        connection_id: &str,
+    ) -> Result<usize, SubscriptionRepositoryError> {
+        // QueryでSelect COUNTを使用し効率的にカウント
+        let result = self
+            .client
+            .query()
+            .table_name(&self.table_name)
+            .key_condition_expression("connection_id = :cid")
+            .expression_attribute_values(
+                ":cid",
+                AttributeValue::S(connection_id.to_string()),
+            )
+            .select(aws_sdk_dynamodb::types::Select::Count)
+            .send()
+            .await
+            .map_err(|e| SubscriptionRepositoryError::ReadError(e.to_string()))?;
+
+        Ok(result.count() as usize)
+    }
 }
 
 #[cfg(test)]
@@ -569,6 +650,8 @@ pub(crate) mod tests {
         subscriptions: Arc<Mutex<HashMap<(String, String), SubscriptionInfo>>>,
         /// 次の操作で返すエラー（エラーパスのテスト用）
         next_error: Arc<Mutex<Option<SubscriptionRepositoryError>>>,
+        /// upsert操作専用のエラー（他の操作では消費されない）
+        upsert_error: Arc<Mutex<Option<SubscriptionRepositoryError>>>,
     }
 
     impl MockSubscriptionRepository {
@@ -576,11 +659,17 @@ pub(crate) mod tests {
             Self {
                 subscriptions: Arc::new(Mutex::new(HashMap::new())),
                 next_error: Arc::new(Mutex::new(None)),
+                upsert_error: Arc::new(Mutex::new(None)),
             }
         }
 
         pub fn set_next_error(&self, error: SubscriptionRepositoryError) {
             *self.next_error.lock().unwrap() = Some(error);
+        }
+
+        /// upsert操作専用のエラーを設定（他の操作では消費されない）
+        pub fn set_upsert_error(&self, error: SubscriptionRepositoryError) {
+            *self.upsert_error.lock().unwrap() = Some(error);
         }
 
         pub fn subscription_count(&self) -> usize {
@@ -603,6 +692,10 @@ pub(crate) mod tests {
             self.next_error.lock().unwrap().take()
         }
 
+        fn take_upsert_error(&self) -> Option<SubscriptionRepositoryError> {
+            self.upsert_error.lock().unwrap().take()
+        }
+
         fn current_timestamp() -> i64 {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -619,6 +712,11 @@ pub(crate) mod tests {
             subscription_id: &str,
             filters: &[Filter],
         ) -> Result<(), SubscriptionRepositoryError> {
+            // upsert専用エラーを優先的にチェック
+            if let Some(error) = self.take_upsert_error() {
+                return Err(error);
+            }
+            // 汎用エラーもチェック
             if let Some(error) = self.take_error() {
                 return Err(error);
             }
@@ -709,6 +807,39 @@ pub(crate) mod tests {
                 .unwrap()
                 .get(&(connection_id.to_string(), subscription_id.to_string()))
                 .cloned())
+        }
+
+        async fn exists(
+            &self,
+            connection_id: &str,
+            subscription_id: &str,
+        ) -> Result<bool, SubscriptionRepositoryError> {
+            if let Some(error) = self.take_error() {
+                return Err(error);
+            }
+
+            Ok(self
+                .subscriptions
+                .lock()
+                .unwrap()
+                .contains_key(&(connection_id.to_string(), subscription_id.to_string())))
+        }
+
+        async fn count_by_connection(
+            &self,
+            connection_id: &str,
+        ) -> Result<usize, SubscriptionRepositoryError> {
+            if let Some(error) = self.take_error() {
+                return Err(error);
+            }
+
+            let subscriptions = self.subscriptions.lock().unwrap();
+            let count = subscriptions
+                .keys()
+                .filter(|(conn_id, _)| conn_id == connection_id)
+                .count();
+
+            Ok(count)
         }
     }
 
@@ -1008,5 +1139,163 @@ pub(crate) mod tests {
         // 元に戻せることを確認
         let restored = DynamoSubscriptionRepository::deserialize_filters(&json).unwrap();
         assert_eq!(restored.len(), 2);
+    }
+
+    // ==================== exists / count_by_connection テスト (Task 5) ====================
+
+    // exists: サブスクリプションが存在する場合trueを返す (要件 3.2)
+    #[tokio::test]
+    async fn test_mock_repo_exists_returns_true_when_exists() {
+        let repo = MockSubscriptionRepository::new();
+        let filters = vec![Filter::new().kind(Kind::TextNote)];
+
+        repo.upsert("conn-123", "sub-456", &filters).await.unwrap();
+
+        let result = repo.exists("conn-123", "sub-456").await;
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+    }
+
+    // exists: サブスクリプションが存在しない場合falseを返す (要件 3.2)
+    #[tokio::test]
+    async fn test_mock_repo_exists_returns_false_when_not_exists() {
+        let repo = MockSubscriptionRepository::new();
+
+        let result = repo.exists("conn-123", "sub-456").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    // exists: 異なるconnection_idの場合falseを返す
+    #[tokio::test]
+    async fn test_mock_repo_exists_different_connection_id() {
+        let repo = MockSubscriptionRepository::new();
+        let filters = vec![Filter::new().kind(Kind::TextNote)];
+
+        repo.upsert("conn-123", "sub-456", &filters).await.unwrap();
+
+        let result = repo.exists("conn-different", "sub-456").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    // exists: 異なるsubscription_idの場合falseを返す
+    #[tokio::test]
+    async fn test_mock_repo_exists_different_subscription_id() {
+        let repo = MockSubscriptionRepository::new();
+        let filters = vec![Filter::new().kind(Kind::TextNote)];
+
+        repo.upsert("conn-123", "sub-456", &filters).await.unwrap();
+
+        let result = repo.exists("conn-123", "sub-different").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+    }
+
+    // exists: エラーパスのテスト
+    #[tokio::test]
+    async fn test_mock_repo_exists_error() {
+        let repo = MockSubscriptionRepository::new();
+        repo.set_next_error(SubscriptionRepositoryError::ReadError(
+            "DynamoDB unavailable".to_string(),
+        ));
+
+        let result = repo.exists("conn-123", "sub-456").await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            SubscriptionRepositoryError::ReadError("DynamoDB unavailable".to_string())
+        );
+    }
+
+    // count_by_connection: サブスクリプションがない場合0を返す (要件 3.2)
+    #[tokio::test]
+    async fn test_mock_repo_count_by_connection_returns_zero_when_empty() {
+        let repo = MockSubscriptionRepository::new();
+
+        let result = repo.count_by_connection("conn-123").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    // count_by_connection: 1つのサブスクリプションがある場合1を返す (要件 3.2)
+    #[tokio::test]
+    async fn test_mock_repo_count_by_connection_returns_one() {
+        let repo = MockSubscriptionRepository::new();
+        let filters = vec![Filter::new().kind(Kind::TextNote)];
+
+        repo.upsert("conn-123", "sub-1", &filters).await.unwrap();
+
+        let result = repo.count_by_connection("conn-123").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    // count_by_connection: 複数のサブスクリプションがある場合正しい数を返す (要件 3.2)
+    #[tokio::test]
+    async fn test_mock_repo_count_by_connection_returns_multiple() {
+        let repo = MockSubscriptionRepository::new();
+        let filters = vec![Filter::new().kind(Kind::TextNote)];
+
+        repo.upsert("conn-123", "sub-1", &filters).await.unwrap();
+        repo.upsert("conn-123", "sub-2", &filters).await.unwrap();
+        repo.upsert("conn-123", "sub-3", &filters).await.unwrap();
+
+        let result = repo.count_by_connection("conn-123").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3);
+    }
+
+    // count_by_connection: 他の接続のサブスクリプションをカウントしない (要件 3.2)
+    #[tokio::test]
+    async fn test_mock_repo_count_by_connection_only_counts_specified_connection() {
+        let repo = MockSubscriptionRepository::new();
+        let filters = vec![Filter::new().kind(Kind::TextNote)];
+
+        repo.upsert("conn-123", "sub-1", &filters).await.unwrap();
+        repo.upsert("conn-123", "sub-2", &filters).await.unwrap();
+        repo.upsert("conn-456", "sub-1", &filters).await.unwrap();
+        repo.upsert("conn-789", "sub-1", &filters).await.unwrap();
+
+        let result = repo.count_by_connection("conn-123").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 2);
+
+        let result = repo.count_by_connection("conn-456").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    // count_by_connection: エラーパスのテスト
+    #[tokio::test]
+    async fn test_mock_repo_count_by_connection_error() {
+        let repo = MockSubscriptionRepository::new();
+        repo.set_next_error(SubscriptionRepositoryError::ReadError(
+            "DynamoDB unavailable".to_string(),
+        ));
+
+        let result = repo.count_by_connection("conn-123").await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            SubscriptionRepositoryError::ReadError("DynamoDB unavailable".to_string())
+        );
+    }
+
+    // count_by_connection: サブスクリプション削除後の正しいカウント
+    #[tokio::test]
+    async fn test_mock_repo_count_by_connection_after_delete() {
+        let repo = MockSubscriptionRepository::new();
+        let filters = vec![Filter::new().kind(Kind::TextNote)];
+
+        repo.upsert("conn-123", "sub-1", &filters).await.unwrap();
+        repo.upsert("conn-123", "sub-2", &filters).await.unwrap();
+        repo.upsert("conn-123", "sub-3", &filters).await.unwrap();
+
+        repo.delete("conn-123", "sub-2").await.unwrap();
+
+        let result = repo.count_by_connection("conn-123").await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 2);
     }
 }

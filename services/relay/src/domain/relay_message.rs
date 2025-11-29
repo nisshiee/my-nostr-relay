@@ -130,6 +130,21 @@ impl RelayMessage {
         Self::ok_error(event_id, error_prefix::ERROR, "failed to store event")
     }
 
+    /// タグ数超過用のOKエラーを作成 (要件 3.4)
+    pub fn ok_too_many_tags(event_id: &str) -> Self {
+        Self::ok_error(event_id, error_prefix::INVALID, "too many tags")
+    }
+
+    /// コンテンツ長超過用のOKエラーを作成 (要件 3.5)
+    pub fn ok_content_too_long(event_id: &str) -> Self {
+        Self::ok_error(event_id, error_prefix::INVALID, "content too long")
+    }
+
+    /// created_at範囲外用のOKエラーを作成 (要件 3.6, 3.7)
+    pub fn ok_created_at_out_of_range(event_id: &str) -> Self {
+        Self::ok_error(event_id, error_prefix::INVALID, "created_at out of range")
+    }
+
     // ==================== CLOSEDメッセージヘルパー ====================
 
     /// 無効なサブスクリプション用のCLOSEDメッセージを作成 (要件 6.7)
@@ -156,6 +171,16 @@ impl RelayMessage {
     /// サブスクリプション管理エラー用のCLOSEDメッセージを作成 (要件 18.8)
     pub fn closed_subscription_error(subscription_id: &str) -> Self {
         Self::closed_error(subscription_id, "failed to manage subscription")
+    }
+
+    /// サブスクリプションID長超過用のCLOSEDメッセージを作成 (要件 4.1, 4.2, 4.3)
+    pub fn closed_subscription_id_too_long(subscription_id: &str) -> Self {
+        Self::closed_invalid(subscription_id, "subscription id too long")
+    }
+
+    /// サブスクリプション数上限超過用のCLOSEDメッセージを作成 (要件 3.2)
+    pub fn closed_too_many_subscriptions(subscription_id: &str) -> Self {
+        Self::closed_error(subscription_id, "too many subscriptions")
     }
 
     // ==================== NOTICEメッセージヘルパー ====================
@@ -398,6 +423,66 @@ mod tests {
         }
     }
 
+    // 要件 3.4: タグ数超過エラー
+    #[test]
+    fn test_ok_too_many_tags() {
+        let msg = RelayMessage::ok_too_many_tags("event123");
+
+        match msg {
+            RelayMessage::Ok {
+                event_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(event_id, "event123");
+                assert!(!accepted);
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("too many tags"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    // 要件 3.5: コンテンツ長超過エラー
+    #[test]
+    fn test_ok_content_too_long() {
+        let msg = RelayMessage::ok_content_too_long("event123");
+
+        match msg {
+            RelayMessage::Ok {
+                event_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(event_id, "event123");
+                assert!(!accepted);
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("content too long"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    // 要件 3.6, 3.7: created_at範囲外エラー
+    #[test]
+    fn test_ok_created_at_out_of_range() {
+        let msg = RelayMessage::ok_created_at_out_of_range("event123");
+
+        match msg {
+            RelayMessage::Ok {
+                event_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(event_id, "event123");
+                assert!(!accepted);
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("created_at out of range"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
     // ==================== CLOSEDヘルパーテスト ====================
 
     // 要件 6.7: 無効なサブスクリプションID
@@ -431,6 +516,42 @@ mod tests {
                 assert_eq!(subscription_id, "sub123");
                 assert!(message.starts_with("error:"));
                 assert!(message.contains("failed to manage subscription"));
+            }
+            _ => panic!("Expected Closed message"),
+        }
+    }
+
+    // 要件 4.1, 4.2, 4.3: サブスクリプションID長超過
+    #[test]
+    fn test_closed_subscription_id_too_long() {
+        let msg = RelayMessage::closed_subscription_id_too_long("long-sub-id");
+
+        match msg {
+            RelayMessage::Closed {
+                subscription_id,
+                message,
+            } => {
+                assert_eq!(subscription_id, "long-sub-id");
+                assert!(message.starts_with("invalid:"));
+                assert!(message.contains("subscription id too long"));
+            }
+            _ => panic!("Expected Closed message"),
+        }
+    }
+
+    // 要件 3.2: サブスクリプション数上限超過
+    #[test]
+    fn test_closed_too_many_subscriptions() {
+        let msg = RelayMessage::closed_too_many_subscriptions("sub123");
+
+        match msg {
+            RelayMessage::Closed {
+                subscription_id,
+                message,
+            } => {
+                assert_eq!(subscription_id, "sub123");
+                assert!(message.starts_with("error:"));
+                assert!(message.contains("too many subscriptions"));
             }
             _ => panic!("Expected Closed message"),
         }

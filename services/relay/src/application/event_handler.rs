@@ -7,7 +7,7 @@ use nostr::Event;
 use serde_json::Value;
 use tracing::{debug, trace, warn};
 
-use crate::domain::{EventKind, EventValidator, RelayMessage, ValidationError};
+use crate::domain::{EventKind, EventValidator, LimitationConfig, RelayMessage, ValidationError};
 use crate::infrastructure::{
     EventRepository, EventRepositoryError, SaveResult, SendError, SubscriptionRepository,
     SubscriptionRepositoryError, WebSocketSender,
@@ -80,7 +80,7 @@ where
         }
     }
 
-    /// EVENTメッセージを処理
+    /// EVENTメッセージを処理（デフォルト制限値を使用）
     ///
     /// # 処理フロー
     /// 1. イベントJSONの検証（構造、ID、署名）
@@ -96,6 +96,35 @@ where
     /// # 戻り値
     /// OKメッセージ（成功/失敗）
     pub async fn handle(&self, event_json: Value, connection_id: &str) -> RelayMessage {
+        let default_config = LimitationConfig::default();
+        self.handle_with_config(event_json, connection_id, &default_config).await
+    }
+
+    /// EVENTメッセージを処理（制限値設定を指定）
+    ///
+    /// # 処理フロー
+    /// 1. イベントJSONの検証（構造、ID、署名）
+    /// 2. 制限値バリデーション（タグ数、コンテンツ長、created_at範囲）
+    /// 3. Kind別処理（Regular, Replaceable, Ephemeral, Addressable）
+    /// 4. 非Ephemeralイベントはリポジトリに保存
+    /// 5. マッチする購読者にイベントを配信
+    /// 6. OK応答を返却
+    ///
+    /// # 引数
+    /// * `event_json` - パースされたイベントJSON
+    /// * `connection_id` - 送信元のAPI Gateway接続ID
+    /// * `config` - 制限値設定
+    ///
+    /// # 戻り値
+    /// OKメッセージ（成功/失敗）
+    ///
+    /// 要件: 3.4, 3.5, 3.6, 3.7
+    pub async fn handle_with_config(
+        &self,
+        event_json: Value,
+        connection_id: &str,
+        config: &LimitationConfig,
+    ) -> RelayMessage {
         // イベントIDを取得（検証前でもエラーメッセージに使用）
         let event_id = event_json
             .get("id")
@@ -128,6 +157,22 @@ where
                 return self.create_validation_error_response(&event_id, err);
             }
         };
+
+        // 制限値バリデーション（要件 3.4-3.7）
+        if let Err(err) = EventValidator::validate_limitation(&event, config) {
+            debug!(
+                connection_id = connection_id,
+                event_id = %event_id,
+                error = %err,
+                "制限値バリデーション失敗"
+            );
+            return self.create_validation_error_response(&event_id, err);
+        }
+
+        trace!(
+            event_id = %event_id,
+            "制限値バリデーション成功"
+        );
 
         // Kind分類（要件 9.1, 10.1, 11.1, 12.1）
         let kind_value = event.kind.as_u16();
@@ -204,6 +249,12 @@ where
         match err {
             ValidationError::IdMismatch => RelayMessage::ok_invalid_id(event_id),
             ValidationError::SignatureVerificationFailed => RelayMessage::ok_invalid_signature(event_id),
+            // 制限値バリデーションエラー（要件 3.4-3.7）
+            ValidationError::TooManyTags { .. } => RelayMessage::ok_too_many_tags(event_id),
+            ValidationError::ContentTooLong { .. } => RelayMessage::ok_content_too_long(event_id),
+            ValidationError::CreatedAtTooOld { .. } | ValidationError::CreatedAtTooFarInFuture { .. } => {
+                RelayMessage::ok_created_at_out_of_range(event_id)
+            }
             _ => RelayMessage::ok_error(
                 event_id,
                 crate::domain::relay_message::error_prefix::INVALID,
@@ -795,6 +846,301 @@ mod tests {
         match handler_err {
             EventHandlerError::SendError(msg) => assert!(msg.contains("Connection is gone")),
             _ => panic!("Expected SendError"),
+        }
+    }
+
+    // ==================== 制限値バリデーション統合テスト (要件 3.4-3.7) ====================
+
+    use crate::domain::LimitationConfig;
+
+    /// 制限値設定を指定してテスト用EventHandlerでイベントを処理
+    async fn handle_event_with_config(
+        event_json: Value,
+        config: &LimitationConfig,
+    ) -> RelayMessage {
+        let (handler, _, _, _) = create_test_handler();
+        handler.handle_with_config(event_json, "conn-123", config).await
+    }
+
+    /// 多数のタグを持つイベントを作成するヘルパー
+    fn create_event_with_tags(tag_count: usize) -> Value {
+        let keys = Keys::generate();
+        let tags: Vec<nostr::Tag> = (0..tag_count)
+            .map(|i| {
+                nostr::Tag::custom(
+                    nostr::TagKind::Custom(format!("t{}", i).into()),
+                    vec![format!("value{}", i)],
+                )
+            })
+            .collect();
+
+        let event = nostr::EventBuilder::text_note("test content")
+            .tags(tags)
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+
+        serde_json::to_value(&event).expect("Failed to serialize event")
+    }
+
+    /// 長いコンテンツを持つイベントを作成するヘルパー
+    fn create_event_with_long_content(content: &str) -> Value {
+        let keys = Keys::generate();
+        let event = nostr::EventBuilder::text_note(content)
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+
+        serde_json::to_value(&event).expect("Failed to serialize event")
+    }
+
+    /// 指定されたcreated_atを持つイベントを作成するヘルパー
+    fn create_event_with_created_at(timestamp: u64) -> Value {
+        let keys = Keys::generate();
+        let event = nostr::EventBuilder::text_note("test content")
+            .custom_created_at(nostr::Timestamp::from(timestamp))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+
+        serde_json::to_value(&event).expect("Failed to serialize event")
+    }
+
+    /// 要件 3.4: タグ数が制限を超える場合は「invalid: too many tags」で拒否
+    #[tokio::test]
+    async fn test_handle_with_config_rejects_too_many_tags() {
+        let config = LimitationConfig {
+            max_event_tags: 10,
+            ..LimitationConfig::default()
+        };
+
+        let event_json = create_event_with_tags(11); // 制限を1つ超過
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok {
+                accepted,
+                message,
+                ..
+            } => {
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+                assert!(message.contains("too many tags"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.4: タグ数が制限内の場合は正常に処理
+    #[tokio::test]
+    async fn test_handle_with_config_accepts_tags_at_limit() {
+        let config = LimitationConfig {
+            max_event_tags: 10,
+            ..LimitationConfig::default()
+        };
+
+        let event_json = create_event_with_tags(10); // ちょうど制限値
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => {
+                assert!(accepted);
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.5: コンテンツ長が制限を超える場合は「invalid: content too long」で拒否
+    #[tokio::test]
+    async fn test_handle_with_config_rejects_content_too_long() {
+        let config = LimitationConfig {
+            max_content_length: 10,
+            ..LimitationConfig::default()
+        };
+
+        let event_json = create_event_with_long_content("01234567890"); // 11文字、制限を1つ超過
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok {
+                accepted,
+                message,
+                ..
+            } => {
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+                assert!(message.contains("content too long"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.5: コンテンツ長が制限内の場合は正常に処理
+    #[tokio::test]
+    async fn test_handle_with_config_accepts_content_at_limit() {
+        let config = LimitationConfig {
+            max_content_length: 10,
+            ..LimitationConfig::default()
+        };
+
+        let event_json = create_event_with_long_content("0123456789"); // ちょうど10文字
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => {
+                assert!(accepted);
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.5: Unicode文字数でカウント（バイト数ではない）
+    #[tokio::test]
+    async fn test_handle_with_config_content_length_counts_unicode_chars() {
+        let config = LimitationConfig {
+            max_content_length: 5,
+            ..LimitationConfig::default()
+        };
+
+        // "あいうえお" は5文字（15バイト）
+        let event_json = create_event_with_long_content("あいうえお");
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => {
+                assert!(accepted); // 5文字なのでOK
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.6: created_atが過去すぎる場合は「invalid: created_at out of range」で拒否
+    #[tokio::test]
+    async fn test_handle_with_config_rejects_created_at_too_old() {
+        let config = LimitationConfig {
+            created_at_lower_limit: 3600, // 1時間
+            ..LimitationConfig::default()
+        };
+
+        // 現在時刻から2時間前
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event_json = create_event_with_created_at(now - 7200);
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok {
+                accepted,
+                message,
+                ..
+            } => {
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+                assert!(message.contains("created_at out of range"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.6: created_atが制限内の過去の場合は正常に処理
+    #[tokio::test]
+    async fn test_handle_with_config_accepts_created_at_within_lower_limit() {
+        let config = LimitationConfig {
+            created_at_lower_limit: 3600, // 1時間
+            ..LimitationConfig::default()
+        };
+
+        // 現在時刻から30分前
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event_json = create_event_with_created_at(now - 1800);
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => {
+                assert!(accepted);
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.7: created_atが未来すぎる場合は「invalid: created_at out of range」で拒否
+    #[tokio::test]
+    async fn test_handle_with_config_rejects_created_at_too_far_in_future() {
+        let config = LimitationConfig {
+            created_at_upper_limit: 900, // 15分
+            ..LimitationConfig::default()
+        };
+
+        // 現在時刻から30分後
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event_json = create_event_with_created_at(now + 1800);
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok {
+                accepted,
+                message,
+                ..
+            } => {
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+                assert!(message.contains("created_at out of range"));
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 3.7: created_atが制限内の未来の場合は正常に処理
+    #[tokio::test]
+    async fn test_handle_with_config_accepts_created_at_within_upper_limit() {
+        let config = LimitationConfig {
+            created_at_upper_limit: 900, // 15分
+            ..LimitationConfig::default()
+        };
+
+        // 現在時刻から5分後
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let event_json = create_event_with_created_at(now + 300);
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => {
+                assert!(accepted);
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// すべての制限を満たすイベントは正常に処理される
+    #[tokio::test]
+    async fn test_handle_with_config_accepts_valid_event() {
+        let config = LimitationConfig::default();
+        let (_, event_json) = create_valid_event();
+
+        let response = handle_event_with_config(event_json, &config).await;
+
+        match response {
+            RelayMessage::Ok { accepted, .. } => {
+                assert!(accepted);
+            }
+            _ => panic!("Expected Ok message"),
         }
     }
 }

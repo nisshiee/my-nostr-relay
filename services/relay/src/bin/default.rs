@@ -6,6 +6,7 @@
 /// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3, 19.2, 19.5, 19.6
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::application::DefaultHandler;
+use relay::domain::LimitationConfig;
 use relay::infrastructure::{
     init_logging, ApiGatewayWebSocketSender, DynamoDbConfig, DynamoEventRepository, DynamoSubscriptionRepository,
 };
@@ -127,8 +128,16 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     // WebSocket送信を作成
     let ws_sender = ApiGatewayWebSocketSender::new(&endpoint_url).await;
 
+    // 制限値設定を環境変数から読み込み
+    let limitation_config = LimitationConfig::from_env();
+
     // DefaultHandlerを作成してメッセージを処理
-    let default_handler = DefaultHandler::new(event_repo, subscription_repo, ws_sender);
+    let default_handler = DefaultHandler::with_config(
+        event_repo,
+        subscription_repo,
+        ws_sender,
+        limitation_config,
+    );
 
     match default_handler.handle(&event.payload).await {
         Ok(()) => {

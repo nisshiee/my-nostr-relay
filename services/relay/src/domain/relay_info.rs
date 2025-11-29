@@ -5,6 +5,8 @@
 
 use serde::Serialize;
 
+use crate::domain::LimitationConfig;
+
 /// NIP-11リレー情報ドキュメント
 ///
 /// クライアントがリレーの機能、制限、連絡先情報を把握するための
@@ -108,6 +110,52 @@ impl RelayInfoDocument {
         terms_of_service: Option<String>,
         posting_policy: Option<String>,
     ) -> Self {
+        Self::with_limitation(
+            name,
+            description,
+            pubkey,
+            contact,
+            icon,
+            banner,
+            relay_countries,
+            language_tags,
+            privacy_policy,
+            terms_of_service,
+            posting_policy,
+            RelayLimitation::default(),
+        )
+    }
+
+    /// 制限情報を指定してリレー情報ドキュメントを作成
+    ///
+    /// # Arguments
+    /// * `name` - リレー名
+    /// * `description` - リレー説明
+    /// * `pubkey` - 管理者公開鍵
+    /// * `contact` - 連絡先URI
+    /// * `icon` - アイコンURL
+    /// * `banner` - バナーURL
+    /// * `relay_countries` - 国コード配列
+    /// * `language_tags` - 言語タグ配列
+    /// * `privacy_policy` - プライバシーポリシーURL
+    /// * `terms_of_service` - 利用規約URL
+    /// * `posting_policy` - 投稿ポリシーURL
+    /// * `limitation` - 制限情報
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_limitation(
+        name: Option<String>,
+        description: Option<String>,
+        pubkey: Option<String>,
+        contact: Option<String>,
+        icon: Option<String>,
+        banner: Option<String>,
+        relay_countries: Vec<String>,
+        language_tags: Vec<String>,
+        privacy_policy: Option<String>,
+        terms_of_service: Option<String>,
+        posting_policy: Option<String>,
+        limitation: RelayLimitation,
+    ) -> Self {
         Self {
             name,
             description,
@@ -118,7 +166,7 @@ impl RelayInfoDocument {
             version: env!("CARGO_PKG_VERSION").to_string(),
             icon,
             banner,
-            limitation: RelayLimitation::default(),
+            limitation,
             relay_countries,
             language_tags,
             privacy_policy,
@@ -130,11 +178,36 @@ impl RelayInfoDocument {
 
 /// リレー制限情報
 ///
-/// 現在実装済みの制限値を含む。未実装の制限値は含めない。
+/// NIP-11 limitationオブジェクトとしてシリアライズされる。
+/// 9つの制限フィールドを持ち、LimitationConfigから構築される。
 #[derive(Debug, Clone, Serialize)]
 pub struct RelayLimitation {
+    /// WebSocketメッセージの最大バイト数
+    pub max_message_length: u32,
+
+    /// 1接続あたりの最大サブスクリプション数
+    pub max_subscriptions: u32,
+
+    /// フィルターlimitの最大値
+    pub max_limit: u32,
+
+    /// イベントの最大タグ数
+    pub max_event_tags: u32,
+
+    /// コンテンツの最大文字数
+    pub max_content_length: u32,
+
     /// サブスクリプションIDの最大長（64固定）
     pub max_subid_length: u32,
+
+    /// 過去のcreated_at許容範囲（秒）
+    pub created_at_lower_limit: u64,
+
+    /// 未来のcreated_at許容範囲（秒）
+    pub created_at_upper_limit: u64,
+
+    /// デフォルトlimit値
+    pub default_limit: u32,
 }
 
 /// サブスクリプションIDの最大長（固定値）
@@ -143,9 +216,7 @@ pub const MAX_SUBID_LENGTH: u32 = 64;
 
 impl Default for RelayLimitation {
     fn default() -> Self {
-        Self {
-            max_subid_length: MAX_SUBID_LENGTH,
-        }
+        Self::from_config(&LimitationConfig::default())
     }
 }
 
@@ -153,6 +224,24 @@ impl RelayLimitation {
     /// 新しいリレー制限情報を作成
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// LimitationConfigから構築
+    ///
+    /// 設定構造体の全フィールドをlimitationオブジェクトにマッピングする。
+    /// フィールド名はNIP-11仕様に準拠。
+    pub fn from_config(config: &LimitationConfig) -> Self {
+        Self {
+            max_message_length: config.max_message_length,
+            max_subscriptions: config.max_subscriptions,
+            max_limit: config.max_limit,
+            max_event_tags: config.max_event_tags,
+            max_content_length: config.max_content_length,
+            max_subid_length: config.max_subid_length,
+            created_at_lower_limit: config.created_at_lower_limit,
+            created_at_upper_limit: config.created_at_upper_limit,
+            default_limit: config.default_limit,
+        }
     }
 }
 
@@ -411,6 +500,143 @@ mod tests {
         assert!(parsed["limitation"]["max_subid_length"].is_number());
         assert!(parsed["relay_countries"].is_array());
         assert!(parsed["language_tags"].is_array());
+    }
+
+    // ===========================================
+    // Task 2.1: RelayLimitation拡張フィールドのテスト
+    // ===========================================
+
+    #[test]
+    fn test_relay_limitation_has_all_nine_fields() {
+        // RelayLimitationが9つの制限フィールドを全て持つことを検証
+        use crate::domain::LimitationConfig;
+        let config = LimitationConfig::default();
+        let limitation = RelayLimitation::from_config(&config);
+
+        // 全9フィールドがアクセス可能であることを確認
+        assert_eq!(limitation.max_message_length, config.max_message_length);
+        assert_eq!(limitation.max_subscriptions, config.max_subscriptions);
+        assert_eq!(limitation.max_limit, config.max_limit);
+        assert_eq!(limitation.max_event_tags, config.max_event_tags);
+        assert_eq!(limitation.max_content_length, config.max_content_length);
+        assert_eq!(limitation.max_subid_length, config.max_subid_length);
+        assert_eq!(limitation.created_at_lower_limit, config.created_at_lower_limit);
+        assert_eq!(limitation.created_at_upper_limit, config.created_at_upper_limit);
+        assert_eq!(limitation.default_limit, config.default_limit);
+    }
+
+    #[test]
+    fn test_relay_limitation_json_serialization_all_fields() {
+        // RelayLimitationのJSONシリアライズで全9フィールドが出力されることを検証
+        use crate::domain::LimitationConfig;
+        let config = LimitationConfig::default();
+        let limitation = RelayLimitation::from_config(&config);
+
+        let json = serde_json::to_value(&limitation).unwrap();
+
+        // NIP-11仕様に準拠したフィールド名で全フィールドが存在
+        assert_eq!(json["max_message_length"], 131072);
+        assert_eq!(json["max_subscriptions"], 20);
+        assert_eq!(json["max_limit"], 5000);
+        assert_eq!(json["max_event_tags"], 1000);
+        assert_eq!(json["max_content_length"], 65536);
+        assert_eq!(json["max_subid_length"], 64);
+        assert_eq!(json["created_at_lower_limit"], 31536000);
+        assert_eq!(json["created_at_upper_limit"], 900);
+        assert_eq!(json["default_limit"], 100);
+    }
+
+    #[test]
+    fn test_relay_limitation_json_field_count() {
+        // RelayLimitationのJSON出力が正確に9フィールドであることを検証
+        use crate::domain::LimitationConfig;
+        let config = LimitationConfig::default();
+        let limitation = RelayLimitation::from_config(&config);
+
+        let json = serde_json::to_value(&limitation).unwrap();
+        let obj = json.as_object().unwrap();
+
+        assert_eq!(obj.len(), 9, "limitation object should have exactly 9 fields");
+    }
+
+    // ===========================================
+    // Task 2.2: from_config変換機能のテスト
+    // ===========================================
+
+    #[test]
+    fn test_relay_limitation_from_config_mapping() {
+        // LimitationConfigからRelayLimitationへの変換が正しく行われることを検証
+        use crate::domain::LimitationConfig;
+
+        // カスタム値を持つ設定
+        let config = LimitationConfig {
+            max_message_length: 262144,
+            max_subscriptions: 50,
+            max_limit: 10000,
+            max_event_tags: 2000,
+            max_content_length: 131072,
+            max_subid_length: 64,
+            created_at_lower_limit: 63072000,
+            created_at_upper_limit: 1800,
+            default_limit: 200,
+        };
+
+        let limitation = RelayLimitation::from_config(&config);
+
+        // 全フィールドが正しくマッピングされる
+        assert_eq!(limitation.max_message_length, 262144);
+        assert_eq!(limitation.max_subscriptions, 50);
+        assert_eq!(limitation.max_limit, 10000);
+        assert_eq!(limitation.max_event_tags, 2000);
+        assert_eq!(limitation.max_content_length, 131072);
+        assert_eq!(limitation.max_subid_length, 64);
+        assert_eq!(limitation.created_at_lower_limit, 63072000);
+        assert_eq!(limitation.created_at_upper_limit, 1800);
+        assert_eq!(limitation.default_limit, 200);
+    }
+
+    #[test]
+    fn test_relay_limitation_from_config_preserves_max_subid_length() {
+        // from_configがmax_subid_lengthを保持することを検証
+        use crate::domain::LimitationConfig;
+
+        let config = LimitationConfig::default();
+        let limitation = RelayLimitation::from_config(&config);
+
+        // max_subid_lengthは64固定
+        assert_eq!(limitation.max_subid_length, 64);
+    }
+
+    #[test]
+    fn test_relay_limitation_from_config_json_output() {
+        // from_configで生成したRelayLimitationのJSON出力がNIP-11仕様に準拠
+        use crate::domain::LimitationConfig;
+
+        let config = LimitationConfig {
+            max_message_length: 100000,
+            max_subscriptions: 10,
+            max_limit: 1000,
+            max_event_tags: 500,
+            max_content_length: 32768,
+            max_subid_length: 64,
+            created_at_lower_limit: 15768000,
+            created_at_upper_limit: 300,
+            default_limit: 50,
+        };
+
+        let limitation = RelayLimitation::from_config(&config);
+        let json = serde_json::to_value(&limitation).unwrap();
+
+        // JSON出力がconfigの値と一致
+        assert_eq!(json["max_message_length"], 100000);
+        assert_eq!(json["max_subscriptions"], 10);
+        assert_eq!(json["max_limit"], 1000);
+        assert_eq!(json["max_event_tags"], 500);
+        assert_eq!(json["max_content_length"], 32768);
+        assert_eq!(json["max_subid_length"], 64);
+        assert_eq!(json["created_at_lower_limit"], 15768000);
+        assert_eq!(json["created_at_upper_limit"], 300);
+        assert_eq!(json["default_limit"], 50);
     }
 
     // ===========================================

@@ -2,6 +2,7 @@
 pub mod event_kind;
 pub mod event_validator;
 pub mod filter_evaluator;
+pub mod limitation_config;
 pub mod relay_info;
 pub mod relay_message;
 
@@ -9,6 +10,7 @@ pub mod relay_message;
 pub use event_kind::EventKind;
 pub use event_validator::{EventValidator, ValidationError};
 pub use filter_evaluator::{FilterEvaluator, FilterValidationError};
+pub use limitation_config::LimitationConfig;
 pub use relay_info::{
     RelayInfoDocument, RelayLimitation, MAX_SUBID_LENGTH, SOFTWARE_URL, SUPPORTED_NIPS,
 };
