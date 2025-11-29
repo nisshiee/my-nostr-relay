@@ -4,9 +4,11 @@
 
 # Events Table - stores Nostr events
 resource "aws_dynamodb_table" "events" {
-  name         = "nostr_relay_events"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "id"
+  name             = "nostr_relay_events"
+  billing_mode     = "PROVISIONED"
+  read_capacity    = 21
+  write_capacity   = 21
+  hash_key         = "id"
 
   attribute {
     name = "id"
@@ -44,6 +46,8 @@ resource "aws_dynamodb_table" "events" {
     hash_key        = "pubkey"
     range_key       = "created_at"
     projection_type = "ALL"
+    read_capacity   = 1
+    write_capacity  = 1
   }
 
   # GSI-KindCreatedAt: For kinds filter queries
@@ -52,6 +56,8 @@ resource "aws_dynamodb_table" "events" {
     hash_key        = "kind"
     range_key       = "created_at"
     projection_type = "ALL"
+    read_capacity   = 1
+    write_capacity  = 1
   }
 
   # GSI-PkKind: For Replaceable event lookups (pubkey#kind)
@@ -60,6 +66,8 @@ resource "aws_dynamodb_table" "events" {
     hash_key        = "pk_kind"
     range_key       = "created_at"
     projection_type = "ALL"
+    read_capacity   = 1
+    write_capacity  = 1
   }
 
   # GSI-PkKindD: For Addressable event lookups (pubkey#kind#d_tag)
@@ -68,6 +76,8 @@ resource "aws_dynamodb_table" "events" {
     hash_key        = "pk_kind_d"
     range_key       = "created_at"
     projection_type = "ALL"
+    read_capacity   = 1
+    write_capacity  = 1
   }
 
   tags = {
