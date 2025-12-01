@@ -87,20 +87,20 @@
 
 ## Task 5. FilterToQueryConverter実装
 
-- [ ] 5.1 (P) 基本フィルター変換（ids、authors、kinds）
-  - idsフィルターをterms query（完全一致）またはprefix query（前方一致）に変換
-  - 64文字のIDは完全一致、64文字未満は前方一致として処理
-  - authorsフィルターを同様にterms/prefix queryに変換
+- [x] 5.1 (P) 基本フィルター変換（ids、authors、kinds）
+  - idsフィルターをterms query（完全一致）に変換
+  - authorsフィルターをterms query（完全一致）に変換
   - kindsフィルターをterms queryに変換
+  - 注: nostrクレートの制約（EventId/PublicKeyは64文字hex必須）により前方一致は非サポート
   - _Requirements: 4.1, 4.2, 4.3_
 
-- [ ] 5.2 時間範囲とタグフィルター変換
+- [x] 5.2 時間範囲とタグフィルター変換
   - sinceフィルターをrange query（created_at >= since）に変換
   - untilフィルターをrange query（created_at <= until）に変換
   - #タグフィルター（#e、#p等）を対応するtag_eフィールドのterms queryに変換
   - _Requirements: 4.4, 4.5, 4.6_
 
-- [ ] 5.3 複数フィルター条件の結合ロジック
+- [x] 5.3 複数フィルター条件の結合ロジック
   - 単一フィルター内の複数条件をANDで結合したbool queryのmust句を生成
   - 複数フィルターオブジェクトをORで結合したbool queryのshould句を生成
   - 空のフィルター配列はmatch_all queryを返す

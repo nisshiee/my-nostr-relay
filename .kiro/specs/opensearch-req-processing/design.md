@@ -259,7 +259,7 @@ pub trait EventRepository: QueryRepository {
 - Filter構造体からOpenSearch bool queryを生成
 - 複数フィルター条件はANDで結合
 - 複数フィルターオブジェクトはORで結合
-- ids/authorsの前方一致検索をprefix queryに変換
+- ids/authorsは完全一致検索（terms query）のみサポート（注: nostrクレートの制約により前方一致は非サポート）
 - OpenSearch固有のQuery DSL生成ロジックをカプセル化
 
 **Dependencies**
@@ -283,13 +283,13 @@ impl FilterToQueryConverter {
     /// 単一フィルターをbool query clauseに変換
     fn convert_single_filter(filter: &Filter) -> serde_json::Value;
 
-    /// idsフィルターをterms/prefix queryに変換
-    /// 64文字未満のIDは前方一致、64文字は完全一致
-    fn build_ids_query(ids: &[EventId]) -> serde_json::Value;
+    /// idsフィルターをterms queryに変換（完全一致のみ）
+    /// 注: nostrクレートの制約により前方一致は非サポート
+    fn build_ids_query(ids: &BTreeSet<EventId>) -> Option<serde_json::Value>;
 
-    /// authorsフィルターをterms/prefix queryに変換
-    /// 64文字未満のpubkeyは前方一致、64文字は完全一致
-    fn build_authors_query(authors: &[PublicKey]) -> serde_json::Value;
+    /// authorsフィルターをterms queryに変換（完全一致のみ）
+    /// 注: nostrクレートの制約により前方一致は非サポート
+    fn build_authors_query(authors: &BTreeSet<PublicKey>) -> Option<serde_json::Value>;
 
     /// kindsフィルターをterms queryに変換
     fn build_kinds_query(kinds: &HashSet<Kind>) -> serde_json::Value;

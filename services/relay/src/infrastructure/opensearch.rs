@@ -5,6 +5,7 @@
 
 mod client;
 mod config;
+mod filter_to_query_converter;
 mod index_document;
 
 // 再エクスポート
