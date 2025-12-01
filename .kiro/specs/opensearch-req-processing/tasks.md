@@ -2,7 +2,7 @@
 
 ## Task 1. OpenSearch Serviceインフラストラクチャ構築
 
-- [ ] 1.1 OpenSearchドメインとEBS設定のTerraform定義
+- [x] 1.1 OpenSearchドメインとEBS設定のTerraform定義
   - OpenSearch Serviceドメインを`opensearch.tf`に新規作成
   - エンジンバージョンをOpenSearch 2.11に設定
   - インスタンスタイプをt3.small.search（無料枠対象）に設定
@@ -10,13 +10,13 @@
   - at-rest暗号化、node-to-node暗号化、HTTPS強制を設定
   - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
-- [ ] 1.2 (P) OpenSearchアクセスポリシーとIAM設定
+- [x] 1.2 (P) OpenSearchアクセスポリシーとIAM設定
   - パブリックアクセスエンドポイントを使用する設定
   - リソースベースのアクセスポリシーでLambda実行ロールからのアクセスを許可
   - Lambda関数にOpenSearchへのアクセス権限（es:*）を付与するIAMポリシーをアタッチ
   - _Requirements: 1.5, 1.6, 1.7_
 
-- [ ] 1.3 Lambda環境変数へのOpenSearchエンドポイント設定
+- [x] 1.3 Lambda環境変数へのOpenSearchエンドポイント設定
   - default Lambdaの環境変数にOPENSEARCH_ENDPOINTとOPENSEARCH_INDEXを追加
   - indexer Lambda用の環境変数設定を準備
   - Terraform applyでドメインが検索可能な状態になることを確認
