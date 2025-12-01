@@ -14,7 +14,8 @@ pub use connection_repository::{
     ConnectionInfo, ConnectionRepository, DynamoConnectionRepository, RepositoryError,
 };
 pub use event_repository::{
-    DynamoEventRepository, EventRepository, EventRepositoryError, SaveResult,
+    DynamoEventRepository, EventRepository, EventRepositoryError, QueryRepository,
+    QueryRepositoryError, SaveResult,
 };
 pub use logging::init_logging;
 pub use opensearch::{

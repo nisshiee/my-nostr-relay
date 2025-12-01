@@ -10,8 +10,8 @@ use tracing::{debug, trace, warn};
 
 use crate::domain::{FilterEvaluator, FilterValidationError, LimitationConfig, RelayMessage};
 use crate::infrastructure::{
-    EventRepository, EventRepositoryError, SendError, SubscriptionRepository,
-    SubscriptionRepositoryError, WebSocketSender,
+    EventRepository, EventRepositoryError, QueryRepositoryError, SendError,
+    SubscriptionRepository, SubscriptionRepositoryError, WebSocketSender,
 };
 
 /// サブスクリプションハンドラーのエラー型
@@ -50,6 +50,12 @@ impl From<SubscriptionRepositoryError> for SubscriptionHandlerError {
 
 impl From<EventRepositoryError> for SubscriptionHandlerError {
     fn from(err: EventRepositoryError) -> Self {
+        SubscriptionHandlerError::RepositoryError(err.to_string())
+    }
+}
+
+impl From<QueryRepositoryError> for SubscriptionHandlerError {
+    fn from(err: QueryRepositoryError) -> Self {
         SubscriptionHandlerError::RepositoryError(err.to_string())
     }
 }

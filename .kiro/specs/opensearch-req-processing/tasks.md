@@ -66,20 +66,20 @@
 
 ## Task 4. QueryRepositoryトレイトとEventRepository継承構造
 
-- [ ] 4.1 (P) QueryRepositoryトレイト定義
+- [x] 4.1 (P) QueryRepositoryトレイト定義
   - クエリ専用のリポジトリトレイトを定義
   - query(filters, limit)メソッドでフィルターに基づくイベント検索を抽象化
   - QueryRepositoryError型でクエリ実行、接続、デシリアライズエラーを定義
   - async_traitを使用した非同期トレイト定義
   - _Requirements: 9.1, 9.2_
 
-- [ ] 4.2 EventRepositoryトレイト継承構造への変更
+- [x] 4.2 EventRepositoryトレイト継承構造への変更
   - EventRepositoryをQueryRepositoryの継承トレイトとして再定義
   - save()とget_by_id()は引き続きEventRepositoryで定義
   - 既存のDynamoEventRepositoryが両トレイトを実装するよう調整
   - _Requirements: 9.1, 9.2_
 
-- [ ] 4.3 DynamoEventRepositoryのQueryRepository互換性維持
+- [x] 4.3 DynamoEventRepositoryのQueryRepository互換性維持
   - 既存のquery()実装をQueryRepositoryトレイトに準拠させる
   - エラー型の変換を実装
   - 既存のテストが引き続きパスすることを確認
