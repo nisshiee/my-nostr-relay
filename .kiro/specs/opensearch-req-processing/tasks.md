@@ -45,19 +45,19 @@
 
 ## Task 3. OpenSearchクライアント基盤実装
 
-- [ ] 3.1 (P) Cargo.toml依存関係追加
+- [x] 3.1 (P) Cargo.toml依存関係追加
   - opensearch = { version = "2.3", features = ["aws-auth"] }を追加
   - url = "2"を追加
   - 既存の依存関係との互換性を確認
   - _Requirements: 6.1_
 
-- [ ] 3.2 OpenSearchConfig設定読み取り機能
+- [x] 3.2 OpenSearchConfig設定読み取り機能
   - OPENSEARCH_ENDPOINT環境変数からエンドポイントURLを読み取る機能
   - OPENSEARCH_INDEX環境変数からインデックス名を読み取る機能（デフォルト: nostr_events）
   - 設定値のバリデーションとエラーハンドリング
   - _Requirements: 6.4_
 
-- [ ] 3.3 OpenSearchクライアント初期化とAWS認証
+- [x] 3.3 OpenSearchクライアント初期化とAWS認証
   - AWS SigV4認証を使用したクライアント作成
   - Lambda実行環境のIAMロールを使用した認証
   - コネクションプーリングを活用した接続再利用

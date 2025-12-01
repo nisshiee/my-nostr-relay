@@ -39,6 +39,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # 非同期ランタイム
 tokio = { version = "1.48.0", features = ["full"] }
 
+# OpenSearchクライアント with AWS認証
+opensearch = { version = "2.3", features = ["aws-auth"] }
+
+# URL解析
+url = "2"
+
 [dev-dependencies]
 # テストのシリアル実行（環境変数テストの競合防止）
 serial_test = "3"

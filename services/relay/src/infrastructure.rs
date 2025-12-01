@@ -10,16 +10,20 @@ pub mod websocket_sender;
 
 // 再エクスポート
 pub use config::{DynamoDbConfig, DynamoDbConfigError};
-pub use logging::init_logging;
 pub use connection_repository::{
     ConnectionInfo, ConnectionRepository, DynamoConnectionRepository, RepositoryError,
 };
 pub use event_repository::{
     DynamoEventRepository, EventRepository, EventRepositoryError, SaveResult,
 };
+pub use logging::init_logging;
+pub use opensearch::{
+    DocumentBuildError, NostrEventDocument, OpenSearchClient, OpenSearchClientError,
+    OpenSearchConfig, OpenSearchConfigError,
+};
+pub use relay_info_config::{is_valid_pubkey, parse_comma_separated, RelayInfoConfig};
 pub use subscription_repository::{
     DynamoSubscriptionRepository, MatchedSubscription, SubscriptionInfo, SubscriptionRepository,
     SubscriptionRepositoryError,
 };
 pub use websocket_sender::{ApiGatewayWebSocketSender, SendError, WebSocketSender};
-pub use relay_info_config::{RelayInfoConfig, is_valid_pubkey, parse_comma_separated};
