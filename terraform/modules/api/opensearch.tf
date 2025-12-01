@@ -99,3 +99,45 @@ resource "aws_iam_role_policy_attachment" "lambda_opensearch" {
   role       = aws_iam_role.lambda_exec.name
   policy_arn = aws_iam_policy.lambda_opensearch.arn
 }
+
+# ------------------------------------------------------------------------------
+# インデックステンプレート設定
+# Task 2: インデックスマッピングの設計とテンプレート作成
+# 要件: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9
+# ------------------------------------------------------------------------------
+
+# インデックステンプレートJSONファイルを読み込む
+locals {
+  opensearch_index_template = file("${path.module}/files/opensearch_index_template.json")
+  opensearch_template_hash  = sha256(local.opensearch_index_template)
+}
+
+# インデックステンプレート自動適用リソース
+# aws-vault経由でterraformを実行している場合、子プロセスは認証情報を継承する
+resource "terraform_data" "opensearch_index_template" {
+  # テンプレートファイルの内容が変更された場合に再作成
+  triggers_replace = {
+    template_hash = local.opensearch_template_hash
+    endpoint      = aws_opensearch_domain.nostr_relay.endpoint
+  }
+
+  # OpenSearchドメインの作成完了を待つ
+  depends_on = [aws_opensearch_domain.nostr_relay]
+
+  # インデックステンプレートをOpenSearchに適用
+  provisioner "local-exec" {
+    command = <<-EOT
+      awscurl --service es --region ap-northeast-1 -X PUT \
+        'https://${aws_opensearch_domain.nostr_relay.endpoint}/_index_template/nostr_events_template' \
+        -H 'Content-Type: application/json' \
+        -d @${path.module}/files/opensearch_index_template.json
+    EOT
+  }
+}
+
+# 出力: OpenSearchエンドポイント
+output "opensearch_endpoint" {
+  description = "OpenSearchドメインエンドポイント"
+  value       = aws_opensearch_domain.nostr_relay.endpoint
+}
+

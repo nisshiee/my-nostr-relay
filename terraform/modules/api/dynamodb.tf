@@ -4,11 +4,11 @@
 
 # Events Table - stores Nostr events
 resource "aws_dynamodb_table" "events" {
-  name             = "nostr_relay_events"
-  billing_mode     = "PROVISIONED"
-  read_capacity    = 21
-  write_capacity   = 21
-  hash_key         = "id"
+  name           = "nostr_relay_events"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 21
+  write_capacity = 21
+  hash_key       = "id"
 
   attribute {
     name = "id"

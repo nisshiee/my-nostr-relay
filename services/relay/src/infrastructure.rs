@@ -3,6 +3,7 @@ pub mod config;
 pub mod connection_repository;
 pub mod event_repository;
 pub mod logging;
+pub mod opensearch;
 pub mod relay_info_config;
 pub mod subscription_repository;
 pub mod websocket_sender;

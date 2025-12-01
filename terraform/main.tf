@@ -127,4 +127,7 @@ output "cloudfront_domain_name" {
   value = module.api.cloudfront_domain_name
 }
 
-
+output "opensearch_endpoint" {
+  description = "OpenSearchドメインエンドポイント"
+  value       = module.api.opensearch_endpoint
+}

@@ -24,7 +24,7 @@
 
 ## Task 2. OpenSearchインデックステンプレートとマッピング定義
 
-- [ ] 2. インデックスマッピングの設計とテンプレート作成
+- [x] 2.1 インデックステンプレートJSON作成
   - イベントIDをドキュメントIDとして使用するインデックス設計
   - id、pubkeyフィールドをkeyword型で定義
   - kindフィールドをinteger型、created_atをlong型（UNIXエポック秒）で定義
@@ -32,7 +32,16 @@
   - event_jsonフィールドをindex: falseで格納専用として定義
   - シングルシャード、レプリカなしの設定でt3.small.search向けに最適化
   - インデックステンプレートとして新規インデックス作成時に自動適用される設定
+  - Terraformのterraform_data + local-execでawscurlによる自動適用
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9_
+
+- [x] 2.2 NostrEventDocumentドキュメント構造体（タスク7の先取り実装）
+  - インデックステンプレートと整合性を持つRust構造体を定義
+  - NostrイベントからOpenSearchドキュメントへの変換ロジック（from_event）
+  - 英字1文字タグ（e、p、d、a、t）の抽出とフィールドへのマッピング
+  - event_json（完全なイベントJSON）のシリアライズ
+  - ユニットテスト（10テスト）で変換ロジックを検証
+  - _Note: タスク7（indexer Lambda実装）で使用される構造体を先行実装_
 
 ## Task 3. OpenSearchクライアント基盤実装
 
@@ -132,12 +141,10 @@
   - _Requirements: 3.1_
 
 - [ ] 7.2 DynamoDB Streamsレコード処理ロジック
-  - INSERTイベントでevent_jsonからインデックスドキュメントを構築しPUT
+  - INSERTイベントでNostrEventDocument（タスク2.2で実装済み）を使用してPUT
   - MODIFYイベントを同様にPUT（upsert動作）
   - REMOVEイベントで対応するドキュメントをDELETE
   - バッチ処理で複数レコードを効率的に処理
-  - 完全なevent_jsonをドキュメントに含める
-  - 英字1文字タグを個別フィールドとして抽出
   - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.7_
 
 - [ ] 7.3 indexer Lambdaエラーハンドリングとロギング
