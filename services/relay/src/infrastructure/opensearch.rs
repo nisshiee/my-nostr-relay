@@ -9,6 +9,7 @@ mod event_repository;
 mod filter_to_query_converter;
 mod index_document;
 mod indexer;
+mod rebuilder;
 
 // 再エクスポート
 pub use client::{OpenSearchClient, OpenSearchClientError};
@@ -16,3 +17,4 @@ pub use config::{OpenSearchConfig, OpenSearchConfigError};
 pub use event_repository::{OpenSearchEventRepository, OpenSearchEventRepositoryError};
 pub use index_document::{DocumentBuildError, NostrEventDocument};
 pub use indexer::{Indexer, IndexerError, IndexerResult, ProcessAction};
+pub use rebuilder::{RebuildConfig, RebuildConfigError, RebuildResult, Rebuilder, RebuilderError};
