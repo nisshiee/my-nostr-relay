@@ -10,6 +10,11 @@ resource "aws_dynamodb_table" "events" {
   write_capacity = 21
   hash_key       = "id"
 
+  # Task 7.4: DynamoDB Streamsを有効化（OpenSearchインデックス同期用）
+  # 要件 3.4: NEW_AND_OLD_IMAGESストリームビュータイプを使用
+  stream_enabled   = true
+  stream_view_type = "NEW_AND_OLD_IMAGES"
+
   attribute {
     name = "id"
     type = "S"

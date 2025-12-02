@@ -134,26 +134,26 @@
 
 ## Task 7. indexer Lambda実装
 
-- [ ] 7.1 (P) indexer Lambda関数作成
+- [x] 7.1 (P) indexer Lambda関数作成
   - 新規バイナリとしてsrc/bin/indexer.rsを作成
   - lambda_runtimeを使用したLambda実行環境のセットアップ
   - OpenSearchクライアントの初期化
   - _Requirements: 3.1_
 
-- [ ] 7.2 DynamoDB Streamsレコード処理ロジック
+- [x] 7.2 DynamoDB Streamsレコード処理ロジック
   - INSERTイベントでNostrEventDocument（タスク2.2で実装済み）を使用してPUT
   - MODIFYイベントを同様にPUT（upsert動作）
   - REMOVEイベントで対応するドキュメントをDELETE
   - バッチ処理で複数レコードを効率的に処理
   - _Requirements: 3.1, 3.2, 3.3, 3.6, 3.7_
 
-- [ ] 7.3 indexer Lambdaエラーハンドリングとロギング
+- [x] 7.3 indexer Lambdaエラーハンドリングとロギング
   - 処理失敗時のリトライ対応（Lambda標準リトライに依存）
   - インデックス処理の成功/失敗件数をログに記録
   - event_json欠損時はスキップしてログ記録
   - _Requirements: 3.5, 8.4_
 
-- [ ] 7.4 DynamoDB StreamsとindexerのTerraform設定
+- [x] 7.4 DynamoDB StreamsとindexerのTerraform設定
   - DynamoDB EventsテーブルにStreamsを有効化（NEW_AND_OLD_IMAGES）
   - indexer Lambda関数のリソース定義（ARM64アーキテクチャ）
   - イベントソースマッピングでStreamsとLambdaを接続（batch_size=100、LATEST）

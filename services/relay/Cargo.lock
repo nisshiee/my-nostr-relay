@@ -503,6 +503,26 @@ dependencies = [
 
 [[package]]
 name = "aws_lambda_events"
+version = "0.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7319a086b79c3ff026a33a61e80f04fd3885fbb73237981ea080d21944e1cb1c"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "flate2",
+ "http 1.4.0",
+ "http-body 1.0.1",
+ "http-serde",
+ "query_map",
+ "serde",
+ "serde_dynamo",
+ "serde_json",
+ "serde_with",
+]
+
+[[package]]
+name = "aws_lambda_events"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac59c9b189a3bd75146633e1c87f35fb727f53b03c7f331af789ff1293a9f350"
@@ -702,8 +722,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "145052bdd345b87320e369255277e3fb5152762ad123a901ef5c262dd38fe8d2"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1592,7 +1614,7 @@ version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a106755a9079a3ed20b4262e32c9a5efa127c97546cb2ecf69bbf3d17dbf970b"
 dependencies = [
- "aws_lambda_events",
+ "aws_lambda_events 1.0.1",
  "bytes",
  "encoding_rs",
  "futures-util",
@@ -2144,11 +2166,14 @@ dependencies = [
  "aws-config",
  "aws-sdk-apigatewaymanagement",
  "aws-sdk-dynamodb",
+ "aws_lambda_events 0.15.1",
+ "chrono",
  "lambda_http",
  "lambda_runtime",
  "nostr",
  "opensearch",
  "serde",
+ "serde_dynamo",
  "serde_json",
  "serial_test",
  "thiserror",
@@ -2510,6 +2535,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "serde_dynamo"
+version = "4.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "873a97c3f7a67dd042bceb47d056d288424b82d4c66b0a25e1a3b34675620951"
+dependencies = [
+ "base64 0.21.7",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

@@ -19,9 +19,9 @@ pub use event_repository::{
 };
 pub use logging::init_logging;
 pub use opensearch::{
-    DocumentBuildError, NostrEventDocument, OpenSearchClient, OpenSearchClientError,
-    OpenSearchConfig, OpenSearchConfigError, OpenSearchEventRepository,
-    OpenSearchEventRepositoryError,
+    DocumentBuildError, Indexer, IndexerError, IndexerResult, NostrEventDocument,
+    OpenSearchClient, OpenSearchClientError, OpenSearchConfig, OpenSearchConfigError,
+    OpenSearchEventRepository, OpenSearchEventRepositoryError, ProcessAction,
 };
 pub use relay_info_config::{is_valid_pubkey, parse_comma_separated, RelayInfoConfig};
 pub use subscription_repository::{

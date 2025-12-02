@@ -141,3 +141,87 @@ output "opensearch_endpoint" {
   value       = aws_opensearch_domain.nostr_relay.endpoint
 }
 
+# ------------------------------------------------------------------------------
+# Indexer Lambda Function
+# Task 7.4: DynamoDB Streamsからインデックス処理を行うLambda関数
+# 要件: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 8.4
+# ------------------------------------------------------------------------------
+
+data "archive_file" "indexer" {
+  type        = "zip"
+  source_file = "${path.module}/../../../services/relay/target/lambda/indexer/bootstrap"
+  output_path = "${path.module}/../../dist/indexer.zip"
+}
+
+resource "aws_lambda_function" "indexer" {
+  function_name    = "nostr_relay_indexer"
+  role             = aws_iam_role.lambda_exec.arn
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  filename         = data.archive_file.indexer.output_path
+  source_code_hash = data.archive_file.indexer.output_base64sha256
+  timeout          = 30
+  architectures    = ["arm64"]
+
+  environment {
+    variables = {
+      # Task 7.4: indexer LambdaにOpenSearch環境変数を設定
+      OPENSEARCH_ENDPOINT = "https://${aws_opensearch_domain.nostr_relay.endpoint}"
+      OPENSEARCH_INDEX    = "nostr_events"
+    }
+  }
+
+  tags = {
+    Name = "nostr-relay-indexer"
+  }
+}
+
+# ------------------------------------------------------------------------------
+# DynamoDB Streams Event Source Mapping
+# Task 7.4: イベントソースマッピングでStreamsとLambdaを接続
+# 要件: 3.4
+# ------------------------------------------------------------------------------
+
+resource "aws_lambda_event_source_mapping" "indexer" {
+  event_source_arn  = aws_dynamodb_table.events.stream_arn
+  function_name     = aws_lambda_function.indexer.arn
+  starting_position = "LATEST"
+  batch_size        = 100
+
+  # 要件 3.5: 失敗時のリトライ対応
+  maximum_retry_attempts = 3
+}
+
+# ------------------------------------------------------------------------------
+# IAM Policy for DynamoDB Streams Access
+# Task 7.4: indexer LambdaにDynamoDB Streamsへのアクセス権限を付与
+# ------------------------------------------------------------------------------
+
+resource "aws_iam_policy" "lambda_dynamodb_streams" {
+  name        = "nostr_relay_lambda_dynamodb_streams"
+  description = "IAM policy for Lambda to read DynamoDB Streams"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetRecords",
+          "dynamodb:GetShardIterator",
+          "dynamodb:DescribeStream",
+          "dynamodb:ListStreams"
+        ]
+        Resource = [
+          "${aws_dynamodb_table.events.arn}/stream/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_dynamodb_streams" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = aws_iam_policy.lambda_dynamodb_streams.arn
+}
+
