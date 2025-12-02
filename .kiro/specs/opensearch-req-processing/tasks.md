@@ -231,7 +231,7 @@
 
 ## Task 12. DynamoDB GSI最適化
 
-- [ ] 12. 未使用GSIの削除（OpenSearch安定稼働確認後）
+- [x] 12. 未使用GSIの削除（OpenSearch安定稼働確認後）
   - GSI-PubkeyCreatedAtを削除（REQクエリがOpenSearchに移行のため不要）
   - GSI-KindCreatedAtを削除（同上）
   - GSI-PkKindを維持（Replaceableイベント書き込み処理で使用）
