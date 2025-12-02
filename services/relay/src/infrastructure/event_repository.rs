@@ -2,12 +2,87 @@
 ///
 /// 要件: 8.10, 9.1, 10.2, 10.3, 10.4, 12.2, 12.3, 13.1, 13.2, 13.3, 13.4,
 ///       16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.8
+/// 追加要件（OpenSearch REQ処理）: 5.1-5.8, 9.1-9.5
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, TransactWriteItem};
 use aws_sdk_dynamodb::Client as DynamoDbClient;
 use std::collections::HashMap;
 use nostr::{Event, Filter};
 use thiserror::Error;
+
+// ============================================================================
+// QueryRepository トレイトとエラー型（Task 4.1）
+// ============================================================================
+
+/// QueryRepository固有のエラー型
+///
+/// クエリ操作専用のエラーを表現する。EventRepositoryErrorからの変換もサポート。
+/// 要件: 9.1, 9.2
+#[derive(Debug, Error, Clone, PartialEq)]
+pub enum QueryRepositoryError {
+    /// クエリ実行に失敗
+    #[error("Query execution error: {0}")]
+    QueryError(String),
+
+    /// クエリタイムアウト
+    #[error("Query timeout: {0}")]
+    Timeout(String),
+
+    /// インデックス不存在
+    #[error("Index not found: {0}")]
+    IndexNotFound(String),
+
+    /// 接続に失敗
+    #[error("Connection error: {0}")]
+    ConnectionError(String),
+
+    /// デシリアライズに失敗
+    #[error("Deserialization error: {0}")]
+    DeserializationError(String),
+}
+
+/// EventRepositoryErrorからQueryRepositoryErrorへの変換
+///
+/// DynamoEventRepositoryがQueryRepositoryを実装する際に使用。
+/// 要件: 9.3, 9.4（Task 4.3: エラー型変換）
+impl From<EventRepositoryError> for QueryRepositoryError {
+    fn from(err: EventRepositoryError) -> Self {
+        match err {
+            EventRepositoryError::ReadError(msg) => QueryRepositoryError::QueryError(msg),
+            EventRepositoryError::WriteError(msg) => QueryRepositoryError::QueryError(msg),
+            EventRepositoryError::SerializationError(msg) => {
+                QueryRepositoryError::DeserializationError(msg)
+            }
+        }
+    }
+}
+
+/// クエリ専用リポジトリトレイト
+///
+/// EventRepositoryのサブセットとして、検索操作のみを抽象化する。
+/// OpenSearchEventRepositoryとDynamoEventRepositoryの共通インターフェース。
+/// 要件: 5.1-5.8, 9.1, 9.2
+#[async_trait]
+pub trait QueryRepository: Send + Sync {
+    /// フィルターに合致するイベントをクエリ
+    ///
+    /// # 引数
+    /// * `filters` - 検索条件のフィルター配列（OR結合）
+    /// * `limit` - 取得する最大イベント数
+    ///
+    /// # 戻り値
+    /// * `Ok(Vec<Event>)` - created_at降順でソートされたイベント
+    /// * `Err(QueryRepositoryError)` - クエリ実行エラー
+    async fn query(
+        &self,
+        filters: &[Filter],
+        limit: Option<u32>,
+    ) -> Result<Vec<Event>, QueryRepositoryError>;
+}
+
+// ============================================================================
+// EventRepository エラー型と既存トレイト
+// ============================================================================
 
 use crate::domain::{EventKind, FilterEvaluator};
 
@@ -40,10 +115,11 @@ pub enum SaveResult {
 
 /// イベント永続化用トレイト
 ///
-/// このトレイトはイベント永続化機能を抽象化し、
+/// QueryRepositoryを継承し、クエリ機能に加えて保存・取得機能を提供する。
 /// 異なる実装を可能にします（実際のDynamoDB、テスト用モック）。
+/// 要件: 9.1, 9.2（Task 4.2: QueryRepository継承構造）
 #[async_trait]
-pub trait EventRepository: Send + Sync {
+pub trait EventRepository: QueryRepository {
     /// イベントを保存（Kind別に適切な処理を実行）
     ///
     /// # 引数
@@ -55,23 +131,6 @@ pub trait EventRepository: Send + Sync {
     ///
     /// 要件: 9.1, 10.2, 10.3, 12.2, 12.3, 16.1, 16.2, 16.3, 16.6, 16.7
     async fn save(&self, event: &Event) -> Result<SaveResult, EventRepositoryError>;
-
-    /// フィルターに基づくクエリ
-    ///
-    /// # 引数
-    /// * `filters` - フィルター条件（複数の場合はOR）
-    /// * `limit` - 結果件数の上限
-    ///
-    /// # 戻り値
-    /// * 成功時は`Ok(Vec<Event>)` - created_at降順でソートされたイベント
-    /// * 失敗時は`Err(EventRepositoryError)`
-    ///
-    /// 要件: 8.10, 16.4, 16.5
-    async fn query(
-        &self,
-        filters: &[Filter],
-        limit: Option<u32>,
-    ) -> Result<Vec<Event>, EventRepositoryError>;
 
     /// イベントIDで取得
     ///
@@ -555,6 +614,28 @@ impl DynamoEventRepository {
     }
 }
 
+/// DynamoEventRepositoryのQueryRepository実装
+///
+/// EventRepositoryErrorをQueryRepositoryErrorに変換してqueryを提供。
+/// 要件: 9.3, 9.4（Task 4.3: QueryRepository互換性維持）
+#[async_trait]
+impl QueryRepository for DynamoEventRepository {
+    async fn query(
+        &self,
+        filters: &[Filter],
+        limit: Option<u32>,
+    ) -> Result<Vec<Event>, QueryRepositoryError> {
+        // 現時点ではすべてのクエリをスキャンベースで実装
+        // 将来の最適化: OpenSearchを使用した効率的なクエリ
+        self.query_by_scan(filters, limit)
+            .await
+            .map_err(QueryRepositoryError::from)
+    }
+}
+
+/// DynamoEventRepositoryのEventRepository実装
+///
+/// QueryRepositoryを継承しているため、save()とget_by_id()のみ実装。
 #[async_trait]
 impl EventRepository for DynamoEventRepository {
     async fn save(&self, event: &Event) -> Result<SaveResult, EventRepositoryError> {
@@ -569,16 +650,6 @@ impl EventRepository for DynamoEventRepository {
             }
             EventKind::Addressable => self.save_addressable(event).await,
         }
-    }
-
-    async fn query(
-        &self,
-        filters: &[Filter],
-        limit: Option<u32>,
-    ) -> Result<Vec<Event>, EventRepositoryError> {
-        // 現時点ではすべてのクエリをスキャンベースで実装
-        // 将来の最適化: GSIを使用した効率的なクエリ
-        self.query_by_scan(filters, limit).await
     }
 
     async fn get_by_id(&self, event_id: &str) -> Result<Option<Event>, EventRepositoryError> {
@@ -660,6 +731,89 @@ pub(crate) mod tests {
         assert_eq!(SaveResult::Replaced, SaveResult::Replaced);
         assert_ne!(SaveResult::Saved, SaveResult::Duplicate);
         assert_ne!(SaveResult::Saved, SaveResult::Replaced);
+    }
+
+    // ==================== Task 4.1 QueryRepositoryErrorテスト ====================
+
+    // QueryRepositoryError表示メッセージのテスト (要件 9.1, 9.2)
+    #[test]
+    fn test_query_repository_error_query_error_display() {
+        let error = QueryRepositoryError::QueryError("query failed".to_string());
+        assert_eq!(error.to_string(), "Query execution error: query failed");
+    }
+
+    #[test]
+    fn test_query_repository_error_connection_error_display() {
+        let error = QueryRepositoryError::ConnectionError("connection refused".to_string());
+        assert_eq!(error.to_string(), "Connection error: connection refused");
+    }
+
+    #[test]
+    fn test_query_repository_error_deserialization_error_display() {
+        let error = QueryRepositoryError::DeserializationError("invalid json".to_string());
+        assert_eq!(error.to_string(), "Deserialization error: invalid json");
+    }
+
+    #[test]
+    fn test_query_repository_error_timeout_display() {
+        let error = QueryRepositoryError::Timeout("query took too long".to_string());
+        assert_eq!(error.to_string(), "Query timeout: query took too long");
+    }
+
+    #[test]
+    fn test_query_repository_error_index_not_found_display() {
+        let error = QueryRepositoryError::IndexNotFound("nostr-events".to_string());
+        assert_eq!(error.to_string(), "Index not found: nostr-events");
+    }
+
+    // QueryRepositoryError等価性のテスト
+    #[test]
+    fn test_query_repository_error_equality() {
+        assert_eq!(
+            QueryRepositoryError::QueryError("test".to_string()),
+            QueryRepositoryError::QueryError("test".to_string())
+        );
+        assert_ne!(
+            QueryRepositoryError::QueryError("test1".to_string()),
+            QueryRepositoryError::QueryError("test2".to_string())
+        );
+        assert_ne!(
+            QueryRepositoryError::QueryError("test".to_string()),
+            QueryRepositoryError::ConnectionError("test".to_string())
+        );
+    }
+
+    // ==================== Task 4.3 エラー型変換テスト ====================
+
+    // EventRepositoryError -> QueryRepositoryError変換テスト (要件 9.3, 9.4)
+    #[test]
+    fn test_event_repository_error_to_query_repository_error_read_error() {
+        let event_error = EventRepositoryError::ReadError("DB read failed".to_string());
+        let query_error: QueryRepositoryError = event_error.into();
+        assert_eq!(
+            query_error,
+            QueryRepositoryError::QueryError("DB read failed".to_string())
+        );
+    }
+
+    #[test]
+    fn test_event_repository_error_to_query_repository_error_write_error() {
+        let event_error = EventRepositoryError::WriteError("DB write failed".to_string());
+        let query_error: QueryRepositoryError = event_error.into();
+        assert_eq!(
+            query_error,
+            QueryRepositoryError::QueryError("DB write failed".to_string())
+        );
+    }
+
+    #[test]
+    fn test_event_repository_error_to_query_repository_error_serialization_error() {
+        let event_error = EventRepositoryError::SerializationError("parse error".to_string());
+        let query_error: QueryRepositoryError = event_error.into();
+        assert_eq!(
+            query_error,
+            QueryRepositoryError::DeserializationError("parse error".to_string())
+        );
     }
 
     // pk_kind生成のテスト
@@ -831,6 +985,47 @@ pub(crate) mod tests {
         }
     }
 
+    /// MockEventRepositoryのQueryRepository実装
+    ///
+    /// Task 4.3: QueryRepository互換性維持
+    #[async_trait]
+    impl QueryRepository for MockEventRepository {
+        async fn query(
+            &self,
+            filters: &[Filter],
+            limit: Option<u32>,
+        ) -> Result<Vec<Event>, QueryRepositoryError> {
+            if let Some(error) = self.take_error() {
+                return Err(QueryRepositoryError::from(error));
+            }
+
+            let events = self.events.lock().unwrap();
+            let mut result: Vec<Event> = events
+                .values()
+                .filter(|event| {
+                    filters.is_empty() || FilterEvaluator::matches_any(event, filters)
+                })
+                .cloned()
+                .collect();
+
+            // ソート: created_at降順、同一タイムスタンプはid辞書順
+            result.sort_by(|a, b| {
+                match b.created_at.cmp(&a.created_at) {
+                    std::cmp::Ordering::Equal => a.id.to_hex().cmp(&b.id.to_hex()),
+                    other => other,
+                }
+            });
+
+            // limit適用
+            if let Some(limit) = limit {
+                result.truncate(limit as usize);
+            }
+
+            Ok(result)
+        }
+    }
+
+    /// MockEventRepositoryのEventRepository実装
     #[async_trait]
     impl EventRepository for MockEventRepository {
         async fn save(&self, event: &Event) -> Result<SaveResult, EventRepositoryError> {
@@ -919,40 +1114,6 @@ pub(crate) mod tests {
                 }
                 EventKind::Ephemeral => Ok(SaveResult::Saved),
             }
-        }
-
-        async fn query(
-            &self,
-            filters: &[Filter],
-            limit: Option<u32>,
-        ) -> Result<Vec<Event>, EventRepositoryError> {
-            if let Some(error) = self.take_error() {
-                return Err(error);
-            }
-
-            let events = self.events.lock().unwrap();
-            let mut result: Vec<Event> = events
-                .values()
-                .filter(|event| {
-                    filters.is_empty() || FilterEvaluator::matches_any(event, filters)
-                })
-                .cloned()
-                .collect();
-
-            // ソート: created_at降順、同一タイムスタンプはid辞書順
-            result.sort_by(|a, b| {
-                match b.created_at.cmp(&a.created_at) {
-                    std::cmp::Ordering::Equal => a.id.to_hex().cmp(&b.id.to_hex()),
-                    other => other,
-                }
-            });
-
-            // limit適用
-            if let Some(limit) = limit {
-                result.truncate(limit as usize);
-            }
-
-            Ok(result)
         }
 
         async fn get_by_id(&self, event_id: &str) -> Result<Option<Event>, EventRepositoryError> {

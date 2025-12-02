@@ -4,25 +4,20 @@
 
 # Events Table - stores Nostr events
 resource "aws_dynamodb_table" "events" {
-  name             = "nostr_relay_events"
-  billing_mode     = "PROVISIONED"
-  read_capacity    = 21
-  write_capacity   = 21
-  hash_key         = "id"
+  name           = "nostr_relay_events"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "id"
+
+  # Task 7.4: DynamoDB Streamsを有効化（OpenSearchインデックス同期用）
+  # 要件 3.4: NEW_AND_OLD_IMAGESストリームビュータイプを使用
+  stream_enabled   = true
+  stream_view_type = "NEW_AND_OLD_IMAGES"
 
   attribute {
     name = "id"
     type = "S"
-  }
-
-  attribute {
-    name = "pubkey"
-    type = "S"
-  }
-
-  attribute {
-    name = "kind"
-    type = "N"
   }
 
   attribute {
@@ -40,34 +35,14 @@ resource "aws_dynamodb_table" "events" {
     type = "S"
   }
 
-  # GSI-PubkeyCreatedAt: For authors filter queries
-  global_secondary_index {
-    name            = "GSI-PubkeyCreatedAt"
-    hash_key        = "pubkey"
-    range_key       = "created_at"
-    projection_type = "ALL"
-    read_capacity   = 1
-    write_capacity  = 1
-  }
-
-  # GSI-KindCreatedAt: For kinds filter queries
-  global_secondary_index {
-    name            = "GSI-KindCreatedAt"
-    hash_key        = "kind"
-    range_key       = "created_at"
-    projection_type = "ALL"
-    read_capacity   = 1
-    write_capacity  = 1
-  }
-
   # GSI-PkKind: For Replaceable event lookups (pubkey#kind)
   global_secondary_index {
     name            = "GSI-PkKind"
     hash_key        = "pk_kind"
     range_key       = "created_at"
     projection_type = "ALL"
-    read_capacity   = 1
-    write_capacity  = 1
+    read_capacity   = 2
+    write_capacity  = 2
   }
 
   # GSI-PkKindD: For Addressable event lookups (pubkey#kind#d_tag)
@@ -76,8 +51,8 @@ resource "aws_dynamodb_table" "events" {
     hash_key        = "pk_kind_d"
     range_key       = "created_at"
     projection_type = "ALL"
-    read_capacity   = 1
-    write_capacity  = 1
+    read_capacity   = 2
+    write_capacity  = 2
   }
 
   tags = {
@@ -87,9 +62,11 @@ resource "aws_dynamodb_table" "events" {
 
 # Connections Table - tracks WebSocket connections
 resource "aws_dynamodb_table" "connections" {
-  name         = "nostr_relay_connections"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "connection_id"
+  name           = "nostr_relay_connections"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 1
+  write_capacity = 1
+  hash_key       = "connection_id"
 
   attribute {
     name = "connection_id"
@@ -109,10 +86,12 @@ resource "aws_dynamodb_table" "connections" {
 
 # Subscriptions Table - stores active subscriptions per connection
 resource "aws_dynamodb_table" "subscriptions" {
-  name         = "nostr_relay_subscriptions"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "connection_id"
-  range_key    = "subscription_id"
+  name           = "nostr_relay_subscriptions"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 15
+  write_capacity = 15
+  hash_key       = "connection_id"
+  range_key      = "subscription_id"
 
   attribute {
     name = "connection_id"

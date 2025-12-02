@@ -118,6 +118,9 @@ resource "aws_lambda_function" "default" {
       CONNECTIONS_TABLE    = aws_dynamodb_table.connections.name
       SUBSCRIPTIONS_TABLE  = aws_dynamodb_table.subscriptions.name
       API_GATEWAY_ENDPOINT = "https://${aws_apigatewayv2_api.relay.id}.execute-api.ap-northeast-1.amazonaws.com/${aws_apigatewayv2_stage.default.name}"
+      # Task 1.3: OpenSearch環境変数
+      OPENSEARCH_ENDPOINT = "https://${aws_opensearch_domain.nostr_relay.endpoint}"
+      OPENSEARCH_INDEX    = "nostr_events"
     }
   }
 }

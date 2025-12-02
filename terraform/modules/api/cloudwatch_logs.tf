@@ -45,3 +45,13 @@ resource "aws_cloudwatch_log_group" "nip11_info" {
     Name = "nostr-relay-nip11-info-logs"
   }
 }
+
+# Indexer Lambda のロググループ
+resource "aws_cloudwatch_log_group" "indexer" {
+  name              = "/aws/lambda/${aws_lambda_function.indexer.function_name}"
+  retention_in_days = 90
+
+  tags = {
+    Name = "nostr-relay-indexer-logs"
+  }
+}

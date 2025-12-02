@@ -2,11 +2,12 @@
 ///
 /// $defaultルートでLambdaが呼び出された際の処理を実行する
 /// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3
+/// 追加要件（OpenSearch REQ処理）: Task 8.1 - QueryRepository依存注入
 use serde_json::Value;
 
 use crate::application::{ClientMessage, EventHandler, MessageParser, ParseError, SubscriptionHandler};
 use crate::domain::{LimitationConfig, RelayMessage};
-use crate::infrastructure::{EventRepository, SubscriptionRepository, WebSocketSender};
+use crate::infrastructure::{EventRepository, QueryRepository, SubscriptionRepository, WebSocketSender};
 
 /// デフォルトハンドラーのエラー型
 #[derive(Debug, Clone, PartialEq)]
@@ -46,34 +47,45 @@ impl std::error::Error for DefaultHandlerError {}
 ///
 /// API Gateway WebSocketの$defaultルートで呼び出され、
 /// EVENT, REQ, CLOSEメッセージをそれぞれ適切なハンドラーに委譲する
-pub struct DefaultHandler<ER, SR, WS>
+///
+/// # 型パラメータ
+/// - `ER`: EventRepository - イベントの保存に使用
+/// - `QR`: QueryRepository - イベントのクエリに使用（Task 8.1: OpenSearch対応）
+/// - `SR`: SubscriptionRepository - サブスクリプション管理に使用
+/// - `WS`: WebSocketSender - WebSocket送信に使用
+pub struct DefaultHandler<ER, QR, SR, WS>
 where
     ER: EventRepository,
+    QR: QueryRepository,
     SR: SubscriptionRepository,
     WS: WebSocketSender,
 {
     /// イベントハンドラー
     event_handler: EventHandler<ER, SR, WS>,
-    /// サブスクリプションハンドラー
-    subscription_handler: SubscriptionHandler<ER, SR, WS>,
+    /// サブスクリプションハンドラー（QueryRepositoryを使用）
+    subscription_handler: SubscriptionHandler<QR, SR, WS>,
     /// WebSocket送信
     ws_sender: WS,
     /// 制限値設定
     limitation_config: LimitationConfig,
 }
 
-impl<ER, SR, WS> DefaultHandler<ER, SR, WS>
+impl<ER, SR, WS> DefaultHandler<ER, ER, SR, WS>
 where
     ER: EventRepository + Clone,
     SR: SubscriptionRepository + Clone,
     WS: WebSocketSender + Clone,
 {
     /// 新しいDefaultHandlerを作成
+    ///
+    /// EventRepositoryをQueryRepositoryとしても使用する（従来の動作）
     pub fn new(event_repo: ER, subscription_repo: SR, ws_sender: WS) -> Self {
         Self::with_config(event_repo, subscription_repo, ws_sender, LimitationConfig::default())
     }
 
     /// 制限値設定を指定してDefaultHandlerを作成
+    ///
+    /// EventRepositoryをQueryRepositoryとしても使用する（従来の動作）
     pub fn with_config(
         event_repo: ER,
         subscription_repo: SR,
@@ -87,6 +99,51 @@ where
         );
         let subscription_handler = SubscriptionHandler::new(
             event_repo,
+            subscription_repo,
+            ws_sender.clone(),
+        );
+
+        Self {
+            event_handler,
+            subscription_handler,
+            ws_sender,
+            limitation_config,
+        }
+    }
+}
+
+impl<ER, QR, SR, WS> DefaultHandler<ER, QR, SR, WS>
+where
+    ER: EventRepository + Clone,
+    QR: QueryRepository,
+    SR: SubscriptionRepository + Clone,
+    WS: WebSocketSender + Clone,
+{
+    /// クエリ用に別のリポジトリを使用してDefaultHandlerを作成（Task 8.1）
+    ///
+    /// EventRepositoryはイベント保存に、QueryRepositoryはクエリに使用する。
+    /// これにより、DynamoDBで保存しながらOpenSearchでクエリすることが可能。
+    ///
+    /// # Arguments
+    /// * `event_repo` - イベント保存用リポジトリ（DynamoEventRepository）
+    /// * `query_repo` - クエリ用リポジトリ（OpenSearchEventRepository）
+    /// * `subscription_repo` - サブスクリプション管理用リポジトリ
+    /// * `ws_sender` - WebSocket送信
+    /// * `limitation_config` - 制限値設定
+    pub fn with_query_repo(
+        event_repo: ER,
+        query_repo: QR,
+        subscription_repo: SR,
+        ws_sender: WS,
+        limitation_config: LimitationConfig,
+    ) -> Self {
+        let event_handler = EventHandler::new(
+            event_repo,
+            subscription_repo.clone(),
+            ws_sender.clone(),
+        );
+        let subscription_handler = SubscriptionHandler::new(
+            query_repo,
             subscription_repo,
             ws_sender.clone(),
         );
@@ -194,8 +251,10 @@ mod tests {
     // ==================== テストヘルパー ====================
 
     /// テスト用のDefaultHandlerを作成
+    ///
+    /// EventRepositoryをQueryRepositoryとしても使用する（従来の動作）
     fn create_test_handler() -> (
-        DefaultHandler<MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>,
+        DefaultHandler<MockEventRepository, MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>,
         MockEventRepository,
         MockSubscriptionRepository,
         MockWebSocketSender,

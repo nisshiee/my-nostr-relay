@@ -3,14 +3,16 @@
 /// NIP-01準拠のREQ/CLOSEメッセージ処理を実行する
 /// 要件: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 7.1, 7.2
 /// 要件: 19.2, 19.5, 19.6
+/// 追加要件（OpenSearch REQ処理）: 5.1, 5.4, 5.5, 5.6, 7.1, 7.2, 7.4, 7.5, 8.1, 8.2, 9.3, 9.4, 9.5
 use nostr::Filter;
 use serde_json::Value;
+use std::time::Instant;
 use thiserror::Error;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::domain::{FilterEvaluator, FilterValidationError, LimitationConfig, RelayMessage};
 use crate::infrastructure::{
-    EventRepository, EventRepositoryError, SendError, SubscriptionRepository,
+    QueryRepository, QueryRepositoryError, SendError, SubscriptionRepository,
     SubscriptionRepositoryError, WebSocketSender,
 };
 
@@ -48,8 +50,8 @@ impl From<SubscriptionRepositoryError> for SubscriptionHandlerError {
     }
 }
 
-impl From<EventRepositoryError> for SubscriptionHandlerError {
-    fn from(err: EventRepositoryError) -> Self {
+impl From<QueryRepositoryError> for SubscriptionHandlerError {
+    fn from(err: QueryRepositoryError) -> Self {
         SubscriptionHandlerError::RepositoryError(err.to_string())
     }
 }
@@ -69,30 +71,36 @@ impl From<FilterValidationError> for SubscriptionHandlerError {
 /// REQ/CLOSEメッセージを処理するハンドラー
 ///
 /// サブスクリプションの作成、クエリ実行、イベント配信を行う
-pub struct SubscriptionHandler<ER, SR, WS>
+/// QueryRepositoryを使用してOpenSearchまたはDynamoDBからイベントをクエリする (Task 8.1)
+pub struct SubscriptionHandler<QR, SR, WS>
 where
-    ER: EventRepository,
+    QR: QueryRepository,
     SR: SubscriptionRepository,
     WS: WebSocketSender,
 {
-    /// イベントリポジトリ
-    event_repo: ER,
+    /// クエリリポジトリ（OpenSearchまたはDynamoDB）
+    query_repo: QR,
     /// サブスクリプションリポジトリ
     subscription_repo: SR,
     /// WebSocket送信
     ws_sender: WS,
 }
 
-impl<ER, SR, WS> SubscriptionHandler<ER, SR, WS>
+impl<QR, SR, WS> SubscriptionHandler<QR, SR, WS>
 where
-    ER: EventRepository,
+    QR: QueryRepository,
     SR: SubscriptionRepository,
     WS: WebSocketSender,
 {
     /// 新しいSubscriptionHandlerを作成
-    pub fn new(event_repo: ER, subscription_repo: SR, ws_sender: WS) -> Self {
+    ///
+    /// # Arguments
+    /// * `query_repo` - クエリリポジトリ（OpenSearchEventRepositoryまたはDynamoEventRepository）
+    /// * `subscription_repo` - サブスクリプションリポジトリ
+    /// * `ws_sender` - WebSocket送信
+    pub fn new(query_repo: QR, subscription_repo: SR, ws_sender: WS) -> Self {
         Self {
-            event_repo,
+            query_repo,
             subscription_repo,
             ws_sender,
         }
@@ -264,29 +272,41 @@ where
             "サブスクリプション作成/更新完了"
         );
 
-        // フィルターに合致する保存済みイベントをクエリ (要件 6.2)
+        // フィルターに合致する保存済みイベントをクエリ (要件 6.2, Task 8.1)
         // limitはフィルターから取得（複数フィルターの場合は最小値を使用）
         let limit = self.extract_limit(&filters);
-        let events = match self.event_repo.query(&filters, limit).await {
+
+        // クエリ実行時間を計測 (Task 8.3: 要件 8.1)
+        let query_start = Instant::now();
+        let events = match self.query_repo.query(&filters, limit).await {
             Ok(events) => {
-                debug!(
+                // クエリ成功時: 実行時間と件数をログに記録 (Task 8.3: 要件 8.1, 8.2)
+                let query_duration_ms = query_start.elapsed().as_millis() as u64;
+                info!(
                     connection_id = connection_id,
                     subscription_id = %subscription_id,
-                    event_count = events.len(),
+                    query_duration_ms = query_duration_ms,
+                    result_count = events.len(),
+                    filter_count = filters.len(),
                     limit = ?limit,
-                    "イベントクエリ成功"
+                    "OpenSearchクエリ完了"
                 );
                 events
             }
             Err(e) => {
-                // クエリエラー時もCLOSED応答を送信
+                // クエリエラー時: CLOSED応答を送信 (Task 8.2: 要件 7.1, 7.2, 7.4, 7.5)
+                let query_duration_ms = query_start.elapsed().as_millis() as u64;
                 warn!(
                     connection_id = connection_id,
                     subscription_id = %subscription_id,
+                    query_duration_ms = query_duration_ms,
+                    filter_count = filters.len(),
                     error = %e,
                     "イベントクエリ失敗"
                 );
-                let closed_msg = RelayMessage::closed_subscription_error(&subscription_id);
+
+                // エラーの種類に応じたCLOSEDメッセージを送信
+                let closed_msg = Self::create_closed_message_for_error(&subscription_id, &e);
                 let _ = self.ws_sender.send(connection_id, &closed_msg.to_json()).await;
                 return Err(e.into());
             }
@@ -469,12 +489,34 @@ where
             .min()
             .map(|l| l as u32)
     }
+
+    /// QueryRepositoryErrorに応じたCLOSEDメッセージを作成 (Task 8.2)
+    ///
+    /// # 要件
+    /// - 7.1: タイムアウト時はCLOSED with "error: query timeout"
+    /// - 7.2: 一時的利用不能時はCLOSED with "error: service temporarily unavailable"
+    /// - 7.4: インデックス不存在時はCLOSED with "error: index not found"
+    /// - 7.5: DynamoDBへのフォールバックは行わない
+    fn create_closed_message_for_error(
+        subscription_id: &str,
+        error: &QueryRepositoryError,
+    ) -> RelayMessage {
+        let error_message = match error {
+            QueryRepositoryError::Timeout(_) => "query timeout",
+            QueryRepositoryError::IndexNotFound(_) => "index not found",
+            QueryRepositoryError::QueryError(_) => "query execution failed",
+            QueryRepositoryError::ConnectionError(_) => "service temporarily unavailable",
+            QueryRepositoryError::DeserializationError(_) => "response processing failed",
+        };
+        RelayMessage::closed_error(subscription_id, error_message)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::infrastructure::event_repository::tests::MockEventRepository;
+    use crate::infrastructure::event_repository::EventRepository;
     use crate::infrastructure::subscription_repository::tests::MockSubscriptionRepository;
     use crate::infrastructure::websocket_sender::tests::MockWebSocketSender;
     use nostr::{EventBuilder, Keys, Timestamp};
@@ -963,8 +1005,8 @@ mod tests {
     }
 
     #[test]
-    fn test_subscription_handler_error_from_event_repo_error() {
-        let err = crate::infrastructure::EventRepositoryError::ReadError("test".to_string());
+    fn test_subscription_handler_error_from_query_repo_error() {
+        let err = crate::infrastructure::QueryRepositoryError::QueryError("test".to_string());
         let handler_err: SubscriptionHandlerError = err.into();
         match handler_err {
             SubscriptionHandlerError::RepositoryError(_) => {}
@@ -1269,5 +1311,134 @@ mod tests {
         assert_eq!(messages.len(), 1);
         let msg: Value = serde_json::from_str(&messages[0]).unwrap();
         assert_eq!(msg[0], "CLOSED");
+    }
+
+    // ==================== Task 8.2: CLOSEDメッセージエラーハンドリングテスト ====================
+
+    /// 要件 7.1: クエリタイムアウト時のCLOSEDメッセージ
+    #[test]
+    fn test_create_closed_message_for_timeout_error() {
+        let error = QueryRepositoryError::Timeout("クエリがタイムアウトしました".to_string());
+        let msg = SubscriptionHandler::<MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>::create_closed_message_for_error("sub-1", &error);
+
+        let json_str = msg.to_json();
+        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed[0], "CLOSED");
+        assert_eq!(parsed[1], "sub-1");
+        assert!(parsed[2].as_str().unwrap().contains("error:"));
+        assert!(parsed[2].as_str().unwrap().contains("query timeout"));
+    }
+
+    /// 要件 7.2: サービス一時利用不能時のCLOSEDメッセージ
+    #[test]
+    fn test_create_closed_message_for_connection_error() {
+        let error = QueryRepositoryError::ConnectionError("connection refused".to_string());
+        let msg = SubscriptionHandler::<MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>::create_closed_message_for_error("sub-1", &error);
+
+        let json_str = msg.to_json();
+        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed[0], "CLOSED");
+        assert_eq!(parsed[1], "sub-1");
+        assert!(parsed[2].as_str().unwrap().contains("error:"));
+        assert!(parsed[2].as_str().unwrap().contains("service temporarily unavailable"));
+    }
+
+    /// 要件 7.4: インデックス不存在時のCLOSEDメッセージ
+    #[test]
+    fn test_create_closed_message_for_index_not_found_error() {
+        let error = QueryRepositoryError::IndexNotFound("インデックスが存在しません".to_string());
+        let msg = SubscriptionHandler::<MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>::create_closed_message_for_error("sub-1", &error);
+
+        let json_str = msg.to_json();
+        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed[0], "CLOSED");
+        assert_eq!(parsed[1], "sub-1");
+        assert!(parsed[2].as_str().unwrap().contains("error:"));
+        assert!(parsed[2].as_str().unwrap().contains("index not found"));
+    }
+
+    /// デシリアライズエラー時のCLOSEDメッセージ
+    #[test]
+    fn test_create_closed_message_for_deserialization_error() {
+        let error = QueryRepositoryError::DeserializationError("parse error".to_string());
+        let msg = SubscriptionHandler::<MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>::create_closed_message_for_error("sub-1", &error);
+
+        let json_str = msg.to_json();
+        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed[0], "CLOSED");
+        assert_eq!(parsed[1], "sub-1");
+        assert!(parsed[2].as_str().unwrap().contains("error:"));
+        assert!(parsed[2].as_str().unwrap().contains("response processing failed"));
+    }
+
+    /// 一般的なクエリエラー時のCLOSEDメッセージ
+    #[test]
+    fn test_create_closed_message_for_general_query_error() {
+        let error = QueryRepositoryError::QueryError("unknown error".to_string());
+        let msg = SubscriptionHandler::<MockEventRepository, MockSubscriptionRepository, MockWebSocketSender>::create_closed_message_for_error("sub-1", &error);
+
+        let json_str = msg.to_json();
+        let parsed: Value = serde_json::from_str(&json_str).unwrap();
+
+        assert_eq!(parsed[0], "CLOSED");
+        assert_eq!(parsed[1], "sub-1");
+        assert!(parsed[2].as_str().unwrap().contains("error:"));
+        assert!(parsed[2].as_str().unwrap().contains("query execution failed"));
+    }
+
+    // ==================== Task 8.4: EVENT/EOSEメッセージ応答テスト ====================
+
+    /// 要件 5.8, 9.5: クエリ結果のイベントをEVENT形式で送信
+    #[tokio::test]
+    async fn test_handle_req_sends_events_in_correct_format() {
+        let (handler, event_repo, _, ws_sender) = create_test_handler();
+        let config = default_config();
+
+        // イベントを保存
+        let event = create_test_event("test content");
+        event_repo.save(&event).await.unwrap();
+
+        // REQを送信
+        let filters = vec![json!({"kinds": [1]})];
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
+
+        // 送信されたメッセージを確認
+        let messages = ws_sender.get_sent_messages("conn-123");
+        assert_eq!(messages.len(), 2); // EVENT + EOSE
+
+        // EVENTメッセージのフォーマット確認
+        let event_msg: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(event_msg[0], "EVENT");
+        assert_eq!(event_msg[1], "sub-1");
+        assert!(event_msg[2].is_object());
+        assert_eq!(event_msg[2]["content"], "test content");
+
+        // EOSEメッセージのフォーマット確認
+        let eose_msg: Value = serde_json::from_str(&messages[1]).unwrap();
+        assert_eq!(eose_msg[0], "EOSE");
+        assert_eq!(eose_msg[1], "sub-1");
+    }
+
+    /// 要件 9.5: 空の結果でもEOSEを送信
+    #[tokio::test]
+    async fn test_handle_req_sends_eose_for_empty_results() {
+        let (handler, _, _, ws_sender) = create_test_handler();
+        let config = default_config();
+
+        // イベントなしでREQを送信
+        let filters = vec![json!({"kinds": [1]})];
+        handler.handle_req("sub-1".to_string(), filters, "conn-123", &config).await.unwrap();
+
+        // EOSEのみ送信される
+        let messages = ws_sender.get_sent_messages("conn-123");
+        assert_eq!(messages.len(), 1);
+
+        let eose_msg: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(eose_msg[0], "EOSE");
+        assert_eq!(eose_msg[1], "sub-1");
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 
 [dependencies]
@@ -39,6 +39,20 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # 非同期ランタイム
 tokio = { version = "1.48.0", features = ["full"] }
 
+# OpenSearchクライアント with AWS認証（rustls-tlsを使用してクロスコンパイル対応）
+opensearch = { version = "2.3", default-features = false, features = ["aws-auth", "rustls-tls"] }
+
+# URL解析
+url = "2"
+
+# AWS Lambda イベント型定義（DynamoDB Streams等）
+aws_lambda_events = "0.15"
+
+# DynamoDB AttributeValue（aws_lambda_eventsで使用）
+serde_dynamo = "4"
+
 [dev-dependencies]
 # テストのシリアル実行（環境変数テストの競合防止）
 serial_test = "3"
+# テスト用日時操作（aws_lambda_eventsが依存）
+chrono = "0.4"
