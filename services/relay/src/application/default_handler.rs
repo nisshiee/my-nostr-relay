@@ -55,7 +55,7 @@ impl std::error::Error for DefaultHandlerError {}
 /// - `WS`: WebSocketSender - WebSocket送信に使用
 pub struct DefaultHandler<ER, QR, SR, WS>
 where
-    ER: EventRepository,
+    ER: EventRepository + Clone,
     QR: QueryRepository,
     SR: SubscriptionRepository,
     WS: WebSocketSender,

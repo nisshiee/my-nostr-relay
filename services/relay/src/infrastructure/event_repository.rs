@@ -115,9 +115,10 @@ pub enum SaveResult {
 
 /// イベント永続化用トレイト
 ///
-/// QueryRepositoryを継承し、クエリ機能に加えて保存・取得機能を提供する。
+/// QueryRepositoryを継承し、クエリ機能に加えて保存・取得・削除機能を提供する。
 /// 異なる実装を可能にします（実際のDynamoDB、テスト用モック）。
 /// 要件: 9.1, 9.2（Task 4.2: QueryRepository継承構造）
+/// 追加要件（NIP-09削除）: 2.1, 3.1
 #[async_trait]
 pub trait EventRepository: QueryRepository {
     /// イベントを保存（Kind別に適切な処理を実行）
@@ -142,6 +143,47 @@ pub trait EventRepository: QueryRepository {
     /// * 見つからなかった場合は`Ok(None)`
     /// * 失敗時は`Err(EventRepositoryError)`
     async fn get_by_id(&self, event_id: &str) -> Result<Option<Event>, EventRepositoryError>;
+
+    /// イベントIDで削除
+    ///
+    /// # 引数
+    /// * `event_id` - 削除対象のイベントID
+    ///
+    /// # 戻り値
+    /// * `Ok(true)` - 削除成功
+    /// * `Ok(false)` - 対象が存在しなかった
+    /// * `Err` - 削除エラー
+    ///
+    /// # Note
+    /// この操作はDynamoDB DeleteItemを実行し、DynamoDB Streams経由で
+    /// OpenSearchからも自動的に削除される
+    ///
+    /// 要件: 2.1（NIP-09イベントID指定削除）
+    async fn delete_by_id(&self, event_id: &str) -> Result<bool, EventRepositoryError>;
+
+    /// Addressable識別子で削除（時刻境界付き）
+    ///
+    /// # 引数
+    /// * `pubkey` - 対象のpubkey
+    /// * `kind` - 対象のkind
+    /// * `d_tag` - 対象のd_tag
+    /// * `before_timestamp` - この時刻以前のイベントのみ削除
+    ///
+    /// # 戻り値
+    /// * `Ok(usize)` - 削除したイベント数
+    /// * `Err` - 削除エラー
+    ///
+    /// # Note
+    /// GSI-PkKindDを使用してクエリし、時刻条件に合致するイベントを削除
+    ///
+    /// 要件: 3.1（NIP-09 Addressable削除）
+    async fn delete_by_address(
+        &self,
+        pubkey: &str,
+        kind: u16,
+        d_tag: &str,
+        before_timestamp: u64,
+    ) -> Result<usize, EventRepositoryError>;
 }
 
 /// EventRepositoryのDynamoDB実装
@@ -635,7 +677,7 @@ impl QueryRepository for DynamoEventRepository {
 
 /// DynamoEventRepositoryのEventRepository実装
 ///
-/// QueryRepositoryを継承しているため、save()とget_by_id()のみ実装。
+/// QueryRepositoryを継承しているため、save()、get_by_id()、削除メソッドを実装。
 #[async_trait]
 impl EventRepository for DynamoEventRepository {
     async fn save(&self, event: &Event) -> Result<SaveResult, EventRepositoryError> {
@@ -675,6 +717,86 @@ impl EventRepository for DynamoEventRepository {
             }
             None => Ok(None),
         }
+    }
+
+    /// イベントIDで削除（DynamoDB DeleteItem使用）
+    ///
+    /// DeleteItemのReturnValuesを使用して、削除対象が存在したかを判定。
+    /// 要件: 2.1, 2.4, 2.5（NIP-09削除）
+    async fn delete_by_id(&self, event_id: &str) -> Result<bool, EventRepositoryError> {
+        let result = self
+            .client
+            .delete_item()
+            .table_name(&self.table_name)
+            .key("id", AttributeValue::S(event_id.to_string()))
+            .return_values(aws_sdk_dynamodb::types::ReturnValue::AllOld)
+            .send()
+            .await
+            .map_err(|e| EventRepositoryError::WriteError(e.into_service_error().to_string()))?;
+
+        // ReturnValues::AllOldを指定すると、削除前のアイテムが返される
+        // アイテムが存在しなかった場合はNone
+        Ok(result.attributes.is_some())
+    }
+
+    /// Addressable識別子で削除（GSI-PkKindDクエリ + DeleteItem）
+    ///
+    /// GSI-PkKindDでpubkey#kind#d_tagをクエリし、時刻条件に合致するイベントを削除。
+    /// 要件: 3.1, 3.3, 3.4（NIP-09 Addressable削除）
+    async fn delete_by_address(
+        &self,
+        pubkey: &str,
+        kind: u16,
+        d_tag: &str,
+        before_timestamp: u64,
+    ) -> Result<usize, EventRepositoryError> {
+        // pk_kind_dを構築
+        let pk_kind_d = format!("{}#{}#{}", pubkey, kind, d_tag);
+
+        // GSI-PkKindDでクエリ
+        let query_result = self
+            .client
+            .query()
+            .table_name(&self.table_name)
+            .index_name("GSI-PkKindD")
+            .key_condition_expression("pk_kind_d = :pkd")
+            .expression_attribute_values(":pkd", AttributeValue::S(pk_kind_d))
+            .send()
+            .await
+            .map_err(|e| EventRepositoryError::ReadError(e.into_service_error().to_string()))?;
+
+        let items = query_result.items.unwrap_or_default();
+        let mut deleted_count = 0;
+
+        // 時刻条件に合致するイベントを削除
+        for item in items {
+            // created_atを取得
+            let created_at = item
+                .get("created_at")
+                .and_then(|v| v.as_n().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or(u64::MAX);
+
+            // 時刻境界チェック（before_timestamp以前のイベントのみ削除）
+            if created_at <= before_timestamp {
+                // イベントIDを取得
+                if let Some(event_id) = item.get("id").and_then(|v| v.as_s().ok()) {
+                    // 削除実行
+                    self.client
+                        .delete_item()
+                        .table_name(&self.table_name)
+                        .key("id", AttributeValue::S(event_id.to_string()))
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            EventRepositoryError::WriteError(e.into_service_error().to_string())
+                        })?;
+                    deleted_count += 1;
+                }
+            }
+        }
+
+        Ok(deleted_count)
     }
 }
 
@@ -1123,6 +1245,70 @@ pub(crate) mod tests {
 
             Ok(self.events.lock().unwrap().get(event_id).cloned())
         }
+
+        /// イベントIDで削除（インメモリ実装）
+        ///
+        /// テスト用のインメモリストレージからイベントを削除。
+        /// 要件: 2.1（NIP-09イベントID指定削除）
+        async fn delete_by_id(&self, event_id: &str) -> Result<bool, EventRepositoryError> {
+            if let Some(error) = self.take_error() {
+                return Err(error);
+            }
+
+            let mut events = self.events.lock().unwrap();
+            let existed = events.remove(event_id).is_some();
+
+            // Replaceableインデックスからも削除（存在する場合）
+            let mut replaceable = self.replaceable_index.lock().unwrap();
+            replaceable.retain(|_, v| v != event_id);
+
+            // Addressableインデックスからも削除（存在する場合）
+            let mut addressable = self.addressable_index.lock().unwrap();
+            addressable.retain(|_, v| v != event_id);
+
+            Ok(existed)
+        }
+
+        /// Addressable識別子で削除（インメモリ実装）
+        ///
+        /// テスト用のインメモリストレージからAddressableイベントを削除。
+        /// 要件: 3.1（NIP-09 Addressable削除）
+        async fn delete_by_address(
+            &self,
+            pubkey: &str,
+            kind: u16,
+            d_tag: &str,
+            before_timestamp: u64,
+        ) -> Result<usize, EventRepositoryError> {
+            if let Some(error) = self.take_error() {
+                return Err(error);
+            }
+
+            // pk_kind_dを構築
+            let pk_kind_d = format!("{}#{}#{}", pubkey, kind, d_tag);
+
+            let mut events = self.events.lock().unwrap();
+            let mut addressable = self.addressable_index.lock().unwrap();
+
+            // Addressableインデックスから対象を検索
+            let event_id = match addressable.get(&pk_kind_d) {
+                Some(id) => id.clone(),
+                None => return Ok(0), // 対象が存在しない
+            };
+
+            // イベントを取得して時刻境界をチェック
+            let should_delete = events
+                .get(&event_id)
+                .is_some_and(|event| event.created_at.as_secs() <= before_timestamp);
+
+            if should_delete {
+                events.remove(&event_id);
+                addressable.remove(&pk_kind_d);
+                Ok(1)
+            } else {
+                Ok(0)
+            }
+        }
     }
 
     // ==================== モックリポジトリを使用したテスト ====================
@@ -1538,5 +1724,264 @@ pub(crate) mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].pubkey, keys1.public_key());
+    }
+
+    // ==================== Task 3: 削除機能テスト ====================
+
+    // ==================== 3.1 delete_by_id テスト ====================
+
+    /// 存在するイベントを削除するとOk(true)を返す
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_id_existing_event() {
+        let repo = MockEventRepository::new();
+        let event = create_test_event("test content");
+        let event_id = event.id.to_hex();
+
+        // イベントを保存
+        repo.save(&event).await.unwrap();
+        assert_eq!(repo.event_count(), 1);
+
+        // 削除
+        let result = repo.delete_by_id(&event_id).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap()); // 削除成功
+
+        // 削除後は取得できない
+        assert_eq!(repo.event_count(), 0);
+        let get_result = repo.get_by_id(&event_id).await.unwrap();
+        assert!(get_result.is_none());
+    }
+
+    /// 存在しないイベントを削除するとOk(false)を返す
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_id_nonexistent_event() {
+        let repo = MockEventRepository::new();
+
+        // 存在しないイベントを削除
+        let result = repo.delete_by_id("nonexistent_id").await;
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // 対象が存在しなかった
+    }
+
+    /// 削除操作は冪等（同じIDで複数回削除してもエラーにならない）
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_id_idempotent() {
+        let repo = MockEventRepository::new();
+        let event = create_test_event("test content");
+        let event_id = event.id.to_hex();
+
+        repo.save(&event).await.unwrap();
+
+        // 1回目の削除
+        let result1 = repo.delete_by_id(&event_id).await;
+        assert!(result1.unwrap());
+
+        // 2回目の削除（既に削除済み）
+        let result2 = repo.delete_by_id(&event_id).await;
+        assert!(!result2.unwrap());
+    }
+
+    /// delete_by_idがエラーを返すケース
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_id_error() {
+        let repo = MockEventRepository::new();
+        repo.set_next_error(EventRepositoryError::WriteError(
+            "Delete operation failed".to_string(),
+        ));
+
+        let result = repo.delete_by_id("some_id").await;
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            EventRepositoryError::WriteError("Delete operation failed".to_string())
+        );
+    }
+
+    // ==================== 3.1 delete_by_address テスト ====================
+
+    /// Addressableイベントを時刻境界内で削除
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_within_window() {
+        let repo = MockEventRepository::new();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+
+        // Addressableイベントを保存（created_at = 1000）
+        let event = EventBuilder::new(Kind::from(30000), "addressable content")
+            .tags(vec![nostr::Tag::parse(["d", "test-id"]).unwrap()])
+            .custom_created_at(Timestamp::from_secs(1000))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        repo.save(&event).await.unwrap();
+        assert_eq!(repo.event_count(), 1);
+
+        // 時刻境界内で削除（before_timestamp = 2000）
+        let result = repo.delete_by_address(&pubkey, 30000, "test-id", 2000).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1); // 1件削除
+
+        assert_eq!(repo.event_count(), 0);
+    }
+
+    /// Addressableイベントが時刻境界外の場合は削除されない
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_outside_window() {
+        let repo = MockEventRepository::new();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+
+        // Addressableイベントを保存（created_at = 2000）
+        let event = EventBuilder::new(Kind::from(30000), "addressable content")
+            .tags(vec![nostr::Tag::parse(["d", "test-id"]).unwrap()])
+            .custom_created_at(Timestamp::from_secs(2000))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        repo.save(&event).await.unwrap();
+        assert_eq!(repo.event_count(), 1);
+
+        // 時刻境界外で削除しようとする（before_timestamp = 1000）
+        let result = repo.delete_by_address(&pubkey, 30000, "test-id", 1000).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // 削除なし
+
+        // イベントは残っている
+        assert_eq!(repo.event_count(), 1);
+    }
+
+    /// 存在しないAddressableイベントの削除は0を返す
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_nonexistent() {
+        let repo = MockEventRepository::new();
+
+        let result = repo
+            .delete_by_address("nonexistent_pubkey", 30000, "test-id", 2000)
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    /// 異なるpubkeyのAddressableイベントは削除されない
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_different_pubkey() {
+        let repo = MockEventRepository::new();
+        let keys = Keys::generate();
+        let other_pubkey = "f".repeat(64);
+
+        // イベントを保存
+        let event = EventBuilder::new(Kind::from(30000), "addressable content")
+            .tags(vec![nostr::Tag::parse(["d", "test-id"]).unwrap()])
+            .custom_created_at(Timestamp::from_secs(1000))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        repo.save(&event).await.unwrap();
+
+        // 異なるpubkeyで削除しようとする
+        let result = repo.delete_by_address(&other_pubkey, 30000, "test-id", 2000).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+
+        // イベントは残っている
+        assert_eq!(repo.event_count(), 1);
+    }
+
+    /// 異なるkindのAddressableイベントは削除されない
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_different_kind() {
+        let repo = MockEventRepository::new();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+
+        // kind:30000のイベントを保存
+        let event = EventBuilder::new(Kind::from(30000), "addressable content")
+            .tags(vec![nostr::Tag::parse(["d", "test-id"]).unwrap()])
+            .custom_created_at(Timestamp::from_secs(1000))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        repo.save(&event).await.unwrap();
+
+        // kind:30001で削除しようとする
+        let result = repo.delete_by_address(&pubkey, 30001, "test-id", 2000).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+
+        // イベントは残っている
+        assert_eq!(repo.event_count(), 1);
+    }
+
+    /// 異なるd_tagのAddressableイベントは削除されない
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_different_d_tag() {
+        let repo = MockEventRepository::new();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+
+        // d_tag = "test-id"のイベントを保存
+        let event = EventBuilder::new(Kind::from(30000), "addressable content")
+            .tags(vec![nostr::Tag::parse(["d", "test-id"]).unwrap()])
+            .custom_created_at(Timestamp::from_secs(1000))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        repo.save(&event).await.unwrap();
+
+        // 異なるd_tagで削除しようとする
+        let result = repo.delete_by_address(&pubkey, 30000, "other-id", 2000).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+
+        // イベントは残っている
+        assert_eq!(repo.event_count(), 1);
+    }
+
+    /// delete_by_addressがエラーを返すケース
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_error() {
+        let repo = MockEventRepository::new();
+        repo.set_next_error(EventRepositoryError::WriteError(
+            "Delete operation failed".to_string(),
+        ));
+
+        let result = repo.delete_by_address("pubkey", 30000, "d_tag", 2000).await;
+        assert!(result.is_err());
+    }
+
+    /// Addressable削除で時刻境界ちょうどのイベントも削除される
+    #[tokio::test]
+    async fn test_mock_repo_delete_by_address_boundary_timestamp() {
+        let repo = MockEventRepository::new();
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+
+        // 時刻境界と同じcreated_atを持つイベント
+        let event = EventBuilder::new(Kind::from(30000), "addressable content")
+            .tags(vec![nostr::Tag::parse(["d", "test-id"]).unwrap()])
+            .custom_created_at(Timestamp::from_secs(1000))
+            .sign_with_keys(&keys)
+            .expect("Failed to create event");
+        repo.save(&event).await.unwrap();
+
+        // before_timestamp = 1000（イベントと同じ時刻）で削除
+        let result = repo.delete_by_address(&pubkey, 30000, "test-id", 1000).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1); // 境界値なので削除される
+
+        assert_eq!(repo.event_count(), 0);
+    }
+
+    /// Replaceableイベントの削除（delete_by_id経由）
+    #[tokio::test]
+    async fn test_mock_repo_delete_replaceable_event() {
+        let repo = MockEventRepository::new();
+        let keys = Keys::generate();
+
+        // Replaceableイベント（kind:0 = Metadata）を保存
+        let event = create_replaceable_event(&keys, 0, "metadata");
+        let event_id = event.id.to_hex();
+        repo.save(&event).await.unwrap();
+        assert_eq!(repo.event_count(), 1);
+
+        // 削除
+        let result = repo.delete_by_id(&event_id).await;
+        assert!(result.unwrap());
+        assert_eq!(repo.event_count(), 0);
     }
 }

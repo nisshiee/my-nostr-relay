@@ -79,7 +79,7 @@ pub const SOFTWARE_URL: &str = "https://github.com/nisshiee/my-nostr-relay";
 
 /// 現在サポートしているNIP番号
 /// NIP追加時は手動で更新が必要
-pub const SUPPORTED_NIPS: &[u32] = &[1, 11];
+pub const SUPPORTED_NIPS: &[u32] = &[1, 9, 11];
 
 impl RelayInfoDocument {
     /// 新しいリレー情報ドキュメントを作成
@@ -283,7 +283,7 @@ mod tests {
         // 固定値フィールドの検証
         assert_eq!(json["software"], SOFTWARE_URL);
         assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
-        assert_eq!(json["supported_nips"], serde_json::json!([1, 11]));
+        assert_eq!(json["supported_nips"], serde_json::json!([1, 9, 11]));
 
         // 制限情報の検証
         assert_eq!(json["limitation"]["max_subid_length"], 64);
@@ -332,13 +332,14 @@ mod tests {
     }
 
     #[test]
-    fn test_relay_info_document_supported_nips_contains_1_and_11() {
-        // サポートNIP配列に1と11が含まれる
+    fn test_relay_info_document_supported_nips_contains_1_9_and_11() {
+        // サポートNIP配列に1, 9, 11が含まれる
         let doc = RelayInfoDocument::new(
             None, None, None, None, None, None, vec![], vec![], None, None, None,
         );
 
         assert!(doc.supported_nips.contains(&1));
+        assert!(doc.supported_nips.contains(&9));
         assert!(doc.supported_nips.contains(&11));
     }
 
