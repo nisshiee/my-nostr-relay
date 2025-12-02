@@ -112,7 +112,7 @@ OpenSearch Service（マネージド版）を使用したREQ（サブスクリ�
 1. If OpenSearchクエリがタイムアウトした場合、the subscription handler shall CLOSEDメッセージをerror:プレフィックス付きで返す
 2. If OpenSearchが一時的に利用不能な場合、the subscription handler shall CLOSEDメッセージをerror:プレフィックス付きで返す
 3. The relay shall OpenSearchエラーを構造化ログに記録する
-4. If インデックスが存在しない場合、the subscription handler shall 空の結果を返しEOSEを送信する
+4. If インデックスが存在しない場合、the subscription handler shall CLOSEDメッセージをerror:プレフィックス付きで返す（システム構成エラーとして扱う）
 5. The relay shall DynamoDBへのフォールバックは行わない（OpenSearch障害時は検索不可として扱う）
 
 ### Requirement 8: パフォーマンスとモニタリング

@@ -109,7 +109,7 @@
 
 ## Task 6. OpenSearchEventRepository実装
 
-- [ ] 6.1 クエリ実行とevent_jsonデシリアライズ
+- [x] 6.1 クエリ実行とevent_jsonデシリアライズ
   - FilterToQueryConverterを使用してクエリJSONを構築
   - _source: ["event_json"]でevent_jsonフィールドのみを取得
   - created_at降順、id昇順でソートを設定
@@ -117,7 +117,7 @@
   - レスポンスからevent_jsonをNostr Event形式にデシリアライズ
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 5.7_
 
-- [ ] 6.2 OpenSearchEventRepositoryエラーハンドリング
+- [x] 6.2 OpenSearchEventRepositoryエラーハンドリング
   - クエリタイムアウト時のエラー処理
   - 一時的サービス利用不能時のエラー処理
   - インデックス不存在時は空結果を返す処理
@@ -125,7 +125,7 @@
   - QueryRepositoryErrorへのエラー変換
   - _Requirements: 7.1, 7.2, 7.3, 7.4_
 
-- [ ] 6.3 OpenSearchEventRepositoryユニットテスト
+- [x] 6.3 OpenSearchEventRepositoryユニットテスト
   - 各フィルター条件の変換ロジックをテスト
   - クエリ構築とソート設定のテスト
   - limit適用ロジックのテスト

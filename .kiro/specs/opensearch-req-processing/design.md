@@ -401,7 +401,7 @@ impl From<OpenSearchEventRepositoryError> for QueryRepositoryError {
 
 **Implementation Notes**
 - Integration: QueryRepositoryのみを実装。SubscriptionHandlerはQueryRepository型で依存注入を受ける
-- Validation: インデックス不在時は空結果を返しEOSE送信
+- Validation: インデックス不在時はエラーを返す（システム構成問題として扱う）
 - Risks: OpenSearch接続エラー時のタイムアウト処理が必要
 
 #### OpenSearchConfig
@@ -695,7 +695,7 @@ resource "aws_dynamodb_table" "events" {
 **System Errors (OpenSearch障害)**:
 - タイムアウト: CLOSED with "error: query timeout"
 - 一時的利用不能: CLOSED with "error: service temporarily unavailable"
-- インデックス不存在: 空結果 + EOSE（正常終了扱い）
+- インデックス不存在: CLOSED with "error: index not found"（システム構成エラー）
 
 **Connection Errors**:
 - 接続失敗: エラーログ記録、Lambda再試行
