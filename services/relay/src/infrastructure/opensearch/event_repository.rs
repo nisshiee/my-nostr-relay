@@ -34,6 +34,10 @@ pub enum OpenSearchEventRepositoryError {
     #[error("クエリエラー: {0}")]
     QueryError(String),
 
+    /// クエリタイムアウト
+    #[error("クエリタイムアウト: {0}")]
+    Timeout(String),
+
     /// シリアライズ/デシリアライズエラー
     #[error("シリアライズエラー: {0}")]
     SerializationError(String),
@@ -50,13 +54,12 @@ impl From<OpenSearchEventRepositoryError> for QueryRepositoryError {
                 QueryRepositoryError::ConnectionError(e.to_string())
             }
             OpenSearchEventRepositoryError::QueryError(msg) => QueryRepositoryError::QueryError(msg),
+            OpenSearchEventRepositoryError::Timeout(msg) => QueryRepositoryError::Timeout(msg),
             OpenSearchEventRepositoryError::SerializationError(msg) => {
                 QueryRepositoryError::DeserializationError(msg)
             }
             OpenSearchEventRepositoryError::IndexNotFound => {
-                // インデックス不存在時は空結果を返すため、エラーとしては扱わない
-                // ただし、QueryRepositoryErrorに変換する必要がある場合はQueryErrorにマップ
-                QueryRepositoryError::QueryError("インデックスが存在しません".to_string())
+                QueryRepositoryError::IndexNotFound("インデックスが存在しません".to_string())
             }
         }
     }
@@ -75,6 +78,7 @@ impl From<OpenSearchEventRepositoryError> for QueryRepositoryError {
 /// - 5.4-5.6: limit適用ロジック（default_limit、max_limit）
 /// - 5.7: event_jsonをNostr Event形式にデシリアライズ
 /// - 5.8: EVENTメッセージとEOSEを送信（呼び出し元で処理）
+#[derive(Clone)]
 pub struct OpenSearchEventRepository {
     /// OpenSearchクライアント
     client: OpenSearchClient,
@@ -233,13 +237,16 @@ impl OpenSearchEventRepository {
             return OpenSearchEventRepositoryError::IndexNotFound;
         }
 
-        // タイムアウトまたはサービス利用不能 (要件 7.1, 7.2)
-        if status == 408 || status == 503 || status == 504 {
-            let error_msg = if status == 408 {
-                "クエリがタイムアウトしました"
-            } else {
-                "サービスが一時的に利用できません"
-            };
+        // タイムアウト (要件 7.1)
+        if status == 408 || status == 504 {
+            let error_msg = "クエリがタイムアウトしました";
+            error!(status = status, body = %body, "{}", error_msg);
+            return OpenSearchEventRepositoryError::Timeout(error_msg.to_string());
+        }
+
+        // サービス利用不能 (要件 7.2)
+        if status == 503 {
+            let error_msg = "サービスが一時的に利用できません";
             error!(status = status, body = %body, "{}", error_msg);
             return OpenSearchEventRepositoryError::QueryError(error_msg.to_string());
         }
@@ -474,10 +481,10 @@ mod tests {
         );
 
         match error {
-            OpenSearchEventRepositoryError::QueryError(msg) => {
+            OpenSearchEventRepositoryError::Timeout(msg) => {
                 assert!(msg.contains("タイムアウト"));
             }
-            _ => panic!("予期しないエラー型"),
+            _ => panic!("予期しないエラー型: {:?}", error),
         }
     }
 
@@ -499,17 +506,17 @@ mod tests {
 
     #[test]
     fn test_parse_error_status_gateway_timeout() {
-        // 504 Gateway Timeoutもサービス利用不能として扱う
+        // 504 Gateway Timeoutもタイムアウトとして扱う
         let error = OpenSearchEventRepository::parse_error_status(
             504,
             r#"{"error":"gateway timeout"}"#,
         );
 
         match error {
-            OpenSearchEventRepositoryError::QueryError(msg) => {
-                assert!(msg.contains("利用できません"));
+            OpenSearchEventRepositoryError::Timeout(msg) => {
+                assert!(msg.contains("タイムアウト"));
             }
-            _ => panic!("予期しないエラー型"),
+            _ => panic!("予期しないエラー型: {:?}", error),
         }
     }
 
@@ -578,10 +585,23 @@ mod tests {
         let query_error: QueryRepositoryError = error.into();
 
         match query_error {
-            QueryRepositoryError::QueryError(msg) => {
+            QueryRepositoryError::IndexNotFound(msg) => {
                 assert!(msg.contains("インデックス"));
             }
-            _ => panic!("予期しないエラー型"),
+            _ => panic!("予期しないエラー型: {:?}", query_error),
+        }
+    }
+
+    #[test]
+    fn test_error_conversion_timeout() {
+        let error = OpenSearchEventRepositoryError::Timeout("タイムアウトしました".to_string());
+        let query_error: QueryRepositoryError = error.into();
+
+        match query_error {
+            QueryRepositoryError::Timeout(msg) => {
+                assert_eq!(msg, "タイムアウトしました");
+            }
+            _ => panic!("予期しないエラー型: {:?}", query_error),
         }
     }
 
@@ -598,6 +618,12 @@ mod tests {
     fn test_error_display_query() {
         let error = OpenSearchEventRepositoryError::QueryError("test".to_string());
         assert!(error.to_string().contains("クエリエラー"));
+    }
+
+    #[test]
+    fn test_error_display_timeout() {
+        let error = OpenSearchEventRepositoryError::Timeout("test".to_string());
+        assert!(error.to_string().contains("クエリタイムアウト"));
     }
 
     #[test]

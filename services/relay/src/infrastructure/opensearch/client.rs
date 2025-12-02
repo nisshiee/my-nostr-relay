@@ -38,7 +38,7 @@ pub enum OpenSearchClientError {
 /// - 6.2: Lambda実行環境のIAMロールを使用して認証
 /// - 6.3: コネクションプーリングを活用して接続を再利用
 /// - 6.5: 接続失敗時のエラーログ記録
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct OpenSearchClient {
     /// OpenSearchクライアントインスタンス
     client: OpenSearch,

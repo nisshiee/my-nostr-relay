@@ -162,27 +162,27 @@
 
 ## Task 8. SubscriptionHandlerへのOpenSearch統合
 
-- [ ] 8.1 QueryRepository依存注入とクエリ切り替え
+- [x] 8.1 QueryRepository依存注入とクエリ切り替え
   - SubscriptionHandlerにQueryRepositoryを依存注入
   - REQメッセージ受信時にOpenSearchEventRepositoryを使用してクエリ
   - 既存のフィルター検証ロジックを引き続き使用
   - limit適用ロジック（default_limit、max_limit）を維持
   - _Requirements: 5.1, 5.4, 5.5, 5.6, 9.3, 9.4_
 
-- [ ] 8.2 エラー応答とCLOSEDメッセージ処理
+- [x] 8.2 エラー応答とCLOSEDメッセージ処理
   - クエリタイムアウト時にCLOSEDメッセージ（error:プレフィックス付き）を返す
   - サービス一時利用不能時に同様のCLOSEDメッセージを返す
   - インデックス不存在時は空結果を返しEOSEを送信
   - DynamoDBへのフォールバックは行わない（設計決定）
   - _Requirements: 7.1, 7.2, 7.4, 7.5_
 
-- [ ] 8.3 クエリパフォーマンスロギング
+- [x] 8.3 クエリパフォーマンスロギング
   - OpenSearchクエリの実行時間をログに記録
   - クエリで取得したイベント件数をログに記録
   - 構造化ログフィールド（query_duration_ms、result_count、filter_count）を追加
   - _Requirements: 8.1, 8.2_
 
-- [ ] 8.4 EVENT/EOSEメッセージ応答
+- [x] 8.4 EVENT/EOSEメッセージ応答
   - クエリ結果のイベントをEVENTメッセージとして順次送信
   - 全イベント送信後にEOSEを送信
   - 従来と同じメッセージ形式を維持

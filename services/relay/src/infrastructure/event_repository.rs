@@ -24,6 +24,14 @@ pub enum QueryRepositoryError {
     #[error("Query execution error: {0}")]
     QueryError(String),
 
+    /// クエリタイムアウト
+    #[error("Query timeout: {0}")]
+    Timeout(String),
+
+    /// インデックス不存在
+    #[error("Index not found: {0}")]
+    IndexNotFound(String),
+
     /// 接続に失敗
     #[error("Connection error: {0}")]
     ConnectionError(String),
@@ -744,6 +752,18 @@ pub(crate) mod tests {
     fn test_query_repository_error_deserialization_error_display() {
         let error = QueryRepositoryError::DeserializationError("invalid json".to_string());
         assert_eq!(error.to_string(), "Deserialization error: invalid json");
+    }
+
+    #[test]
+    fn test_query_repository_error_timeout_display() {
+        let error = QueryRepositoryError::Timeout("query took too long".to_string());
+        assert_eq!(error.to_string(), "Query timeout: query took too long");
+    }
+
+    #[test]
+    fn test_query_repository_error_index_not_found_display() {
+        let error = QueryRepositoryError::IndexNotFound("nostr-events".to_string());
+        assert_eq!(error.to_string(), "Index not found: nostr-events");
     }
 
     // QueryRepositoryError等価性のテスト
