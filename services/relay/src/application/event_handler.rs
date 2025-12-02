@@ -3,10 +3,12 @@
 /// NIP-01準拠のイベント処理を実行する
 /// 要件: 5.1, 5.2, 5.3, 5.4, 5.5, 9.1, 10.1, 10.2, 10.3, 11.1, 11.2, 12.1, 12.2, 12.3
 /// 要件: 19.2, 19.3, 19.4, 19.5, 19.6
+/// NIP-09要件: 1.1, 1.4, 1.5, 4.2, 4.3, 6.2
 use nostr::Event;
 use serde_json::Value;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
+use crate::application::DeletionHandler;
 use crate::domain::{EventKind, EventValidator, LimitationConfig, RelayMessage, ValidationError};
 use crate::infrastructure::{
     EventRepository, EventRepositoryError, SaveResult, SendError, SubscriptionRepository,
@@ -51,9 +53,10 @@ impl From<SendError> for EventHandlerError {
 /// EVENTメッセージを処理するハンドラー
 ///
 /// イベントの検証、Kind別処理、保存、購読者への配信を行う
+/// NIP-09: kind:5削除リクエストの処理にも対応
 pub struct EventHandler<ER, SR, WS>
 where
-    ER: EventRepository,
+    ER: EventRepository + Clone,
     SR: SubscriptionRepository,
     WS: WebSocketSender,
 {
@@ -67,7 +70,7 @@ where
 
 impl<ER, SR, WS> EventHandler<ER, SR, WS>
 where
-    ER: EventRepository,
+    ER: EventRepository + Clone,
     SR: SubscriptionRepository,
     WS: WebSocketSender,
 {
@@ -174,8 +177,13 @@ where
             "制限値バリデーション成功"
         );
 
-        // Kind分類（要件 9.1, 10.1, 11.1, 12.1）
+        // NIP-09: kind:5削除リクエストの処理（要件 1.1, 1.4, 4.2, 4.3, 6.2）
         let kind_value = event.kind.as_u16();
+        if kind_value == 5 {
+            return self.handle_deletion(&event, connection_id).await;
+        }
+
+        // Kind分類（要件 9.1, 10.1, 11.1, 12.1）
         let kind = EventKind::classify(kind_value);
 
         debug!(
@@ -324,6 +332,58 @@ where
                     subscription_id = %subscription.subscription_id,
                     "イベント配信成功"
                 );
+            }
+        }
+    }
+
+    /// NIP-09: 削除リクエストを処理
+    ///
+    /// kind:5削除リクエストイベントの処理を行う。
+    /// 削除対象の抽出・検証・削除をDeletionHandlerに委譲し、
+    /// 削除リクエストイベント自体をkind:5にマッチするサブスクリプションへ配信する。
+    ///
+    /// # Arguments
+    /// * `event` - kind:5の削除リクエストイベント
+    /// * `connection_id` - 送信元のAPI Gateway接続ID
+    ///
+    /// # Returns
+    /// * `RelayMessage::Ok(true)` - 削除処理成功
+    /// * `RelayMessage::Ok(false, error:)` - 削除処理失敗
+    ///
+    /// 要件: 1.1, 1.4, 4.2, 4.3, 6.2
+    async fn handle_deletion(&self, event: &Event, connection_id: &str) -> RelayMessage {
+        let event_id = event.id.to_hex();
+
+        info!(
+            connection_id = connection_id,
+            event_id = %event_id,
+            "NIP-09削除リクエスト処理開始"
+        );
+
+        // DeletionHandlerに処理を委譲
+        let deletion_handler = DeletionHandler::new(self.event_repo.clone());
+        match deletion_handler.process_deletion(event).await {
+            Ok(result) => {
+                info!(
+                    event_id = %event_id,
+                    deleted_count = result.deleted_count,
+                    skipped_count = result.skipped_count,
+                    "削除リクエスト処理完了"
+                );
+
+                // 削除リクエストイベントをkind:5にマッチするサブスクリプションへ配信（要件 6.2）
+                self.broadcast_to_subscribers(event).await;
+
+                RelayMessage::ok_success(&event_id)
+            }
+            Err(err) => {
+                warn!(
+                    connection_id = connection_id,
+                    event_id = %event_id,
+                    error = %err,
+                    "削除リクエスト処理失敗"
+                );
+                RelayMessage::ok_storage_error(&event_id)
             }
         }
     }
@@ -1142,5 +1202,280 @@ mod tests {
             }
             _ => panic!("Expected Ok message"),
         }
+    }
+
+    // ==================== NIP-09 kind:5削除リクエスト処理テスト ====================
+
+    use nostr::Tag;
+
+    /// kind:5削除リクエストを作成するヘルパー
+    fn create_deletion_event_for_handler(keys: &Keys, tags: Vec<Tag>) -> Value {
+        let event = EventBuilder::new(Kind::from(5), "deletion request")
+            .tags(tags)
+            .sign_with_keys(keys)
+            .expect("Failed to create deletion event");
+        serde_json::to_value(&event).expect("Failed to serialize event")
+    }
+
+    /// 通常のテストイベントを指定キーで作成するヘルパー
+    fn create_text_note_for_handler(keys: &Keys) -> (Event, Value) {
+        let event = EventBuilder::text_note("target content")
+            .sign_with_keys(keys)
+            .expect("Failed to create text note");
+        let event_json = serde_json::to_value(&event).expect("Failed to serialize event");
+        (event, event_json)
+    }
+
+    /// 要件 1.1, 1.4: kind:5削除リクエストが正常に処理されOK(true)を返す
+    #[tokio::test]
+    async fn test_handle_kind5_deletion_request_returns_ok_success() {
+        let (handler, _, _, _) = create_test_handler();
+        let keys = Keys::generate();
+
+        // 空のタグで削除リクエスト
+        let deletion_json = create_deletion_event_for_handler(&keys, vec![]);
+
+        let response = handler.handle(deletion_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                accepted,
+                message,
+                ..
+            } => {
+                assert!(accepted);
+                assert!(message.is_empty());
+            }
+            _ => panic!("Expected Ok message"),
+        }
+    }
+
+    /// 要件 4.1: 削除リクエストイベント自体が保存される
+    #[tokio::test]
+    async fn test_handle_kind5_saves_deletion_event_itself() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let keys = Keys::generate();
+
+        let deletion_json = create_deletion_event_for_handler(&keys, vec![]);
+
+        // 削除リクエストを処理
+        handler.handle(deletion_json.clone(), "conn-123").await;
+
+        // 削除リクエストイベント自体が保存されていることを確認
+        let event_id = deletion_json.get("id").unwrap().as_str().unwrap();
+        let saved = event_repo.get_by_id(event_id).await.unwrap();
+        assert!(saved.is_some());
+        assert_eq!(saved.unwrap().kind.as_u16(), 5);
+    }
+
+    /// 要件 2.1: eタグで指定したイベントが削除される
+    #[tokio::test]
+    async fn test_handle_kind5_deletes_target_event() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let keys = Keys::generate();
+
+        // 削除対象イベントを保存
+        let (target_event, target_json) = create_text_note_for_handler(&keys);
+        let target_event_id = target_event.id.to_hex();
+        handler.handle(target_json, "conn-123").await;
+        assert_eq!(event_repo.event_count(), 1);
+
+        // 削除リクエストを処理
+        let e_tag = Tag::parse(["e", &target_event_id]).unwrap();
+        let deletion_json = create_deletion_event_for_handler(&keys, vec![e_tag]);
+        handler.handle(deletion_json, "conn-123").await;
+
+        // 対象イベントが削除されていることを確認
+        let deleted = event_repo.get_by_id(&target_event_id).await.unwrap();
+        assert!(deleted.is_none());
+
+        // 削除リクエストイベント自体は保存されている
+        assert_eq!(event_repo.event_count(), 1);
+    }
+
+    /// 要件 2.2: pubkey不一致の場合は対象イベントが削除されない
+    #[tokio::test]
+    async fn test_handle_kind5_does_not_delete_other_users_event() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let owner_keys = Keys::generate();
+        let attacker_keys = Keys::generate();
+
+        // 所有者のイベントを保存
+        let (target_event, target_json) = create_text_note_for_handler(&owner_keys);
+        let target_event_id = target_event.id.to_hex();
+        handler.handle(target_json, "conn-123").await;
+        assert_eq!(event_repo.event_count(), 1);
+
+        // 攻撃者が削除リクエストを送信
+        let e_tag = Tag::parse(["e", &target_event_id]).unwrap();
+        let deletion_json = create_deletion_event_for_handler(&attacker_keys, vec![e_tag]);
+        handler.handle(deletion_json, "conn-456").await;
+
+        // 対象イベントは削除されていない
+        let still_exists = event_repo.get_by_id(&target_event_id).await.unwrap();
+        assert!(still_exists.is_some());
+
+        // 削除リクエストイベント自体は保存されている
+        assert_eq!(event_repo.event_count(), 2);
+    }
+
+    /// 要件 5.1: kind:5イベントを削除しようとしても削除されない
+    #[tokio::test]
+    async fn test_handle_kind5_does_not_delete_other_kind5_event() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let keys = Keys::generate();
+
+        // 最初のkind:5イベントを保存
+        let first_deletion_json = create_deletion_event_for_handler(&keys, vec![]);
+        let first_event_id = first_deletion_json.get("id").unwrap().as_str().unwrap().to_string();
+        handler.handle(first_deletion_json, "conn-123").await;
+        assert_eq!(event_repo.event_count(), 1);
+
+        // 2番目の削除リクエストで最初のkind:5を削除しようとする
+        let e_tag = Tag::parse(["e", &first_event_id]).unwrap();
+        let second_deletion_json = create_deletion_event_for_handler(&keys, vec![e_tag]);
+        handler.handle(second_deletion_json, "conn-123").await;
+
+        // 最初のkind:5は削除されていない
+        let still_exists = event_repo.get_by_id(&first_event_id).await.unwrap();
+        assert!(still_exists.is_some());
+
+        // 両方のkind:5イベントが保存されている
+        assert_eq!(event_repo.event_count(), 2);
+    }
+
+    /// 要件 6.2: 削除リクエストがkind:5にマッチするサブスクリプションに配信される
+    #[tokio::test]
+    async fn test_handle_kind5_broadcasts_to_kind5_subscribers() {
+        let (handler, _, subscription_repo, ws_sender) = create_test_handler();
+        let keys = Keys::generate();
+
+        // kind:5のフィルターを持つサブスクリプションを作成
+        let filter = nostr::Filter::new().kind(Kind::from(5));
+        subscription_repo
+            .upsert("conn-subscriber", "sub-1", &[filter])
+            .await
+            .unwrap();
+
+        // 削除リクエストを処理
+        let deletion_json = create_deletion_event_for_handler(&keys, vec![]);
+        handler.handle(deletion_json.clone(), "conn-sender").await;
+
+        // 購読者にメッセージが送信されたことを確認
+        let messages = ws_sender.get_sent_messages("conn-subscriber");
+        assert_eq!(messages.len(), 1);
+
+        // EVENTメッセージ形式を確認
+        let sent: Value = serde_json::from_str(&messages[0]).unwrap();
+        assert_eq!(sent[0], "EVENT");
+        assert_eq!(sent[1], "sub-1");
+        // kindが5であることを確認
+        assert_eq!(sent[2]["kind"], 5);
+    }
+
+    /// 要件 1.5: 署名無効なkind:5はOK(false, invalid:)を返す（既存の検証ロジックでカバー）
+    #[tokio::test]
+    async fn test_handle_kind5_invalid_signature_returns_error() {
+        let (handler, _, _, _) = create_test_handler();
+        let keys = Keys::generate();
+
+        // 有効な削除リクエストを作成
+        let deletion_json = create_deletion_event_for_handler(&keys, vec![]);
+        let event_id = deletion_json.get("id").unwrap().as_str().unwrap().to_string();
+
+        // 署名を改ざん
+        let mut tampered_json = deletion_json;
+        tampered_json["sig"] = serde_json::json!("a".repeat(128));
+
+        let response = handler.handle(tampered_json, "conn-123").await;
+
+        match response {
+            RelayMessage::Ok {
+                event_id: resp_id,
+                accepted,
+                message,
+            } => {
+                assert_eq!(resp_id, event_id);
+                assert!(!accepted);
+                assert!(message.contains("invalid:"));
+                assert!(message.contains("signature verification failed"));
+            }
+            _ => panic!("Expected Ok error message"),
+        }
+    }
+
+    /// 複数のeタグを含む削除リクエストが正常に処理される
+    #[tokio::test]
+    async fn test_handle_kind5_multiple_e_tags() {
+        let (handler, event_repo, _, _) = create_test_handler();
+        let keys = Keys::generate();
+
+        // 3つのイベントを保存（異なるコンテンツで異なるIDを持つイベント）
+        let event1 = EventBuilder::text_note("content 1")
+            .sign_with_keys(&keys)
+            .expect("Failed to create event 1");
+        let event2 = EventBuilder::text_note("content 2")
+            .sign_with_keys(&keys)
+            .expect("Failed to create event 2");
+        let event3 = EventBuilder::text_note("content 3")
+            .sign_with_keys(&keys)
+            .expect("Failed to create event 3");
+        handler
+            .handle(serde_json::to_value(&event1).unwrap(), "conn-123")
+            .await;
+        handler
+            .handle(serde_json::to_value(&event2).unwrap(), "conn-123")
+            .await;
+        handler
+            .handle(serde_json::to_value(&event3).unwrap(), "conn-123")
+            .await;
+        assert_eq!(event_repo.event_count(), 3);
+
+        // 3つ全てを削除する削除リクエスト
+        let e_tag1 = Tag::parse(["e", &event1.id.to_hex()]).unwrap();
+        let e_tag2 = Tag::parse(["e", &event2.id.to_hex()]).unwrap();
+        let e_tag3 = Tag::parse(["e", &event3.id.to_hex()]).unwrap();
+        let deletion_json = create_deletion_event_for_handler(&keys, vec![e_tag1, e_tag2, e_tag3]);
+
+        let response = handler.handle(deletion_json, "conn-123").await;
+
+        // OK(true)が返される
+        match response {
+            RelayMessage::Ok { accepted, .. } => {
+                assert!(accepted);
+            }
+            _ => panic!("Expected Ok message"),
+        }
+
+        // 削除リクエストイベント自体のみが残る
+        assert_eq!(event_repo.event_count(), 1);
+    }
+
+    /// 既存のKind分類ロジックが維持されている（kind:1は通常通り保存される）
+    #[tokio::test]
+    async fn test_handle_preserves_existing_kind_classification() {
+        let (handler, event_repo, _, _) = create_test_handler();
+
+        // kind:1のイベント
+        let (_, event_json) = create_valid_event();
+        handler.handle(event_json, "conn-123").await;
+        assert_eq!(event_repo.event_count(), 1);
+
+        // kind:0のイベント（Replaceable）
+        let keys = Keys::generate();
+        let metadata_event = EventBuilder::new(Kind::Metadata, "metadata")
+            .sign_with_keys(&keys)
+            .expect("Failed to create metadata event");
+        let metadata_json = serde_json::to_value(&metadata_event).unwrap();
+        handler.handle(metadata_json, "conn-123").await;
+        assert_eq!(event_repo.event_count(), 2);
+
+        // kind:20000のイベント（Ephemeral）は保存されない
+        let ephemeral_event = EventBuilder::new(Kind::from(20000), "ephemeral")
+            .sign_with_keys(&keys)
+            .expect("Failed to create ephemeral event");
+        let ephemeral_json = serde_json::to_value(&ephemeral_event).unwrap();
+        handler.handle(ephemeral_json, "conn-123").await;
+        assert_eq!(event_repo.event_count(), 2); // 増えない
     }
 }
