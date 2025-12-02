@@ -1,4 +1,5 @@
 // ドメイン層モジュール
+pub mod deletion_target;
 pub mod event_kind;
 pub mod event_validator;
 pub mod filter_evaluator;
@@ -7,6 +8,7 @@ pub mod relay_info;
 pub mod relay_message;
 
 // 再エクスポート
+pub use deletion_target::{DeletionTarget, DeletionTargetKind};
 pub use event_kind::EventKind;
 pub use event_validator::{EventValidator, ValidationError};
 pub use filter_evaluator::{FilterEvaluator, FilterValidationError};
