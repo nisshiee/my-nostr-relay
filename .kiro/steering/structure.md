@@ -58,6 +58,10 @@ terraform/
   - `default.rs` -> `nostr_relay_default`
 - HTTP系:
   - `nip11_info.rs` -> `nostr_relay_nip11` (NIP-11リレー情報)
+- DynamoDB Streams系:
+  - `indexer.rs` -> `nostr_relay_indexer` (OpenSearchインデックス)
+- 運用ツール系:
+  - `rebuilder.rs` -> `nostr_relay_rebuilder` (インデックス再構築)
 
 ## Import Organization
 
@@ -89,13 +93,17 @@ import { ... } from './components';
 ### Lambda関数パターン
 - 各Lambda関数は `src/bin/` に独立したバイナリとして配置
 - 共通ロジックは `src/lib.rs` に集約
-- 2種類のLambdaランタイム:
+- 4種類のLambdaランタイム:
   - **WebSocket系** (`lambda_runtime`): API Gateway v2経由
     - `$connect` -> `connect.rs` (アクセスログ記録: IP, User-Agent)
     - `$disconnect` -> `disconnect.rs` (アクセスログ記録)
     - `$default` -> `default.rs` (アクセスログ記録: イベント種別)
   - **HTTP系** (`lambda_http`): Lambda Function URL経由
     - NIP-11 -> `nip11_info.rs` (環境変数から11個のリレー情報フィールド読み込み)
+  - **DynamoDB Streams系** (`lambda_runtime`): DynamoDB Streams経由
+    - `indexer.rs` (INSERT/MODIFY/REMOVEイベントをOpenSearchにインデックス)
+  - **運用ツール系** (`lambda_runtime`): 手動/スケジュール実行
+    - `rebuilder.rs` (DynamoDBからOpenSearchインデックス再構築)
 
 ### レイヤードアーキテクチャ（Relay Service）
 ```
@@ -121,6 +129,7 @@ src/
 
 **Infrastructure層**: 外部システムとの連携
 - DynamoDB接続設定・Repository実装
+- OpenSearch連携（クライアント、インデクサー、再構築ツール）
 - WebSocket送信機能（API Gateway Management API）
 - 構造化ログ初期化（tracing）
 
@@ -133,6 +142,7 @@ src/
   - `api/cloudfront.tf` - CloudFrontディストリビューション
   - `api/lambda_edge.tf` - Lambda@Edgeルーター
   - `api/dynamodb.tf` - DynamoDBテーブル
+  - `api/opensearch.tf` - OpenSearch Service, Indexer Lambda
   - `api/nip11.tf` - NIP-11 Lambda Function URL
   - `api/cloudwatch_logs.tf` - CloudWatch Logsロググループ（90日保存）
 

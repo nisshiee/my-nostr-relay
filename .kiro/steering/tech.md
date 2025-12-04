@@ -2,7 +2,7 @@
 
 ## Architecture
 
-サーバーレスアーキテクチャを採用。CloudFront + Lambda@Edgeでプロトコルルーティングを行い、WebSocketはAPI Gateway v2、HTTP (NIP-11)はLambda Function URLで処理。
+サーバーレスアーキテクチャを採用。CloudFront + Lambda@Edgeでプロトコルルーティングを行い、WebSocketはAPI Gateway v2、HTTP (NIP-11)はLambda Function URLで処理。OpenSearchでREQクエリを高速処理。
 
 ```
 Client --> CloudFront --> Lambda@Edge (Router)
@@ -16,6 +16,12 @@ Client --> CloudFront --> Lambda@Edge (Router)
        Lambda (Rust)                   Lambda (Rust)
               |                          NIP-11 Info
          DynamoDB
+              |
+      DynamoDB Streams
+              |
+       Lambda (Indexer)
+              |
+        OpenSearch
 ```
 
 ## Core Technologies
@@ -36,8 +42,9 @@ Client --> CloudFront --> Lambda@Edge (Router)
 
 ### Infrastructure (`terraform/`)
 - **IaC**: Terraform
-- **Cloud**: AWS (Lambda, API Gateway v2, CloudFront, Lambda@Edge, Route53, ACM, DynamoDB, CloudWatch Logs)
+- **Cloud**: AWS (Lambda, API Gateway v2, CloudFront, Lambda@Edge, Route53, ACM, DynamoDB, OpenSearch Service, CloudWatch Logs)
 - **Database**: DynamoDB (Events, Connections, Subscriptions)
+- **Search**: OpenSearch Service (REQクエリ処理、DynamoDB Streamsからインデックス)
 - **CDN**: CloudFront + Lambda@Edge (プロトコルルーティング)
 - **Logging**: CloudWatch Logs (90日保存、法的対処・不正利用防止)
 - **Frontend Hosting**: Vercel
@@ -45,12 +52,14 @@ Client --> CloudFront --> Lambda@Edge (Router)
 ## Key Libraries
 
 ### Rust (Relay)
-- `lambda_runtime` - AWS Lambda Rust runtime (WebSocket系)
+- `lambda_runtime` - AWS Lambda Rust runtime (WebSocket系、DynamoDB Streams)
 - `lambda_http` - AWS Lambda HTTP runtime (NIP-11)
 - `nostr` - Nostrプロトコル型定義・署名検証・フィルター評価
 - `aws-sdk-dynamodb` - DynamoDB操作
 - `aws-sdk-apigatewaymanagement` - WebSocketメッセージ送信
 - `aws-config` - AWS SDK認証・設定
+- `opensearch` - OpenSearchクライアント (AWS認証対応)
+- `aws_lambda_events` - Lambda イベント型定義 (DynamoDB Streams等)
 - `tokio` - 非同期ランタイム
 - `serde_json` - JSON処理
 - `thiserror` - エラー型定義
@@ -110,6 +119,8 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 | Serverless WebSocket | API Gateway v2でWebSocket接続管理、スケーラブル |
 | CloudFront + Lambda@Edge | 単一ドメインでWebSocket/HTTP両対応、エッジでのプロトコルルーティング |
 | DynamoDB | サーバーレス、従量課金、GSIによる柔軟なクエリパターン |
+| OpenSearch Service | REQクエリの高速処理、DynamoDB Streams連携でリアルタイムインデックス |
+| DynamoDB Streams + Lambda | イベント変更をOpenSearchに非同期インデックス、疎結合アーキテクチャ |
 | nostr crate活用 | プロトコル型定義・署名検証の再実装を回避、エコシステム準拠 |
 | 3-Layer Architecture | Domain/Application/Infrastructure分離でテスト容易性・責務明確化 |
 | Modular Terraform | domain/api/webで責務分離、再利用性向上 |
