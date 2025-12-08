@@ -22,7 +22,7 @@
   - IAMインスタンスプロファイルでSSMとS3アクセスを許可
   - _Requirements: 1.1, 1.2, 1.3, 8.1, 8.2_
 
-- [ ] 1.3 Elastic IPとRoute 53設定
+- [x] 1.3 Elastic IPとRoute 53設定
   - Elastic IPを作成しEC2インスタンスにアタッチ
   - `random_string`リソースでサブドメインを生成
   - Route 53にAレコードを登録

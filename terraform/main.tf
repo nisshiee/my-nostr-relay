@@ -157,3 +157,19 @@ output "ec2_search_private_ip" {
   description = "EC2検索サーバーのプライベートIPアドレス"
   value       = module.ec2_search.private_ip
 }
+
+output "ec2_search_elastic_ip" {
+  description = "EC2検索サーバーのElastic IP（パブリックIPアドレス）"
+  value       = module.ec2_search.elastic_ip
+}
+
+output "ec2_search_api_endpoint" {
+  description = "EC2検索APIエンドポイントFQDN"
+  value       = module.ec2_search.search_api_endpoint
+}
+
+output "ec2_search_api_url" {
+  description = "EC2検索APIのベースURL"
+  value       = module.ec2_search.search_api_url
+  sensitive   = true
+}

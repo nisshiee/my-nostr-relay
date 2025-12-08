@@ -11,6 +11,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -278,6 +282,63 @@ resource "aws_instance" "search" {
 }
 
 # ------------------------------------------------------------------------------
+# Task 1.3: Elastic IPとRoute 53設定
+#
+# 要件:
+# - Elastic IPを作成しEC2インスタンスにアタッチ
+# - random_stringリソースでサブドメインを生成（tfstateにのみ保存、gitにはコミットしない）
+# - Route 53にAレコードを登録
+#
+# 設計判断:
+# - サブドメインをランダム化することで、検索APIエンドポイントの推測を困難にする
+# - Elastic IPにより、EC2再起動時もIPアドレスが維持される
+# - Elastic IPは実行中のインスタンスにアタッチされている間は無料
+#
+# Requirements: 1.1, 1.4, 4.1, 8.3
+# ------------------------------------------------------------------------------
+
+# サブドメイン用ランダム文字列
+# tfstateにのみ保存され、gitにはコミットされない
+# 例: abc123.relay.nostr.nisshiee.org
+resource "random_string" "subdomain" {
+  length  = 8
+  special = false
+  upper   = false
+  numeric = true
+  lower   = true
+}
+
+# Elastic IP
+# EC2インスタンスに固定IPアドレスを割り当てる
+# 再起動してもIPアドレスが変わらないため、Route 53の更新が不要
+resource "aws_eip" "search" {
+  domain = "vpc"
+
+  tags = {
+    Name = "nostr-relay-ec2-search"
+  }
+}
+
+# Elastic IPをEC2インスタンスにアタッチ
+# インスタンスが停止しても関連付けは維持される
+resource "aws_eip_association" "search" {
+  instance_id   = aws_instance.search.id
+  allocation_id = aws_eip.search.id
+}
+
+# Route 53 Aレコード
+# ランダムサブドメインでEC2検索APIエンドポイントを公開
+# 形式: {random}.relay.{domain_name}
+resource "aws_route53_record" "search" {
+  zone_id = var.zone_id
+  name    = "${random_string.subdomain.result}.relay.${var.domain_name}"
+  type    = "A"
+  ttl     = 300
+
+  records = [aws_eip.search.public_ip]
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
@@ -314,4 +375,19 @@ output "iam_role_arn" {
 output "iam_instance_profile_name" {
   description = "IAMインスタンスプロファイル名"
   value       = aws_iam_instance_profile.ec2_search.name
+}
+
+output "elastic_ip" {
+  description = "Elastic IP（パブリックIPアドレス）"
+  value       = aws_eip.search.public_ip
+}
+
+output "search_api_endpoint" {
+  description = "検索APIエンドポイントFQDN（HTTPSでアクセス）"
+  value       = aws_route53_record.search.fqdn
+}
+
+output "search_api_url" {
+  description = "検索APIのベースURL"
+  value       = "https://${aws_route53_record.search.fqdn}"
 }
