@@ -111,6 +111,173 @@ resource "aws_security_group" "ec2_search" {
 }
 
 # ------------------------------------------------------------------------------
+# Task 1.2: EC2インスタンスとストレージ定義
+#
+# 要件:
+# - t4g.nanoインスタンスタイプを指定
+# - Amazon Linux 2023 AMIを使用（SSM Agent プリインストール）
+# - EBS gp3ボリューム（10GB）をアタッチ
+# - IAMインスタンスプロファイルでSSMとS3アクセスを許可
+#
+# Requirements: 1.1, 1.2, 1.3, 8.1, 8.2
+# ------------------------------------------------------------------------------
+
+# Amazon Linux 2023 AMI（ARM64）を取得
+# SSM Agentがプリインストールされているため、SSM Session Managerでの接続が可能
+data "aws_ami" "amazon_linux_2023" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-*-kernel-*-arm64"]
+  }
+
+  filter {
+    name   = "architecture"
+    values = ["arm64"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+# ------------------------------------------------------------------------------
+# IAMロールとインスタンスプロファイル
+#
+# EC2インスタンスが以下のサービスにアクセスするために必要:
+# - SSM: Systems Manager Agent通信、Session Manager接続
+# - S3: バイナリダウンロード
+# - Parameter Store: APIトークン取得
+# ------------------------------------------------------------------------------
+
+# IAMロール
+resource "aws_iam_role" "ec2_search" {
+  name = "nostr-relay-ec2-search"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ec2.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = {
+    Name = "nostr-relay-ec2-search"
+  }
+}
+
+# SSM用マネージドポリシーをアタッチ
+# AmazonSSMManagedInstanceCore: SSM Agent通信、Session Manager接続に必要
+resource "aws_iam_role_policy_attachment" "ec2_search_ssm" {
+  role       = aws_iam_role.ec2_search.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# S3およびParameter Storeアクセス用カスタムポリシー
+resource "aws_iam_role_policy" "ec2_search_custom" {
+  name = "nostr-relay-ec2-search-custom"
+  role = aws_iam_role.ec2_search.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "S3BinaryAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::nostr-relay-*",
+          "arn:aws:s3:::nostr-relay-*/*"
+        ]
+      },
+      {
+        Sid    = "ParameterStoreAccess"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters"
+        ]
+        Resource = "arn:aws:ssm:*:*:parameter/nostr-relay/*"
+      }
+    ]
+  })
+}
+
+# インスタンスプロファイル
+resource "aws_iam_instance_profile" "ec2_search" {
+  name = "nostr-relay-ec2-search"
+  role = aws_iam_role.ec2_search.name
+}
+
+# ------------------------------------------------------------------------------
+# EC2インスタンス
+#
+# t4g.nano: ARM64 (Graviton2)、2 vCPU、512MB RAM
+# コスト: 月額約450円（東京リージョン）
+#
+# User Dataは後続タスク（1.4）で実装
+# ------------------------------------------------------------------------------
+
+resource "aws_instance" "search" {
+  ami           = data.aws_ami.amazon_linux_2023.id
+  instance_type = "t4g.nano"
+
+  # パブリックサブネットに配置（最初のサブネットを使用）
+  subnet_id = tolist(data.aws_subnets.public.ids)[0]
+
+  # セキュリティグループとIAMインスタンスプロファイルを設定
+  vpc_security_group_ids = [aws_security_group.ec2_search.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_search.name
+
+  # EBS最適化を有効化（t4g.nanoはデフォルトでサポート）
+  ebs_optimized = true
+
+  # ルートボリューム: gp3、10GB
+  # コスト: 月額約120円（東京リージョン）
+  root_block_device {
+    volume_type           = "gp3"
+    volume_size           = 10
+    delete_on_termination = true
+    encrypted             = true
+
+    tags = {
+      Name = "nostr-relay-ec2-search-root"
+    }
+  }
+
+  # メタデータサービスv2を強制（セキュリティベストプラクティス）
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
+  # User Dataはタスク1.4で実装予定
+  # user_data = ...
+
+  tags = {
+    Name = "nostr-relay-ec2-search"
+  }
+
+  lifecycle {
+    # AMIが更新されても自動で再作成しない（明示的な更新のみ）
+    ignore_changes = [ami]
+  }
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
@@ -127,4 +294,24 @@ output "vpc_id" {
 output "public_subnet_ids" {
   description = "パブリックサブネットIDのリスト"
   value       = data.aws_subnets.public.ids
+}
+
+output "instance_id" {
+  description = "EC2インスタンスID"
+  value       = aws_instance.search.id
+}
+
+output "private_ip" {
+  description = "EC2インスタンスのプライベートIPアドレス"
+  value       = aws_instance.search.private_ip
+}
+
+output "iam_role_arn" {
+  description = "EC2インスタンスのIAMロールARN"
+  value       = aws_iam_role.ec2_search.arn
+}
+
+output "iam_instance_profile_name" {
+  description = "IAMインスタンスプロファイル名"
+  value       = aws_iam_instance_profile.ec2_search.name
 }

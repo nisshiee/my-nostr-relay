@@ -15,7 +15,7 @@
   - アウトバウンドは全許可（Let's Encrypt、SSM通信用）
   - _Requirements: 1.1, 3.3_
 
-- [ ] 1.2 EC2インスタンスとストレージ定義
+- [x] 1.2 EC2インスタンスとストレージ定義
   - t4g.nanoインスタンスタイプを指定
   - Amazon Linux 2023 AMIを使用（SSM Agent プリインストール）
   - EBS gp3ボリューム（10GB）をアタッチ

@@ -147,3 +147,13 @@ output "ec2_search_security_group_id" {
   description = "EC2検索サーバー用セキュリティグループID"
   value       = module.ec2_search.security_group_id
 }
+
+output "ec2_search_instance_id" {
+  description = "EC2検索サーバーインスタンスID"
+  value       = module.ec2_search.instance_id
+}
+
+output "ec2_search_private_ip" {
+  description = "EC2検索サーバーのプライベートIPアドレス"
+  value       = module.ec2_search.private_ip
+}
