@@ -199,3 +199,18 @@ output "ec2_search_lambda_ssm_policy_arn" {
   description = "Lambda用SSMアクセスポリシーのARN（Lambda IAMロールにアタッチ用）"
   value       = module.ec2_search.lambda_ssm_policy_arn
 }
+
+output "ec2_search_binary_bucket_arn" {
+  description = "バイナリ配布用S3バケットのARN"
+  value       = module.ec2_search.binary_bucket_arn
+}
+
+output "ec2_search_ssm_document_name" {
+  description = "バイナリ更新用SSMドキュメント名"
+  value       = module.ec2_search.ssm_document_name
+}
+
+output "ec2_search_ssm_document_arn" {
+  description = "バイナリ更新用SSMドキュメントのARN"
+  value       = module.ec2_search.ssm_document_arn
+}
