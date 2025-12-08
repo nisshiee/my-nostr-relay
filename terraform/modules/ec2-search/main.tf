@@ -32,9 +32,35 @@ variable "zone_id" {
   type        = string
 }
 
+variable "binary_bucket" {
+  description = "HTTP APIサーバーバイナリを格納するS3バケット名"
+  type        = string
+}
+
+variable "binary_key" {
+  description = "S3バケット内のバイナリのキー（パス）"
+  type        = string
+  default     = "sqlite-api/sqlite-api"
+}
+
+variable "binary_name" {
+  description = "バイナリのファイル名"
+  type        = string
+  default     = "sqlite-api"
+}
+
+variable "parameter_store_path" {
+  description = "APIトークンを保存するParameter Storeのパス"
+  type        = string
+  default     = "/nostr-relay/ec2-search/api-token"
+}
+
 # ------------------------------------------------------------------------------
 # Data Sources
 # ------------------------------------------------------------------------------
+
+# 現在のAWSリージョンを取得
+data "aws_region" "current" {}
 
 # デフォルトVPCを参照
 # 本プロジェクトの他のAWSリソース（Lambda、DynamoDB、OpenSearch等）はすべて
@@ -268,8 +294,30 @@ resource "aws_instance" "search" {
     http_put_response_hop_limit = 1
   }
 
-  # User Dataはタスク1.4で実装予定
-  # user_data = ...
+  # ------------------------------------------------------------------------------
+  # Task 1.4: User Dataによるプロビジョニング
+  #
+  # 要件:
+  # - Caddyのインストールと設定（リバースプロキシ、TLS自動化）
+  # - SQLiteデータベースの初期化（WALモード、スキーマ作成）
+  # - systemdサービスファイルの配置と有効化
+  # - S3からバイナリをダウンロード
+  # - Parameter StoreからAPIトークンを取得し環境変数に設定
+  #
+  # Requirements: 1.5, 1.6, 1.7, 1.8, 1.9, 3.4
+  # ------------------------------------------------------------------------------
+  user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
+    # ドメインはrandom_stringから直接構築（循環依存を回避）
+    domain               = "${random_string.subdomain.result}.relay.${var.domain_name}"
+    binary_bucket        = var.binary_bucket
+    binary_key           = var.binary_key
+    binary_name          = var.binary_name
+    parameter_store_path = var.parameter_store_path
+    aws_region           = data.aws_region.current.name
+  }))
+
+  # User Dataが変更された場合、インスタンスを再作成
+  user_data_replace_on_change = true
 
   tags = {
     Name = "nostr-relay-ec2-search"
@@ -390,4 +438,19 @@ output "search_api_endpoint" {
 output "search_api_url" {
   description = "検索APIのベースURL"
   value       = "https://${aws_route53_record.search.fqdn}"
+}
+
+output "parameter_store_path" {
+  description = "APIトークンを保存するParameter Storeのパス"
+  value       = var.parameter_store_path
+}
+
+output "binary_bucket" {
+  description = "HTTP APIサーバーバイナリを格納するS3バケット名"
+  value       = var.binary_bucket
+}
+
+output "binary_key" {
+  description = "S3バケット内のバイナリのキー"
+  value       = var.binary_key
 }

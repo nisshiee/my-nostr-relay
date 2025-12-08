@@ -31,6 +31,8 @@ provider "vercel" {
   # VERCEL_API_TOKEN is required
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   domain_name = "nostr.nisshiee.org"
 }
@@ -121,9 +123,13 @@ module "web" {
 # OpenSearch Serviceの低コスト代替として導入
 # ------------------------------------------------------------------------------
 module "ec2_search" {
-  source      = "./modules/ec2-search"
-  domain_name = local.domain_name
-  zone_id     = module.domain.zone_id
+  source               = "./modules/ec2-search"
+  domain_name          = local.domain_name
+  zone_id              = module.domain.zone_id
+  binary_bucket        = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
+  binary_key           = "sqlite-api/sqlite-api"
+  binary_name          = "sqlite-api"
+  parameter_store_path = "/nostr-relay/ec2-search/api-token"
 }
 
 output "nameservers" {
@@ -172,4 +178,14 @@ output "ec2_search_api_url" {
   description = "EC2検索APIのベースURL"
   value       = module.ec2_search.search_api_url
   sensitive   = true
+}
+
+output "ec2_search_parameter_store_path" {
+  description = "APIトークンを保存するParameter Storeのパス"
+  value       = module.ec2_search.parameter_store_path
+}
+
+output "ec2_search_binary_bucket" {
+  description = "HTTP APIサーバーバイナリを格納するS3バケット名"
+  value       = module.ec2_search.binary_bucket
 }
