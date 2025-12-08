@@ -189,3 +189,13 @@ output "ec2_search_binary_bucket" {
   description = "HTTP APIサーバーバイナリを格納するS3バケット名"
   value       = module.ec2_search.binary_bucket
 }
+
+output "ec2_search_api_token_parameter_arn" {
+  description = "APIトークンパラメータのARN"
+  value       = module.ec2_search.api_token_parameter_arn
+}
+
+output "ec2_search_lambda_ssm_policy_arn" {
+  description = "Lambda用SSMアクセスポリシーのARN（Lambda IAMロールにアタッチ用）"
+  value       = module.ec2_search.lambda_ssm_policy_arn
+}

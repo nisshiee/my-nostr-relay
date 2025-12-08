@@ -240,6 +240,21 @@ resource "aws_iam_role_policy" "ec2_search_custom" {
           "ssm:GetParameters"
         ]
         Resource = "arn:aws:ssm:*:*:parameter/nostr-relay/*"
+      },
+      {
+        Sid    = "KMSDecryptForSecureString"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        # デフォルトのAWS管理キー（alias/aws/ssm）を使用
+        # SecureStringの復号化に必要
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "ssm.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
       }
     ]
   })

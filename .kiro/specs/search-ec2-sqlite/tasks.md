@@ -36,7 +36,7 @@
   - Parameter StoreからAPIトークンを取得し環境変数に設定
   - _Requirements: 1.5, 1.6, 1.7, 1.8, 1.9, 3.4_
 
-- [ ] 1.5 (P) APIトークンのParameter Store登録
+- [x] 1.5 (P) APIトークンのParameter Store登録
   - SecureString形式でAPIトークンを保存
   - EC2とLambda用のIAMポリシーを設定
   - _Requirements: 3.5_

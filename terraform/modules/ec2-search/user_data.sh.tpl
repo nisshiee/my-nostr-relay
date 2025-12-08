@@ -47,7 +47,7 @@ echo "Installing Caddy..."
 CADDY_VERSION=$(curl -s https://api.github.com/repos/caddyserver/caddy/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/')
 echo "Installing Caddy version: $CADDY_VERSION"
 
-curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_${CADDY_VERSION}_linux_arm64.tar.gz" -o /tmp/caddy.tar.gz
+curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v$CADDY_VERSION/caddy_$${CADDY_VERSION}_linux_arm64.tar.gz" -o /tmp/caddy.tar.gz
 tar -xzf /tmp/caddy.tar.gz -C /tmp
 mv /tmp/caddy /usr/bin/caddy
 chmod 755 /usr/bin/caddy
