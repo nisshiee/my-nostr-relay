@@ -80,6 +80,7 @@ graph TB
 - **Existing patterns preserved**: QueryRepositoryトレイト、Lambda 3層アーキテクチャ、Terraform モジュールパターン
 - **New components rationale**: Caddyはゼロ設定のTLS自動化、axumはtower互換のモダンHTTPフレームワーク
 - **Steering compliance**: Rust Edition 2024、ARM64アーキテクチャ、構造化ログ (tracing) を継承
+- **Network**: デフォルトVPCのパブリックサブネットを使用。既存リソース（Lambda、DynamoDB等）はすべてパブリックエンドポイントで動作しており、新規VPC作成による複雑さを避ける
 
 ### Technology Stack
 

@@ -115,6 +115,17 @@ module "web" {
   zone_id     = module.domain.zone_id
 }
 
+# ------------------------------------------------------------------------------
+# EC2 Search Module
+# SQLiteベースの検索APIサーバー用インフラストラクチャ
+# OpenSearch Serviceの低コスト代替として導入
+# ------------------------------------------------------------------------------
+module "ec2_search" {
+  source      = "./modules/ec2-search"
+  domain_name = local.domain_name
+  zone_id     = module.domain.zone_id
+}
+
 output "nameservers" {
   value = module.domain.nameservers
 }
@@ -130,4 +141,9 @@ output "cloudfront_domain_name" {
 output "opensearch_endpoint" {
   description = "OpenSearchドメインエンドポイント"
   value       = module.api.opensearch_endpoint
+}
+
+output "ec2_search_security_group_id" {
+  description = "EC2検索サーバー用セキュリティグループID"
+  value       = module.ec2_search.security_group_id
 }
