@@ -52,7 +52,7 @@
 ## Phase 2: HTTP APIサーバー実装
 
 - [ ] 2. EC2上で動作するHTTP APIサーバーの実装
-- [ ] 2.1 Rustプロジェクトのセットアップ
+- [x] 2.1 Rustプロジェクトのセットアップ
   - 新規バイナリクレートを作成（services/sqlite-api等）
   - axum、rusqlite、deadpool-sqlite、tokio、tracing等の依存関係を追加
   - ARM64向けのビルド設定

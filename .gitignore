@@ -26,8 +26,8 @@ yarn-error.log*
 *.tfplan
 
 # Rust
-/services/relay/target/
-/services/relay/**/*.rs.bk
+/services/*/target/
+/services/*/**/*.rs.bk
 
 # Node.js / Next.js
 node_modules/
