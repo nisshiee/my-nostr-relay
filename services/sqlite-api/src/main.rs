@@ -6,6 +6,8 @@
 //! - イベントの削除 (DELETE /events/{id})
 //! - ヘルスチェック (GET /health)
 
+mod store;
+
 use axum::{routing::get, Router};
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};

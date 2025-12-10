@@ -4,7 +4,7 @@
 #
 # このスクリプトはEC2インスタンス起動時に実行され、以下を構成する:
 # 1. Caddyのインストールと設定（リバースプロキシ、TLS自動化）
-# 2. SQLiteデータベースの初期化（WALモード、スキーマ作成）
+# 2. SQLiteデータベース用ディレクトリの準備（スキーマはRustアプリが作成）
 # 3. systemdサービスファイルの配置と有効化
 # 4. S3からバイナリをダウンロード
 # 5. Parameter StoreからAPIトークンを取得し環境変数に設定
@@ -125,60 +125,18 @@ groupadd --system nostr-api 2>/dev/null || true
 useradd --system --gid nostr-api --create-home --home-dir /var/lib/nostr --shell /usr/sbin/nologin nostr-api 2>/dev/null || true
 
 # ------------------------------------------------------------------------------
-# SQLiteデータベースの初期化
-# /var/lib/nostr/events.dbにWALモードで初期化
+# SQLiteデータベース用ディレクトリの準備
+# スキーマ作成はRustアプリ（store.rs）が起動時に行う
+# ここではディレクトリと権限設定のみ
 # ------------------------------------------------------------------------------
-echo "Initializing SQLite database..."
+echo "Preparing SQLite database directory..."
 
 # ディレクトリ作成（nostr-apiユーザーが所有）
 mkdir -p /var/lib/nostr
 chown nostr-api:nostr-api /var/lib/nostr
 chmod 750 /var/lib/nostr
 
-# データベース初期化（スキーマ作成）
-sqlite3 "$DB_PATH" <<'SQLEOF'
--- WALモード有効化
-PRAGMA journal_mode=WAL;
-PRAGMA synchronous=NORMAL;
-
--- イベントテーブル
--- 完全なNostrイベントを保存
-CREATE TABLE IF NOT EXISTS events (
-    id TEXT PRIMARY KEY,           -- 64文字hex (イベントID)
-    pubkey TEXT NOT NULL,          -- 64文字hex (公開鍵)
-    kind INTEGER NOT NULL,         -- イベント種別
-    created_at INTEGER NOT NULL,   -- UNIXタイムスタンプ
-    event_json TEXT NOT NULL       -- 完全なイベントJSON
-);
-
--- タグテーブル（正規化）
--- 検索用にタグを別テーブルで管理
-CREATE TABLE IF NOT EXISTS event_tags (
-    event_id TEXT NOT NULL,        -- eventsテーブルへのFK
-    tag_name TEXT NOT NULL,        -- タグ名 ('e', 'p', 'd', 'a', 't')
-    tag_value TEXT NOT NULL,       -- タグ値
-    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
-);
-
--- インデックス定義
--- 検索パフォーマンスを最適化
-CREATE INDEX IF NOT EXISTS idx_events_pubkey ON events(pubkey);
-CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
-CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_events_pubkey_kind ON events(pubkey, kind);
-CREATE INDEX IF NOT EXISTS idx_event_tags_name_value ON event_tags(tag_name, tag_value);
-CREATE INDEX IF NOT EXISTS idx_event_tags_event_id ON event_tags(event_id);
-SQLEOF
-
-# データベースファイルの権限設定
-# nostr-apiユーザーからの読み書きを許可
-chown nostr-api:nostr-api "$DB_PATH"
-chmod 640 "$DB_PATH"
-# WAL関連ファイルも権限設定（存在する場合）
-[ -f "$DB_PATH-wal" ] && chown nostr-api:nostr-api "$DB_PATH-wal" && chmod 640 "$DB_PATH-wal"
-[ -f "$DB_PATH-shm" ] && chown nostr-api:nostr-api "$DB_PATH-shm" && chmod 640 "$DB_PATH-shm"
-
-echo "SQLite database initialized at $DB_PATH"
+echo "SQLite database directory prepared at /var/lib/nostr"
 
 # ------------------------------------------------------------------------------
 # Parameter StoreからAPIトークンを取得

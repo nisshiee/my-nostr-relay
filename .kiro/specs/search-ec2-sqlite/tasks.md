@@ -58,7 +58,7 @@
   - ARM64向けのビルド設定
   - _Requirements: 2.1_
 
-- [ ] 2.2 (P) SQLiteデータベーススキーマと接続管理
+- [x] 2.2 (P) SQLiteデータベーススキーマと接続管理
   - eventsテーブル（id、pubkey、kind、created_at、event_json）を定義
   - event_tagsテーブル（event_id、tag_name、tag_value、外部キー）を定義
   - 要求されたインデックスをすべて作成

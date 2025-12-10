@@ -37,3 +37,5 @@ thiserror = "2"
 [dev-dependencies]
 # axumテスト用（oneshot等）
 tower = "0.5"
+# テスト用一時ディレクトリ
+tempfile = "3"
