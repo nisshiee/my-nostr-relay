@@ -7,9 +7,11 @@
 //! - ヘルスチェック (GET /health)
 
 mod auth;
+mod error;
 mod store;
 
 pub use auth::{auth_middleware, AuthConfig};
+pub use error::ApiError;
 pub use store::{NostrEvent, SaveResult, SearchFilter, SqliteEventStore, StoreError};
 
 use axum::{
@@ -22,6 +24,7 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// APIトークン環境変数名
@@ -64,12 +67,25 @@ async fn create_event(
     State(state): State<AppState>,
     Json(event): Json<NostrEvent>,
 ) -> Response {
+    tracing::info!(
+        event_id = %event.id,
+        pubkey = %event.pubkey,
+        kind = event.kind,
+        "イベント保存リクエストを受信"
+    );
+
     match state.store.save_event(&event).await {
-        Ok(SaveResult::Created) => StatusCode::CREATED.into_response(),
-        Ok(SaveResult::AlreadyExists) => StatusCode::OK.into_response(),
+        Ok(SaveResult::Created) => {
+            tracing::info!(event_id = %event.id, "イベントを新規作成");
+            StatusCode::CREATED.into_response()
+        }
+        Ok(SaveResult::AlreadyExists) => {
+            tracing::info!(event_id = %event.id, "イベントは既に存在");
+            StatusCode::OK.into_response()
+        }
         Err(e) => {
-            tracing::error!("イベント保存エラー: {:?}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            tracing::error!(event_id = %event.id, error = %e, "イベント保存エラー");
+            ApiError::internal_error(format!("データベースエラー: {}", e)).into_response()
         }
     }
 }
@@ -86,12 +102,20 @@ async fn delete_event_handler(
     State(state): State<AppState>,
     Path(event_id): Path<String>,
 ) -> Response {
+    tracing::info!(event_id = %event_id, "イベント削除リクエストを受信");
+
     match state.store.delete_event(&event_id).await {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
-        Ok(false) => StatusCode::NOT_FOUND.into_response(),
+        Ok(true) => {
+            tracing::info!(event_id = %event_id, "イベントを削除");
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Ok(false) => {
+            tracing::warn!(event_id = %event_id, "削除対象のイベントが見つからない");
+            ApiError::not_found(format!("イベントが見つかりません: {}", event_id)).into_response()
+        }
         Err(e) => {
-            tracing::error!("イベント削除エラー: {:?}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            tracing::error!(event_id = %event_id, error = %e, "イベント削除エラー");
+            ApiError::internal_error(format!("データベースエラー: {}", e)).into_response()
         }
     }
 }
@@ -108,11 +132,24 @@ async fn search_events_handler(
     State(state): State<AppState>,
     Json(filter): Json<SearchFilter>,
 ) -> Response {
+    tracing::info!(
+        ids = ?filter.ids,
+        authors = ?filter.authors,
+        kinds = ?filter.kinds,
+        since = ?filter.since,
+        until = ?filter.until,
+        limit = ?filter.limit,
+        "イベント検索リクエストを受信"
+    );
+
     match state.store.search_events(&filter).await {
-        Ok(events) => Json(events).into_response(),
+        Ok(events) => {
+            tracing::info!(count = events.len(), "検索結果を返却");
+            Json(events).into_response()
+        }
         Err(e) => {
-            tracing::error!("イベント検索エラー: {:?}", e);
-            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            tracing::error!(error = %e, "イベント検索エラー");
+            ApiError::internal_error(format!("データベースエラー: {}", e)).into_response()
         }
     }
 }
@@ -121,6 +158,7 @@ async fn search_events_handler(
 ///
 /// 全エンドポイントのルーティングを定義し、認証ミドルウェアを適用する。
 /// /healthエンドポイントは認証をバイパスする（auth_middleware内で処理）。
+/// TraceLayerによりリクエスト/レスポンスの構造化ログを自動記録する。
 ///
 /// # Arguments
 /// * `auth_config` - 認証設定
@@ -140,6 +178,8 @@ pub fn create_router_with_store(auth_config: AuthConfig, store: Arc<SqliteEventS
             auth_config,
             auth_middleware,
         ))
+        // リクエストトレーシングレイヤー（method, path, status, latencyを自動記録）
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -779,5 +819,98 @@ mod api_endpoint_tests {
             .unwrap();
         let events: Vec<NostrEvent> = serde_json::from_slice(&response_body).unwrap();
         assert!(!events.is_empty());
+    }
+
+    // ========================================
+    // エラーレスポンスがJSON形式であることのテスト
+    // ========================================
+
+    /// 404エラーがJSON形式で返されることを確認
+    #[tokio::test]
+    async fn test_not_found_error_returns_json() {
+        let (app, _store, _dir) = create_test_app_with_store().await;
+
+        let request = Request::builder()
+            .uri("/events/nonexistent_event_id")
+            .method("DELETE")
+            .header(header::AUTHORIZATION, format!("Bearer {}", TEST_TOKEN))
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // レスポンスボディがJSON形式であることを確認
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error_body: crate::error::ApiErrorBody = serde_json::from_slice(&body)
+            .expect("404エラーのレスポンスボディがJSON形式でない");
+
+        assert_eq!(error_body.error, "not_found");
+        assert!(
+            error_body.message.contains("見つかりません"),
+            "エラーメッセージが適切でない: {}",
+            error_body.message
+        );
+    }
+
+    /// 401エラーがJSON形式で返されることを確認
+    #[tokio::test]
+    async fn test_unauthorized_error_returns_json() {
+        let (app, _store, _dir) = create_test_app_with_store().await;
+
+        let request = Request::builder()
+            .uri("/events")
+            .method("POST")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // レスポンスボディがJSON形式であることを確認
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error_body: crate::error::ApiErrorBody = serde_json::from_slice(&body)
+            .expect("401エラーのレスポンスボディがJSON形式でない");
+
+        assert_eq!(error_body.error, "unauthorized");
+    }
+
+    /// 401エラー（無効なトークン）がJSON形式で返されることを確認
+    #[tokio::test]
+    async fn test_invalid_token_error_returns_json() {
+        let (app, _store, _dir) = create_test_app_with_store().await;
+
+        let request = Request::builder()
+            .uri("/events")
+            .method("POST")
+            .header(header::AUTHORIZATION, "Bearer invalid-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        // レスポンスボディがJSON形式であることを確認
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error_body: crate::error::ApiErrorBody = serde_json::from_slice(&body)
+            .expect("401エラーのレスポンスボディがJSON形式でない");
+
+        assert_eq!(error_body.error, "unauthorized");
+        assert!(
+            error_body.message.contains("無効"),
+            "エラーメッセージが適切でない: {}",
+            error_body.message
+        );
     }
 }

@@ -4,14 +4,15 @@
 //! - Authorizationヘッダーからトークンを抽出
 //! - 環境変数に設定されたトークンと照合
 //! - /healthエンドポイントは認証をバイパス
-//! - 不正なトークン時は401 Unauthorizedを返却
+//! - 不正なトークン時は401 Unauthorized（JSON形式）を返却
 
+use crate::error::ApiError;
 use axum::{
     body::Body,
     extract::State,
-    http::{Request, StatusCode},
+    http::Request,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
 };
 
 /// 認証設定
@@ -46,15 +47,15 @@ impl AuthConfig {
 ///
 /// # Returns
 /// - 認証成功時: 次のハンドラーにリクエストを渡す
-/// - 認証失敗時: 401 Unauthorizedを返す
+/// - 認証失敗時: 401 Unauthorized（JSON形式）を返す
 pub async fn auth_middleware(
     State(config): State<AuthConfig>,
     request: Request<Body>,
     next: Next,
-) -> Result<Response, StatusCode> {
+) -> Response {
     // /healthエンドポイントは認証をバイパス
     if request.uri().path() == "/health" {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
 
     // Authorizationヘッダーを取得
@@ -73,14 +74,24 @@ pub async fn auth_middleware(
                 header.trim()
             }
         }
-        None => return Err(StatusCode::UNAUTHORIZED),
+        None => {
+            tracing::warn!(
+                path = %request.uri().path(),
+                "認証ヘッダーがありません"
+            );
+            return ApiError::unauthorized("Authorizationヘッダーが必要です").into_response();
+        }
     };
 
     // トークンを検証
     if token == config.api_token {
-        Ok(next.run(request).await)
+        next.run(request).await
     } else {
-        Err(StatusCode::UNAUTHORIZED)
+        tracing::warn!(
+            path = %request.uri().path(),
+            "無効なAPIトークン"
+        );
+        ApiError::unauthorized("APIトークンが無効です").into_response()
     }
 }
 
