@@ -65,7 +65,7 @@
   - 書き込み用単一接続とdeadpool-sqlite読み取りプールを構成
   - _Requirements: 1.7, 1.8, 1.9_
 
-- [ ] 2.3 SqliteEventStoreコア機能の実装
+- [x] 2.3 SqliteEventStoreコア機能の実装
   - イベント保存（トランザクションでeventsとevent_tagsを原子的に挿入）
   - すべてのタグを抽出してevent_tagsテーブルに保存
   - イベント削除（CASCADE削除でタグも削除）
