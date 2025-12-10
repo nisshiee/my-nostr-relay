@@ -2163,6 +2163,7 @@ dependencies = [
  "lambda_runtime",
  "nostr",
  "opensearch",
+ "reqwest",
  "serde",
  "serde_dynamo",
  "serde_json",

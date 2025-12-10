@@ -111,7 +111,7 @@
 ## Phase 3: Lambda関数改修
 
 - [ ] 3. Lambda関数の検索基盤接続先変更
-- [ ] 3.1 (P) HttpSqliteEventRepositoryの実装
+- [x] 3.1 (P) HttpSqliteEventRepositoryの実装
   - QueryRepositoryトレイトを実装
   - EC2エンドポイントへのHTTPS通信
   - Authorizationヘッダーにトークンを付与
