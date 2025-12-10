@@ -132,7 +132,7 @@
   - 接続エラー時の適切なエラーハンドリング
   - _Requirements: 5.1, 4.2_
 
-- [ ] 3.4 Indexer Lambdaの改修
+- [x] 3.4 Indexer Lambdaの改修
   - OpenSearchインデックスロジックをIndexerClientに置き換え
   - DynamoDB INSERT/MODIFYイベントでPOSTを送信
   - DynamoDB REMOVEイベントでDELETEを送信
