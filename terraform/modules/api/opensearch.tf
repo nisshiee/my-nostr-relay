@@ -171,6 +171,8 @@ resource "aws_lambda_function" "indexer" {
       # Task 3.5: EC2 SQLite検索API環境変数
       SQLITE_API_ENDPOINT    = var.sqlite_api_endpoint
       SQLITE_API_TOKEN_PARAM = var.sqlite_api_token_param_path
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
     }
   }
 

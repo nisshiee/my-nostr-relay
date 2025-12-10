@@ -174,6 +174,8 @@ cat > /etc/nostr-api/env <<EOF
 API_TOKEN=$API_TOKEN
 DB_PATH=$DB_PATH
 RUST_LOG=info
+# パニック時にバックトレースを出力
+RUST_BACKTRACE=1
 EOF
 
 chown nostr-api:nostr-api /etc/nostr-api/env

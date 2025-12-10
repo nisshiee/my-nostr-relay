@@ -6,6 +6,10 @@
 /// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3, 19.2, 19.5, 19.6
 /// Task 3.3: HttpSqliteEventRepositoryを優先使用（OpenSearchはフォールバック）
 /// Task 3.6: SSM Parameter StoreからAPIトークンを取得
+///
+/// 並行稼働: SEARCH_BACKEND_PRIORITY環境変数で検索優先順位を切り替え可能
+/// - "opensearch" (デフォルト): OpenSearch優先、失敗時SQLiteフォールバック
+/// - "sqlite": SQLite優先、失敗時OpenSearchフォールバック
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::application::DefaultHandler;
 use relay::domain::LimitationConfig;
@@ -177,94 +181,36 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     // 制限値設定を環境変数から読み込み
     let limitation_config = LimitationConfig::from_env();
 
-    // Task 3.3, 3.6: HttpSqliteEventRepositoryを優先使用（SSMからトークン取得）
-    // 優先順位:
-    // 1. SQLITE_API_ENDPOINTが設定されている場合はHttpSqliteEventRepositoryを使用
-    // 2. OPENSEARCH_ENDPOINTが設定されている場合はOpenSearchEventRepositoryを使用
-    // 3. どちらも設定されていない場合はDynamoEventRepositoryを使用
-    let result = match get_http_sqlite_repo().await {
-        Ok(query_repo) => {
-            // HttpSqliteEventRepositoryを取得（静的保持でwarm start時再利用）
-            info!(
-                connection_id = connection_id,
-                endpoint = query_repo.config().endpoint(),
-                "HttpSqliteEventRepositoryを使用してクエリを実行（トークンはSSMから取得）"
-            );
+    // 並行稼働: SEARCH_BACKEND_PRIORITY環境変数で検索優先順位を切り替え
+    // "opensearch" (デフォルト): OpenSearch優先、失敗時SQLiteフォールバック
+    // "sqlite": SQLite優先、失敗時OpenSearchフォールバック
+    let backend_priority = std::env::var("SEARCH_BACKEND_PRIORITY")
+        .unwrap_or_else(|_| "opensearch".to_string());
 
-            // HttpSqliteをクエリ用に使用
-            // 要件 4.2: EC2接続エラー時の適切なエラーハンドリング
-            // ハンドラー内で接続エラーが発生した場合でも、WebSocketレスポンスは返される
-            let default_handler = DefaultHandler::with_query_repo(
+    let result = match backend_priority.as_str() {
+        "sqlite" => {
+            // SQLite優先モード（従来の実装）
+            handle_with_sqlite_priority(
+                connection_id,
+                &event.payload,
                 event_repo,
-                query_repo.clone(),
                 subscription_repo,
                 ws_sender,
                 limitation_config,
-            );
-            default_handler.handle(&event.payload).await
+            )
+            .await
         }
-        Err(err) => {
-            // SQLITE_API設定が不足している場合（環境変数またはSSMエラー）
-            trace!(
-                connection_id = connection_id,
-                error = %err,
-                "SQLITE_API設定なし、OpenSearchにフォールバック"
-            );
-
-            // OpenSearchにフォールバック
-            let opensearch_config = OpenSearchConfig::from_env();
-            match opensearch_config {
-                Ok(os_config) => {
-                    // OpenSearchEventRepositoryを取得（静的保持でwarm start時再利用）
-                    match get_opensearch_repo(&os_config).await {
-                        Ok(query_repo) => {
-                            warn!(
-                                connection_id = connection_id,
-                                endpoint = os_config.endpoint(),
-                                index_name = os_config.index_name(),
-                                "SQLITE_API設定なし、OpenSearchEventRepositoryにフォールバック"
-                            );
-
-                            // OpenSearchをクエリ用に使用
-                            let default_handler = DefaultHandler::with_query_repo(
-                                event_repo,
-                                query_repo.clone(),
-                                subscription_repo,
-                                ws_sender,
-                                limitation_config,
-                            );
-                            default_handler.handle(&event.payload).await
-                        }
-                        Err(err) => {
-                            // OpenSearch初期化失敗時はエラーを返す
-                            error!(
-                                connection_id = connection_id,
-                                error = %err,
-                                "OpenSearchEventRepository初期化失敗"
-                            );
-                            return Ok(serde_json::json!({
-                                "statusCode": 500,
-                                "body": "OpenSearch initialization failed"
-                            }));
-                        }
-                    }
-                }
-                Err(_) => {
-                    // どちらも設定されていない場合はDynamoDBを使用
-                    trace!(
-                        connection_id = connection_id,
-                        "SQLITE_API/OpenSearch設定なし、DynamoEventRepositoryを使用"
-                    );
-
-                    let default_handler = DefaultHandler::with_config(
-                        event_repo,
-                        subscription_repo,
-                        ws_sender,
-                        limitation_config,
-                    );
-                    default_handler.handle(&event.payload).await
-                }
-            }
+        _ => {
+            // OpenSearch優先モード（並行稼働中のデフォルト）
+            handle_with_opensearch_priority(
+                connection_id,
+                &event.payload,
+                event_repo,
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            )
+            .await
         }
     };
 
@@ -295,3 +241,237 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     }
 }
 
+/// SQLite優先モードでリクエストを処理
+///
+/// 優先順位:
+/// 1. SQLite → 2. OpenSearch → 3. DynamoDB
+async fn handle_with_sqlite_priority(
+    connection_id: &str,
+    payload: &serde_json::Value,
+    event_repo: DynamoEventRepository,
+    subscription_repo: DynamoSubscriptionRepository,
+    ws_sender: ApiGatewayWebSocketSender,
+    limitation_config: LimitationConfig,
+) -> Result<(), relay::application::DefaultHandlerError> {
+    // SQLiteを試行
+    match get_http_sqlite_repo().await {
+        Ok(query_repo) => {
+            info!(
+                connection_id = connection_id,
+                backend = "sqlite",
+                endpoint = query_repo.config().endpoint(),
+                "SQLite優先モード: HttpSqliteEventRepositoryを使用"
+            );
+
+            let default_handler = DefaultHandler::with_query_repo(
+                event_repo,
+                query_repo.clone(),
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            );
+            default_handler.handle(payload).await
+        }
+        Err(err) => {
+            trace!(
+                connection_id = connection_id,
+                error = %err,
+                "SQLite設定なし、OpenSearchにフォールバック"
+            );
+
+            // OpenSearchにフォールバック
+            handle_with_opensearch_or_dynamo(
+                connection_id,
+                payload,
+                event_repo,
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            )
+            .await
+        }
+    }
+}
+
+/// OpenSearch優先モードでリクエストを処理（並行稼働中のデフォルト）
+///
+/// 優先順位:
+/// 1. OpenSearch → 2. SQLite → 3. DynamoDB
+async fn handle_with_opensearch_priority(
+    connection_id: &str,
+    payload: &serde_json::Value,
+    event_repo: DynamoEventRepository,
+    subscription_repo: DynamoSubscriptionRepository,
+    ws_sender: ApiGatewayWebSocketSender,
+    limitation_config: LimitationConfig,
+) -> Result<(), relay::application::DefaultHandlerError> {
+    // OpenSearchを試行
+    let opensearch_config = OpenSearchConfig::from_env();
+    match opensearch_config {
+        Ok(os_config) => {
+            match get_opensearch_repo(&os_config).await {
+                Ok(query_repo) => {
+                    info!(
+                        connection_id = connection_id,
+                        backend = "opensearch",
+                        endpoint = os_config.endpoint(),
+                        index_name = os_config.index_name(),
+                        "OpenSearch優先モード: OpenSearchEventRepositoryを使用"
+                    );
+
+                    let default_handler = DefaultHandler::with_query_repo(
+                        event_repo,
+                        query_repo.clone(),
+                        subscription_repo,
+                        ws_sender,
+                        limitation_config,
+                    );
+                    default_handler.handle(payload).await
+                }
+                Err(err) => {
+                    warn!(
+                        connection_id = connection_id,
+                        error = %err,
+                        "OpenSearch初期化失敗、SQLiteにフォールバック"
+                    );
+
+                    // SQLiteにフォールバック
+                    handle_with_sqlite_or_dynamo(
+                        connection_id,
+                        payload,
+                        event_repo,
+                        subscription_repo,
+                        ws_sender,
+                        limitation_config,
+                    )
+                    .await
+                }
+            }
+        }
+        Err(_) => {
+            trace!(
+                connection_id = connection_id,
+                "OpenSearch設定なし、SQLiteにフォールバック"
+            );
+
+            // SQLiteにフォールバック
+            handle_with_sqlite_or_dynamo(
+                connection_id,
+                payload,
+                event_repo,
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            )
+            .await
+        }
+    }
+}
+
+/// SQLiteまたはDynamoDBでリクエストを処理（OpenSearchフォールバック用）
+async fn handle_with_sqlite_or_dynamo(
+    connection_id: &str,
+    payload: &serde_json::Value,
+    event_repo: DynamoEventRepository,
+    subscription_repo: DynamoSubscriptionRepository,
+    ws_sender: ApiGatewayWebSocketSender,
+    limitation_config: LimitationConfig,
+) -> Result<(), relay::application::DefaultHandlerError> {
+    match get_http_sqlite_repo().await {
+        Ok(query_repo) => {
+            info!(
+                connection_id = connection_id,
+                backend = "sqlite",
+                endpoint = query_repo.config().endpoint(),
+                "フォールバック: HttpSqliteEventRepositoryを使用"
+            );
+
+            let default_handler = DefaultHandler::with_query_repo(
+                event_repo,
+                query_repo.clone(),
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            );
+            default_handler.handle(payload).await
+        }
+        Err(_) => {
+            trace!(
+                connection_id = connection_id,
+                "SQLite設定なし、DynamoEventRepositoryを使用"
+            );
+
+            let default_handler = DefaultHandler::with_config(
+                event_repo,
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            );
+            default_handler.handle(payload).await
+        }
+    }
+}
+
+/// OpenSearchまたはDynamoDBでリクエストを処理（SQLiteフォールバック用）
+async fn handle_with_opensearch_or_dynamo(
+    connection_id: &str,
+    payload: &serde_json::Value,
+    event_repo: DynamoEventRepository,
+    subscription_repo: DynamoSubscriptionRepository,
+    ws_sender: ApiGatewayWebSocketSender,
+    limitation_config: LimitationConfig,
+) -> Result<(), relay::application::DefaultHandlerError> {
+    let opensearch_config = OpenSearchConfig::from_env();
+    match opensearch_config {
+        Ok(os_config) => {
+            match get_opensearch_repo(&os_config).await {
+                Ok(query_repo) => {
+                    info!(
+                        connection_id = connection_id,
+                        backend = "opensearch",
+                        endpoint = os_config.endpoint(),
+                        index_name = os_config.index_name(),
+                        "フォールバック: OpenSearchEventRepositoryを使用"
+                    );
+
+                    let default_handler = DefaultHandler::with_query_repo(
+                        event_repo,
+                        query_repo.clone(),
+                        subscription_repo,
+                        ws_sender,
+                        limitation_config,
+                    );
+                    default_handler.handle(payload).await
+                }
+                Err(_) => {
+                    trace!(
+                        connection_id = connection_id,
+                        "OpenSearch初期化失敗、DynamoEventRepositoryを使用"
+                    );
+
+                    let default_handler = DefaultHandler::with_config(
+                        event_repo,
+                        subscription_repo,
+                        ws_sender,
+                        limitation_config,
+                    );
+                    default_handler.handle(payload).await
+                }
+            }
+        }
+        Err(_) => {
+            trace!(
+                connection_id = connection_id,
+                "OpenSearch設定なし、DynamoEventRepositoryを使用"
+            );
+
+            let default_handler = DefaultHandler::with_config(
+                event_repo,
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            );
+            default_handler.handle(payload).await
+        }
+    }
+}

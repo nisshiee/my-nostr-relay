@@ -238,7 +238,9 @@ impl SqliteEventStore {
         let conn = self.write_conn.clone();
 
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().unwrap();
+            let conn = conn
+                .lock()
+                .expect("イベント保存時の書き込み接続ロック取得に失敗（Mutex poisoned）");
 
             // イベントが既に存在するか確認
             let exists: bool = conn
@@ -310,7 +312,9 @@ impl SqliteEventStore {
         let conn = self.write_conn.clone();
 
         tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().unwrap();
+            let conn = conn
+                .lock()
+                .expect("イベント削除時の書き込み接続ロック取得に失敗（Mutex poisoned）");
 
             let rows_affected = conn.execute("DELETE FROM events WHERE id = ?1", [&event_id])?;
 

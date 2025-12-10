@@ -42,3 +42,7 @@ thiserror = "2"
 tower = "0.5"
 # テスト用一時ディレクトリ
 tempfile = "3"
+
+# リリースビルドでもbacktraceを有効にする
+[profile.release]
+debug = 1  # シンボル情報を含める（backtrace用）

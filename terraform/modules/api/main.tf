@@ -39,6 +39,12 @@ variable "lambda_ssm_policy_arn" {
   type        = string
 }
 
+variable "search_backend_priority" {
+  description = "検索バックエンドの優先順位 (opensearch or sqlite)"
+  type        = string
+  default     = "opensearch"
+}
+
 # ------------------------------------------------------------------------------
 # IAM Role
 # ------------------------------------------------------------------------------
@@ -95,6 +101,8 @@ resource "aws_lambda_function" "connect" {
       EVENTS_TABLE        = aws_dynamodb_table.events.name
       CONNECTIONS_TABLE   = aws_dynamodb_table.connections.name
       SUBSCRIPTIONS_TABLE = aws_dynamodb_table.subscriptions.name
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
     }
   }
 }
@@ -120,6 +128,8 @@ resource "aws_lambda_function" "disconnect" {
       EVENTS_TABLE        = aws_dynamodb_table.events.name
       CONNECTIONS_TABLE   = aws_dynamodb_table.connections.name
       SUBSCRIPTIONS_TABLE = aws_dynamodb_table.subscriptions.name
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
     }
   }
 }
@@ -152,6 +162,10 @@ resource "aws_lambda_function" "default" {
       # Task 3.5: EC2 SQLite検索API環境変数
       SQLITE_API_ENDPOINT    = var.sqlite_api_endpoint
       SQLITE_API_TOKEN_PARAM = var.sqlite_api_token_param_path
+      # 並行稼働: 検索バックエンドの優先順位 ("opensearch" or "sqlite")
+      SEARCH_BACKEND_PRIORITY = var.search_backend_priority
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
     }
   }
 }
