@@ -86,7 +86,7 @@
   - 不正なトークン時は401 Unauthorizedを返却
   - _Requirements: 3.1, 3.2_
 
-- [ ] 2.6 APIエンドポイントの組み立て
+- [x] 2.6 APIエンドポイントの組み立て
   - POST /events（イベント保存）ルートを作成
   - DELETE /events/{id}（イベント削除）ルートを作成
   - POST /events/search（検索）ルートを作成

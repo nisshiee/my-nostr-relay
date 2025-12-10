@@ -92,7 +92,7 @@ pub struct NostrEvent {
 ///
 /// Nostrプロトコルのフィルター形式に準拠した検索条件。
 /// REQメッセージのフィルターをHTTP API用に変換したもの。
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SearchFilter {
     /// イベントIDリスト（完全一致検索）
     #[serde(default)]
