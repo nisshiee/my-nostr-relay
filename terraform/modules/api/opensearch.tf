@@ -165,9 +165,12 @@ resource "aws_lambda_function" "indexer" {
 
   environment {
     variables = {
-      # Task 7.4: indexer LambdaにOpenSearch環境変数を設定
+      # Task 7.4: indexer LambdaにOpenSearch環境変数を設定（Phase 4で削除予定）
       OPENSEARCH_ENDPOINT = "https://${aws_opensearch_domain.nostr_relay.endpoint}"
       OPENSEARCH_INDEX    = "nostr_events"
+      # Task 3.5: EC2 SQLite検索API環境変数
+      SQLITE_API_ENDPOINT    = var.sqlite_api_endpoint
+      SQLITE_API_TOKEN_PARAM = var.sqlite_api_token_param_path
     }
   }
 

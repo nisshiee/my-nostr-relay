@@ -51,7 +51,7 @@
 
 ## Phase 2: HTTP APIサーバー実装
 
-- [ ] 2. EC2上で動作するHTTP APIサーバーの実装
+- [x] 2. EC2上で動作するHTTP APIサーバーの実装
 - [x] 2.1 Rustプロジェクトのセットアップ
   - 新規バイナリクレートを作成（services/sqlite-api等）
   - axum、rusqlite、deadpool-sqlite、tokio、tracing等の依存関係を追加
@@ -110,7 +110,7 @@
 
 ## Phase 3: Lambda関数改修
 
-- [ ] 3. Lambda関数の検索基盤接続先変更
+- [x] 3. Lambda関数の検索基盤接続先変更
 - [x] 3.1 (P) HttpSqliteEventRepositoryの実装
   - QueryRepositoryトレイトを実装
   - EC2エンドポイントへのHTTPS通信
@@ -138,11 +138,23 @@
   - DynamoDB REMOVEイベントでDELETEを送信
   - _Requirements: 5.3, 5.4_
 
-- [ ] 3.5 Lambda環境変数とIAM設定（Terraform）
+- [x] 3.5 Lambda環境変数とIAM設定（Terraform）
   - EC2エンドポイントURLの環境変数を追加
   - Parameter Storeアクセス用IAMポリシーを追加
   - 既存のOpenSearch関連環境変数は一旦維持（Phase 4で削除）
   - _Requirements: 5.5, 3.5_
+
+- [ ] 3.6 Rust側の環境変数名統一とSSMトークン取得
+  - 環境変数名を`HTTP_SQLITE_*`から`SQLITE_API_*`に変更
+    - `HTTP_SQLITE_ENDPOINT` → `SQLITE_API_ENDPOINT`
+    - `HTTP_SQLITE_API_TOKEN` → 廃止（SSMから取得）
+  - aws-sdk-ssmを依存関係に追加
+  - Lambda初期化時にParameter Storeからトークンを取得するロジックを実装
+    - `SQLITE_API_TOKEN_PARAM`環境変数からパスを取得
+    - SSMクライアントでSecureStringを復号化して取得
+  - HttpSqliteConfig、IndexerClientの設定読み込みを修正
+  - 関連するユニットテストを更新
+  - _Requirements: 5.5_
 
 ---
 
@@ -220,7 +232,7 @@
 | 2.1-2.11 | 2.1, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8 |
 | 3.1-3.5 | 1.1, 1.4, 1.5, 2.5, 3.1, 3.2, 3.5 |
 | 4.1-4.2 | 1.3, 3.3 |
-| 5.1-5.6 | 3.1, 3.2, 3.3, 3.4, 3.5, 5.2 |
+| 5.1-5.6 | 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 5.2 |
 | 6.1-6.5 | 4.1, 4.2, 5.3 |
 | 7.1-7.4 | 6.1, 6.2, 6.3 |
 | 8.1-8.4 | 1.2, 1.3 |

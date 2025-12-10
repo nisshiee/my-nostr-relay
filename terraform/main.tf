@@ -105,10 +105,17 @@ module "api" {
   relay_terms_of_service = "https://nostr.nisshiee.org/relay/terms"
   relay_posting_policy   = "https://nostr.nisshiee.org/relay/posting-policy"
 
+  # Task 3.5: EC2 SQLite検索API設定
+  sqlite_api_endpoint         = module.ec2_search.search_api_url
+  sqlite_api_token_param_path = module.ec2_search.parameter_store_path
+  lambda_ssm_policy_arn       = module.ec2_search.lambda_ssm_policy_arn
+
   providers = {
     aws           = aws
     aws.us_east_1 = aws.us_east_1
   }
+
+  depends_on = [module.ec2_search]
 }
 
 module "web" {
