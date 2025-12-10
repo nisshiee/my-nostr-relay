@@ -190,6 +190,14 @@ impl HttpSqliteEventRepository {
         Self { client, config }
     }
 
+    /// 設定への参照を取得
+    ///
+    /// # 戻り値
+    /// * `&HttpSqliteConfig` - 設定への参照
+    pub fn config(&self) -> &HttpSqliteConfig {
+        &self.config
+    }
+
     /// limitを適用（default_limit、max_limit制約）
     ///
     /// # 引数

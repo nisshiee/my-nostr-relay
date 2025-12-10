@@ -144,7 +144,7 @@
   - 既存のOpenSearch関連環境変数は一旦維持（Phase 4で削除）
   - _Requirements: 5.5, 3.5_
 
-- [ ] 3.6 Rust側の環境変数名統一とSSMトークン取得
+- [x] 3.6 Rust側の環境変数名統一とSSMトークン取得
   - 環境変数名を`HTTP_SQLITE_*`から`SQLITE_API_*`に変更
     - `HTTP_SQLITE_ENDPOINT` → `SQLITE_API_ENDPOINT`
     - `HTTP_SQLITE_API_TOKEN` → 廃止（SSMから取得）

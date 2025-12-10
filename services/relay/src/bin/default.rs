@@ -5,6 +5,7 @@
 ///
 /// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3, 19.2, 19.5, 19.6
 /// Task 3.3: HttpSqliteEventRepositoryを優先使用（OpenSearchはフォールバック）
+/// Task 3.6: SSM Parameter StoreからAPIトークンを取得
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::application::DefaultHandler;
 use relay::domain::LimitationConfig;
@@ -14,7 +15,6 @@ use relay::infrastructure::{
     OpenSearchConfig, OpenSearchEventRepository,
 };
 use serde_json::Value;
-use std::sync::OnceLock;
 use tokio::sync::OnceCell;
 use tracing::{error, info, trace, warn};
 
@@ -23,9 +23,8 @@ use tracing::{error, info, trace, warn};
 /// Lambda warm start時にコネクションを再利用するため、
 /// 一度初期化したリポジトリを静的に保持する。
 /// Task 3.3: EC2 + SQLite検索基盤への接続
-///
-/// Note: HttpSqliteEventRepository::newは同期関数のため、std::sync::OnceLockを使用
-static HTTP_SQLITE_REPO: OnceLock<HttpSqliteEventRepository> = OnceLock::new();
+/// Task 3.6: 初期化時にSSMからトークンを取得するため非同期に変更
+static HTTP_SQLITE_REPO: OnceCell<HttpSqliteEventRepository> = OnceCell::const_new();
 
 /// OpenSearchEventRepositoryの静的インスタンス（フォールバック用）
 ///
@@ -35,15 +34,19 @@ static OPENSEARCH_REPO: OnceCell<OpenSearchEventRepository> = OnceCell::const_ne
 
 /// HttpSqliteEventRepositoryを取得（初期化されていなければ初期化）
 ///
-/// # 引数
-/// * `config` - HTTP SQLite接続設定
-///
 /// # 戻り値
-/// * 静的参照への成功時のリポジトリ
+/// * `Ok(&'static HttpSqliteEventRepository)` - 静的参照へのリポジトリ
+/// * `Err(HttpSqliteConfigError)` - 設定読み込みエラー
 ///
 /// Task 3.3: EC2 + SQLite検索基盤への接続
-fn get_http_sqlite_repo(config: HttpSqliteConfig) -> &'static HttpSqliteEventRepository {
-    HTTP_SQLITE_REPO.get_or_init(|| HttpSqliteEventRepository::new(config))
+/// Task 3.6: SSMからAPIトークンを取得（非同期初期化）
+async fn get_http_sqlite_repo() -> Result<&'static HttpSqliteEventRepository, relay::infrastructure::HttpSqliteConfigError> {
+    HTTP_SQLITE_REPO
+        .get_or_try_init(|| async {
+            let config = HttpSqliteConfig::from_env_with_ssm().await?;
+            Ok(HttpSqliteEventRepository::new(config))
+        })
+        .await
 }
 
 /// OpenSearchEventRepositoryを取得（初期化されていなければ初期化）
@@ -174,21 +177,18 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     // 制限値設定を環境変数から読み込み
     let limitation_config = LimitationConfig::from_env();
 
-    // Task 3.3: HttpSqliteEventRepositoryを優先使用
+    // Task 3.3, 3.6: HttpSqliteEventRepositoryを優先使用（SSMからトークン取得）
     // 優先順位:
-    // 1. HTTP_SQLITE_ENDPOINTが設定されている場合はHttpSqliteEventRepositoryを使用
+    // 1. SQLITE_API_ENDPOINTが設定されている場合はHttpSqliteEventRepositoryを使用
     // 2. OPENSEARCH_ENDPOINTが設定されている場合はOpenSearchEventRepositoryを使用
     // 3. どちらも設定されていない場合はDynamoEventRepositoryを使用
-    let http_sqlite_config = HttpSqliteConfig::from_env();
-    let result = match http_sqlite_config {
-        Ok(sqlite_config) => {
+    let result = match get_http_sqlite_repo().await {
+        Ok(query_repo) => {
             // HttpSqliteEventRepositoryを取得（静的保持でwarm start時再利用）
-            let query_repo = get_http_sqlite_repo(sqlite_config.clone());
-
             info!(
                 connection_id = connection_id,
-                endpoint = sqlite_config.endpoint(),
-                "HttpSqliteEventRepositoryを使用してクエリを実行"
+                endpoint = query_repo.config().endpoint(),
+                "HttpSqliteEventRepositoryを使用してクエリを実行（トークンはSSMから取得）"
             );
 
             // HttpSqliteをクエリ用に使用
@@ -203,8 +203,15 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
             );
             default_handler.handle(&event.payload).await
         }
-        Err(_) => {
-            // HTTP_SQLITE_ENDPOINTが設定されていない場合はOpenSearchにフォールバック
+        Err(err) => {
+            // SQLITE_API設定が不足している場合（環境変数またはSSMエラー）
+            trace!(
+                connection_id = connection_id,
+                error = %err,
+                "SQLITE_API設定なし、OpenSearchにフォールバック"
+            );
+
+            // OpenSearchにフォールバック
             let opensearch_config = OpenSearchConfig::from_env();
             match opensearch_config {
                 Ok(os_config) => {
@@ -215,7 +222,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
                                 connection_id = connection_id,
                                 endpoint = os_config.endpoint(),
                                 index_name = os_config.index_name(),
-                                "HTTP_SQLITE設定なし、OpenSearchEventRepositoryにフォールバック"
+                                "SQLITE_API設定なし、OpenSearchEventRepositoryにフォールバック"
                             );
 
                             // OpenSearchをクエリ用に使用
@@ -246,7 +253,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
                     // どちらも設定されていない場合はDynamoDBを使用
                     trace!(
                         connection_id = connection_id,
-                        "HTTP_SQLITE/OpenSearch設定なし、DynamoEventRepositoryを使用"
+                        "SQLITE_API/OpenSearch設定なし、DynamoEventRepositoryを使用"
                     );
 
                     let default_handler = DefaultHandler::with_config(

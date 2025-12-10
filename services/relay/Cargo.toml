@@ -22,6 +22,9 @@ aws-sdk-apigatewaymanagement = "1"
 # AWS SDK - 認証と設定
 aws-config = "1"
 
+# AWS SDK - SSM Parameter Store（APIトークン取得用）
+aws-sdk-ssm = "1"
+
 # 非同期トレイトサポート
 async-trait = "0.1"
 
