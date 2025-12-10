@@ -126,7 +126,7 @@
   - エラー時のログ記録
   - _Requirements: 5.3, 5.4, 5.5, 5.6_
 
-- [ ] 3.3 Default Lambdaの改修
+- [x] 3.3 Default Lambdaの改修
   - OpenSearchEventRepositoryをHttpSqliteEventRepositoryに置き換え
   - EC2エンドポイントURLを環境変数から取得
   - 接続エラー時の適切なエラーハンドリング
