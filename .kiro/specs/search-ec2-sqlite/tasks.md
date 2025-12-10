@@ -119,7 +119,7 @@
   - レスポンスをNostr Event形式にデシリアライズ
   - _Requirements: 5.1, 5.2, 5.5_
 
-- [ ] 3.2 (P) IndexerClientの実装
+- [x] 3.2 (P) IndexerClientの実装
   - イベントインデックス（POST /events）メソッドを実装
   - イベント削除（DELETE /events/{id}）メソッドを実装
   - reqwest_retryで指数バックオフ再試行（最大3回）

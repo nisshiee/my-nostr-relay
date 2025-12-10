@@ -20,7 +20,7 @@ pub use event_repository::{
 };
 pub use http_sqlite::{
     HttpSqliteConfig, HttpSqliteConfigError, HttpSqliteEventRepository,
-    HttpSqliteEventRepositoryError,
+    HttpSqliteEventRepositoryError, HttpSqliteIndexerError, IndexerClient,
 };
 pub use logging::init_logging;
 pub use opensearch::{
