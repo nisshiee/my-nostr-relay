@@ -7,6 +7,7 @@
 // 後続タスク（2.3-2.6）で使用予定のため、現時点でのdead_code警告を抑制
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use deadpool_sqlite::{Config, Pool, Runtime};
@@ -85,6 +86,41 @@ pub struct NostrEvent {
     pub tags: Vec<Vec<String>>,
     /// 署名（64文字hex）
     pub sig: String,
+}
+
+/// 検索フィルター
+///
+/// Nostrプロトコルのフィルター形式に準拠した検索条件。
+/// REQメッセージのフィルターをHTTP API用に変換したもの。
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct SearchFilter {
+    /// イベントIDリスト（完全一致検索）
+    #[serde(default)]
+    pub ids: Option<Vec<String>>,
+
+    /// 作成者公開鍵リスト（完全一致検索）
+    #[serde(default)]
+    pub authors: Option<Vec<String>>,
+
+    /// イベント種別リスト
+    #[serde(default)]
+    pub kinds: Option<Vec<u32>>,
+
+    /// 開始時刻（この時刻以降のイベント）
+    #[serde(default)]
+    pub since: Option<u64>,
+
+    /// 終了時刻（この時刻以前のイベント）
+    #[serde(default)]
+    pub until: Option<u64>,
+
+    /// 取得上限数（デフォルト: 100、最大: 5000）
+    #[serde(default)]
+    pub limit: Option<u32>,
+
+    /// タグフィルター（"#e", "#p", "#d", "#a", "#t" 等）
+    #[serde(flatten)]
+    pub tags: HashMap<String, Vec<String>>,
 }
 
 /// SQLiteイベントストア
@@ -282,6 +318,185 @@ impl SqliteEventStore {
         })
         .await
         .map_err(|e| StoreError::Database(format!("タスク実行エラー: {}", e)))?
+    }
+
+    /// フィルター条件でイベントを検索
+    ///
+    /// 読み取りプールから接続を取得し、並行実行可能。
+    /// フィルター条件をSQL WHERE句に動的に変換して検索を実行する。
+    ///
+    /// # Arguments
+    /// * `filter` - 検索フィルター条件
+    ///
+    /// # Returns
+    /// * `Ok(Vec<NostrEvent>)` - マッチしたイベントのリスト（created_at降順）
+    /// * `Err(StoreError)` - エラー
+    pub async fn search_events(&self, filter: &SearchFilter) -> Result<Vec<NostrEvent>, StoreError> {
+        let filter = filter.clone();
+        let conn = self.read_pool.get().await?;
+
+        conn.interact(move |conn| {
+            Self::execute_search(conn, &filter)
+        })
+        .await?
+    }
+
+    /// 検索クエリを実行（内部用）
+    ///
+    /// フィルター条件をSQLに変換し、クエリを実行する。
+    fn execute_search(
+        conn: &Connection,
+        filter: &SearchFilter,
+    ) -> Result<Vec<NostrEvent>, StoreError> {
+        // limitのデフォルト値と上限を適用
+        let limit = filter.limit.unwrap_or(100).min(5000);
+
+        // タグフィルターがあるかチェック
+        let tag_filters: Vec<(&String, &Vec<String>)> = filter
+            .tags
+            .iter()
+            .filter(|(k, v)| k.starts_with('#') && !v.is_empty())
+            .collect();
+
+        // SQL WHERE句とパラメータを構築
+        let (where_clause, params) = Self::build_where_clause(filter, &tag_filters);
+
+        // タグフィルターがある場合はJOINを使用
+        let sql = if tag_filters.is_empty() {
+            format!(
+                "SELECT event_json FROM events {} ORDER BY created_at DESC LIMIT {}",
+                where_clause, limit
+            )
+        } else {
+            // タグフィルターの数だけINNER JOINを追加
+            let mut joins = String::new();
+            for (i, _) in tag_filters.iter().enumerate() {
+                joins.push_str(&format!(
+                    " INNER JOIN event_tags AS t{} ON events.id = t{}.event_id",
+                    i, i
+                ));
+            }
+            format!(
+                "SELECT DISTINCT event_json FROM events{} {} ORDER BY created_at DESC LIMIT {}",
+                joins, where_clause, limit
+            )
+        };
+
+        // クエリを実行
+        let mut stmt = conn.prepare(&sql)?;
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+
+        let events: Vec<NostrEvent> = stmt
+            .query_map(params_refs.as_slice(), |row| {
+                let json: String = row.get(0)?;
+                Ok(json)
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|json| serde_json::from_str(&json).ok())
+            .collect();
+
+        Ok(events)
+    }
+
+    /// WHERE句とパラメータを構築（内部用）
+    fn build_where_clause(
+        filter: &SearchFilter,
+        tag_filters: &[(&String, &Vec<String>)],
+    ) -> (String, Vec<String>) {
+        let mut conditions: Vec<String> = Vec::new();
+        let mut params: Vec<String> = Vec::new();
+        let mut param_idx = 1;
+
+        // ids フィルター
+        if let Some(ids) = &filter.ids
+            && !ids.is_empty()
+        {
+            let placeholders: Vec<String> = ids
+                .iter()
+                .map(|_| {
+                    let p = format!("?{}", param_idx);
+                    param_idx += 1;
+                    p
+                })
+                .collect();
+            conditions.push(format!("id IN ({})", placeholders.join(", ")));
+            params.extend(ids.clone());
+        }
+
+        // authors フィルター
+        if let Some(authors) = &filter.authors
+            && !authors.is_empty()
+        {
+            let placeholders: Vec<String> = authors
+                .iter()
+                .map(|_| {
+                    let p = format!("?{}", param_idx);
+                    param_idx += 1;
+                    p
+                })
+                .collect();
+            conditions.push(format!("pubkey IN ({})", placeholders.join(", ")));
+            params.extend(authors.clone());
+        }
+
+        // kinds フィルター
+        if let Some(kinds) = &filter.kinds
+            && !kinds.is_empty()
+        {
+            let placeholders: Vec<String> = kinds
+                .iter()
+                .map(|_| {
+                    let p = format!("?{}", param_idx);
+                    param_idx += 1;
+                    p
+                })
+                .collect();
+            conditions.push(format!("kind IN ({})", placeholders.join(", ")));
+            params.extend(kinds.iter().map(|k| k.to_string()));
+        }
+
+        // since フィルター
+        if let Some(since) = filter.since {
+            conditions.push(format!("created_at >= ?{}", param_idx));
+            param_idx += 1;
+            params.push(since.to_string());
+        }
+
+        // until フィルター
+        if let Some(until) = filter.until {
+            conditions.push(format!("created_at <= ?{}", param_idx));
+            param_idx += 1;
+            params.push(until.to_string());
+        }
+
+        // タグフィルター
+        for (i, (tag_key, tag_values)) in tag_filters.iter().enumerate() {
+            // "#e" -> "e" のように先頭の#を除去
+            let tag_name = &tag_key[1..];
+            conditions.push(format!("t{}.tag_name = ?{}", i, param_idx));
+            param_idx += 1;
+            params.push(tag_name.to_string());
+
+            let placeholders: Vec<String> = tag_values
+                .iter()
+                .map(|_| {
+                    let p = format!("?{}", param_idx);
+                    param_idx += 1;
+                    p
+                })
+                .collect();
+            conditions.push(format!("t{}.tag_value IN ({})", i, placeholders.join(", ")));
+            params.extend((*tag_values).clone());
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        (where_clause, params)
     }
 }
 
@@ -954,5 +1169,736 @@ mod tests {
 
         let result2 = store.delete_event("event_id_del_004").await;
         assert!(!result2.unwrap(), "2回目の削除がtrueを返した");
+    }
+
+    // ========================================
+    // search_eventsのテスト（Task 2.4）
+    // ========================================
+
+    /// テスト用のNostrEventを作成するヘルパー関数（created_at指定可能）
+    fn create_test_event_with_time(
+        id: &str,
+        pubkey: &str,
+        kind: u32,
+        created_at: u64,
+        tags: Vec<Vec<String>>,
+    ) -> NostrEvent {
+        NostrEvent {
+            id: id.to_string(),
+            pubkey: pubkey.to_string(),
+            kind,
+            created_at,
+            content: format!("コンテンツ {}", id),
+            tags,
+            sig: "sig_placeholder".to_string(),
+        }
+    }
+
+    /// 空のフィルターで全イベントが取得できることを確認
+    #[tokio::test]
+    async fn test_search_events_empty_filter_returns_all() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        // 3つのイベントを保存
+        let event1 = create_test_event("search_001", "pubkey_a", 1, vec![]);
+        let event2 = create_test_event("search_002", "pubkey_b", 1, vec![]);
+        let event3 = create_test_event("search_003", "pubkey_c", 1, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let filter = SearchFilter::default();
+        let result = store.search_events(&filter).await;
+
+        assert!(result.is_ok(), "検索に失敗: {:?}", result.err());
+        let events = result.unwrap();
+        assert_eq!(events.len(), 3, "3件のイベントが取得されるべき");
+    }
+
+    /// idsフィルターで指定したIDのイベントのみ取得できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_ids() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event("search_id_001", "pubkey_a", 1, vec![]);
+        let event2 = create_test_event("search_id_002", "pubkey_b", 1, vec![]);
+        let event3 = create_test_event("search_id_003", "pubkey_c", 1, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let filter = SearchFilter {
+            ids: Some(vec!["search_id_001".to_string(), "search_id_003".to_string()]),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        let ids: Vec<&str> = result.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"search_id_001"));
+        assert!(ids.contains(&"search_id_003"));
+        assert!(!ids.contains(&"search_id_002"));
+    }
+
+    /// authorsフィルターで指定した作者のイベントのみ取得できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_authors() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event("search_auth_001", "author_alice", 1, vec![]);
+        let event2 = create_test_event("search_auth_002", "author_bob", 1, vec![]);
+        let event3 = create_test_event("search_auth_003", "author_alice", 1, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let filter = SearchFilter {
+            authors: Some(vec!["author_alice".to_string()]),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        for event in &result {
+            assert_eq!(event.pubkey, "author_alice");
+        }
+    }
+
+    /// kindsフィルターで指定した種別のイベントのみ取得できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_kinds() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event("search_kind_001", "pubkey_a", 1, vec![]);
+        let event2 = create_test_event("search_kind_002", "pubkey_a", 7, vec![]);
+        let event3 = create_test_event("search_kind_003", "pubkey_a", 1, vec![]);
+        let event4 = create_test_event("search_kind_004", "pubkey_a", 30023, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+        store.save_event(&event4).await.unwrap();
+
+        let filter = SearchFilter {
+            kinds: Some(vec![1, 7]),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 3);
+        for event in &result {
+            assert!(event.kind == 1 || event.kind == 7);
+        }
+    }
+
+    /// sinceフィルターで指定時刻以降のイベントのみ取得できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_since() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event_with_time("search_since_001", "pubkey_a", 1, 1000, vec![]);
+        let event2 = create_test_event_with_time("search_since_002", "pubkey_a", 1, 2000, vec![]);
+        let event3 = create_test_event_with_time("search_since_003", "pubkey_a", 1, 3000, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let filter = SearchFilter {
+            since: Some(2000),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        for event in &result {
+            assert!(event.created_at >= 2000);
+        }
+    }
+
+    /// untilフィルターで指定時刻以前のイベントのみ取得できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_until() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event_with_time("search_until_001", "pubkey_a", 1, 1000, vec![]);
+        let event2 = create_test_event_with_time("search_until_002", "pubkey_a", 1, 2000, vec![]);
+        let event3 = create_test_event_with_time("search_until_003", "pubkey_a", 1, 3000, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let filter = SearchFilter {
+            until: Some(2000),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        for event in &result {
+            assert!(event.created_at <= 2000);
+        }
+    }
+
+    /// sinceとuntilの組み合わせで期間内のイベントのみ取得できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_time_range() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event_with_time("search_range_001", "pubkey_a", 1, 1000, vec![]);
+        let event2 = create_test_event_with_time("search_range_002", "pubkey_a", 1, 2000, vec![]);
+        let event3 = create_test_event_with_time("search_range_003", "pubkey_a", 1, 3000, vec![]);
+        let event4 = create_test_event_with_time("search_range_004", "pubkey_a", 1, 4000, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+        store.save_event(&event4).await.unwrap();
+
+        let filter = SearchFilter {
+            since: Some(2000),
+            until: Some(3000),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        let times: Vec<u64> = result.iter().map(|e| e.created_at).collect();
+        assert!(times.contains(&2000));
+        assert!(times.contains(&3000));
+    }
+
+    /// limitフィルターで取得件数を制限できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_limit() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        // 5つのイベントを保存
+        for i in 1..=5 {
+            let event = create_test_event_with_time(
+                &format!("search_limit_{:03}", i),
+                "pubkey_a",
+                1,
+                i as u64 * 1000,
+                vec![],
+            );
+            store.save_event(&event).await.unwrap();
+        }
+
+        let filter = SearchFilter {
+            limit: Some(3),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 3);
+    }
+
+    /// limitが指定されない場合はデフォルト100件であることを確認
+    #[tokio::test]
+    async fn test_search_events_default_limit() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        // デフォルトlimit(100)以内の件数をテスト
+        for i in 1..=50 {
+            let event = create_test_event(
+                &format!("search_deflimit_{:03}", i),
+                "pubkey_a",
+                1,
+                vec![],
+            );
+            store.save_event(&event).await.unwrap();
+        }
+
+        let filter = SearchFilter::default();
+        let result = store.search_events(&filter).await.unwrap();
+
+        // 50件保存したので50件取得されるべき（limit 100以下）
+        assert_eq!(result.len(), 50);
+    }
+
+    /// limitの最大値が5000であることを確認
+    #[tokio::test]
+    async fn test_search_events_max_limit() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        // 10件のイベントを保存
+        for i in 1..=10 {
+            let event = create_test_event(
+                &format!("search_maxlimit_{:03}", i),
+                "pubkey_a",
+                1,
+                vec![],
+            );
+            store.save_event(&event).await.unwrap();
+        }
+
+        // 5000を超えるlimitを指定しても5000に制限される
+        let filter = SearchFilter {
+            limit: Some(10000),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        // 10件しか保存していないので10件取得される
+        assert_eq!(result.len(), 10);
+    }
+
+    /// 結果がcreated_at降順でソートされることを確認
+    #[tokio::test]
+    async fn test_search_events_ordered_by_created_at_desc() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event_with_time("search_order_001", "pubkey_a", 1, 1000, vec![]);
+        let event2 = create_test_event_with_time("search_order_002", "pubkey_a", 1, 3000, vec![]);
+        let event3 = create_test_event_with_time("search_order_003", "pubkey_a", 1, 2000, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let filter = SearchFilter::default();
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].created_at, 3000); // 最新
+        assert_eq!(result[1].created_at, 2000);
+        assert_eq!(result[2].created_at, 1000); // 最古
+    }
+
+    /// #eタグフィルターでイベント参照をフィルタリングできることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_e_tag() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_etag_001",
+            "pubkey_a",
+            1,
+            vec![vec!["e".to_string(), "referenced_event_x".to_string()]],
+        );
+        let event2 = create_test_event(
+            "search_etag_002",
+            "pubkey_a",
+            1,
+            vec![vec!["e".to_string(), "referenced_event_y".to_string()]],
+        );
+        let event3 = create_test_event("search_etag_003", "pubkey_a", 1, vec![]);
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert(
+            "#e".to_string(),
+            vec!["referenced_event_x".to_string()],
+        );
+        let filter = SearchFilter {
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "search_etag_001");
+    }
+
+    /// #pタグフィルターで公開鍵参照をフィルタリングできることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_p_tag() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_ptag_001",
+            "pubkey_a",
+            1,
+            vec![vec!["p".to_string(), "mentioned_pubkey_x".to_string()]],
+        );
+        let event2 = create_test_event(
+            "search_ptag_002",
+            "pubkey_a",
+            1,
+            vec![vec!["p".to_string(), "mentioned_pubkey_y".to_string()]],
+        );
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert("#p".to_string(), vec!["mentioned_pubkey_y".to_string()]);
+        let filter = SearchFilter {
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "search_ptag_002");
+    }
+
+    /// #dタグフィルターでAddressable識別子をフィルタリングできることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_d_tag() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_dtag_001",
+            "pubkey_a",
+            30023,
+            vec![vec!["d".to_string(), "article-slug-1".to_string()]],
+        );
+        let event2 = create_test_event(
+            "search_dtag_002",
+            "pubkey_a",
+            30023,
+            vec![vec!["d".to_string(), "article-slug-2".to_string()]],
+        );
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert("#d".to_string(), vec!["article-slug-1".to_string()]);
+        let filter = SearchFilter {
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "search_dtag_001");
+    }
+
+    /// #aタグフィルターでAddressableイベント参照をフィルタリングできることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_a_tag() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_atag_001",
+            "pubkey_a",
+            1,
+            vec![vec!["a".to_string(), "30023:pubkey:slug".to_string()]],
+        );
+        let event2 = create_test_event(
+            "search_atag_002",
+            "pubkey_a",
+            1,
+            vec![vec!["a".to_string(), "30023:other:other".to_string()]],
+        );
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert("#a".to_string(), vec!["30023:pubkey:slug".to_string()]);
+        let filter = SearchFilter {
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "search_atag_001");
+    }
+
+    /// #tタグフィルターでハッシュタグをフィルタリングできることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_t_tag() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_ttag_001",
+            "pubkey_a",
+            1,
+            vec![vec!["t".to_string(), "nostr".to_string()]],
+        );
+        let event2 = create_test_event(
+            "search_ttag_002",
+            "pubkey_a",
+            1,
+            vec![vec!["t".to_string(), "bitcoin".to_string()]],
+        );
+        let event3 = create_test_event(
+            "search_ttag_003",
+            "pubkey_a",
+            1,
+            vec![
+                vec!["t".to_string(), "nostr".to_string()],
+                vec!["t".to_string(), "bitcoin".to_string()],
+            ],
+        );
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert("#t".to_string(), vec!["nostr".to_string()]);
+        let filter = SearchFilter {
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        let ids: Vec<&str> = result.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"search_ttag_001"));
+        assert!(ids.contains(&"search_ttag_003"));
+    }
+
+    /// 複数のタグ値でOR検索できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_multiple_tag_values() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_multitag_001",
+            "pubkey_a",
+            1,
+            vec![vec!["t".to_string(), "rust".to_string()]],
+        );
+        let event2 = create_test_event(
+            "search_multitag_002",
+            "pubkey_a",
+            1,
+            vec![vec!["t".to_string(), "python".to_string()]],
+        );
+        let event3 = create_test_event(
+            "search_multitag_003",
+            "pubkey_a",
+            1,
+            vec![vec!["t".to_string(), "javascript".to_string()]],
+        );
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert(
+            "#t".to_string(),
+            vec!["rust".to_string(), "python".to_string()],
+        );
+        let filter = SearchFilter {
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 2);
+        let ids: Vec<&str> = result.iter().map(|e| e.id.as_str()).collect();
+        assert!(ids.contains(&"search_multitag_001"));
+        assert!(ids.contains(&"search_multitag_002"));
+        assert!(!ids.contains(&"search_multitag_003"));
+    }
+
+    /// 複数種類のタグでAND検索できることを確認
+    #[tokio::test]
+    async fn test_search_events_filter_by_multiple_tag_types() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_multitype_001",
+            "pubkey_a",
+            1,
+            vec![
+                vec!["e".to_string(), "event_ref".to_string()],
+                vec!["t".to_string(), "nostr".to_string()],
+            ],
+        );
+        let event2 = create_test_event(
+            "search_multitype_002",
+            "pubkey_a",
+            1,
+            vec![vec!["e".to_string(), "event_ref".to_string()]],
+        );
+        let event3 = create_test_event(
+            "search_multitype_003",
+            "pubkey_a",
+            1,
+            vec![vec!["t".to_string(), "nostr".to_string()]],
+        );
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert("#e".to_string(), vec!["event_ref".to_string()]);
+        tags.insert("#t".to_string(), vec!["nostr".to_string()]);
+        let filter = SearchFilter {
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        // 両方のタグを持つイベントのみ取得される（AND条件）
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "search_multitype_001");
+    }
+
+    /// 複合フィルター（authors + kinds + tags）で検索できることを確認
+    #[tokio::test]
+    async fn test_search_events_combined_filters() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event1 = create_test_event(
+            "search_combined_001",
+            "alice",
+            1,
+            vec![vec!["t".to_string(), "nostr".to_string()]],
+        );
+        let event2 = create_test_event(
+            "search_combined_002",
+            "alice",
+            7,
+            vec![vec!["t".to_string(), "nostr".to_string()]],
+        );
+        let event3 = create_test_event(
+            "search_combined_003",
+            "bob",
+            1,
+            vec![vec!["t".to_string(), "nostr".to_string()]],
+        );
+        let event4 = create_test_event(
+            "search_combined_004",
+            "alice",
+            1,
+            vec![vec!["t".to_string(), "bitcoin".to_string()]],
+        );
+        store.save_event(&event1).await.unwrap();
+        store.save_event(&event2).await.unwrap();
+        store.save_event(&event3).await.unwrap();
+        store.save_event(&event4).await.unwrap();
+
+        let mut tags = HashMap::new();
+        tags.insert("#t".to_string(), vec!["nostr".to_string()]);
+        let filter = SearchFilter {
+            authors: Some(vec!["alice".to_string()]),
+            kinds: Some(vec![1]),
+            tags,
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        // alice の kind=1 で #t=nostr のイベントのみ
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "search_combined_001");
+    }
+
+    /// 該当するイベントがない場合は空配列を返すことを確認
+    #[tokio::test]
+    async fn test_search_events_no_matches_returns_empty() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let event = create_test_event("search_nomatch_001", "pubkey_a", 1, vec![]);
+        store.save_event(&event).await.unwrap();
+
+        let filter = SearchFilter {
+            ids: Some(vec!["nonexistent_id".to_string()]),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert!(result.is_empty());
+    }
+
+    /// event_jsonフィールドからNostrEventが正しくデシリアライズされることを確認
+    #[tokio::test]
+    async fn test_search_events_returns_full_event() {
+        let (_dir, db_path) = temp_db_path();
+        let store = SqliteEventStore::new(&db_path).await.unwrap();
+
+        let original = NostrEvent {
+            id: "search_full_001".to_string(),
+            pubkey: "pubkey_full".to_string(),
+            kind: 1,
+            created_at: 1700000000,
+            content: "完全なコンテンツ".to_string(),
+            tags: vec![
+                vec!["e".to_string(), "ref1".to_string()],
+                vec!["p".to_string(), "pk1".to_string()],
+            ],
+            sig: "signature_here".to_string(),
+        };
+        store.save_event(&original).await.unwrap();
+
+        let filter = SearchFilter {
+            ids: Some(vec!["search_full_001".to_string()]),
+            ..Default::default()
+        };
+        let result = store.search_events(&filter).await.unwrap();
+
+        assert_eq!(result.len(), 1);
+        let event = &result[0];
+        assert_eq!(event.id, original.id);
+        assert_eq!(event.pubkey, original.pubkey);
+        assert_eq!(event.kind, original.kind);
+        assert_eq!(event.created_at, original.created_at);
+        assert_eq!(event.content, original.content);
+        assert_eq!(event.tags, original.tags);
+        assert_eq!(event.sig, original.sig);
+    }
+
+    /// SearchFilterがJSONからデシリアライズできることを確認
+    #[test]
+    fn test_search_filter_deserialize() {
+        // Rust 2024ではraw文字列内の#がプレフィックスとして解釈されるため、
+        // 通常の文字列リテラルでエスケープを使用
+        let json = "{\
+            \"ids\": [\"id1\", \"id2\"],\
+            \"authors\": [\"pk1\"],\
+            \"kinds\": [1, 7],\
+            \"since\": 1700000000,\
+            \"until\": 1800000000,\
+            \"limit\": 50,\
+            \"#e\": [\"event_ref\"],\
+            \"#p\": [\"pubkey_ref\"],\
+            \"#t\": [\"hashtag\"]\
+        }";
+
+        let filter: SearchFilter = serde_json::from_str(json).unwrap();
+
+        assert_eq!(filter.ids, Some(vec!["id1".to_string(), "id2".to_string()]));
+        assert_eq!(filter.authors, Some(vec!["pk1".to_string()]));
+        assert_eq!(filter.kinds, Some(vec![1, 7]));
+        assert_eq!(filter.since, Some(1700000000));
+        assert_eq!(filter.until, Some(1800000000));
+        assert_eq!(filter.limit, Some(50));
+        assert_eq!(
+            filter.tags.get("#e"),
+            Some(&vec!["event_ref".to_string()])
+        );
+        assert_eq!(
+            filter.tags.get("#p"),
+            Some(&vec!["pubkey_ref".to_string()])
+        );
+        assert_eq!(filter.tags.get("#t"), Some(&vec!["hashtag".to_string()]));
+    }
+
+    /// 空のJSONオブジェクトからSearchFilterがデシリアライズできることを確認
+    #[test]
+    fn test_search_filter_deserialize_empty() {
+        let json = "{}";
+        let filter: SearchFilter = serde_json::from_str(json).unwrap();
+
+        assert!(filter.ids.is_none());
+        assert!(filter.authors.is_none());
+        assert!(filter.kinds.is_none());
+        assert!(filter.since.is_none());
+        assert!(filter.until.is_none());
+        assert!(filter.limit.is_none());
+        assert!(filter.tags.is_empty());
     }
 }
