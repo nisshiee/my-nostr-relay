@@ -12,7 +12,7 @@ mod store;
 
 pub use auth::{auth_middleware, AuthConfig};
 pub use error::ApiError;
-pub use store::{NostrEvent, SaveResult, SearchFilter, SqliteEventStore, StoreError};
+pub use store::{NostrEvent, SaveResult, SearchFilter, SearchRequest, SqliteEventStore, StoreError};
 
 use axum::{
     extract::{Path, State},
@@ -122,7 +122,8 @@ async fn delete_event_handler(
 
 /// イベント検索エンドポイント (POST /events/search)
 ///
-/// フィルター条件に一致するイベントをSQLiteデータベースから検索する。
+/// 複数のフィルター条件をOR結合で検索し、結果をマージして返す。
+/// Lambda側のHttpSqliteEventRepositoryから送信されるSearchRequest形式に対応。
 ///
 /// # Returns
 /// - 200 OK: 検索結果（JSON配列）
@@ -130,19 +131,29 @@ async fn delete_event_handler(
 /// - 500 Internal Server Error: データベースエラー
 async fn search_events_handler(
     State(state): State<AppState>,
-    Json(filter): Json<SearchFilter>,
+    Json(request): Json<SearchRequest>,
 ) -> Response {
     tracing::info!(
-        ids = ?filter.ids,
-        authors = ?filter.authors,
-        kinds = ?filter.kinds,
-        since = ?filter.since,
-        until = ?filter.until,
-        limit = ?filter.limit,
-        "イベント検索リクエストを受信"
+        filter_count = request.filters.len(),
+        "イベント検索リクエストを受信（複数フィルター対応）"
     );
 
-    match state.store.search_events(&filter).await {
+    // 各フィルターの詳細をログ出力
+    for (i, filter) in request.filters.iter().enumerate() {
+        tracing::debug!(
+            filter_index = i,
+            ids = ?filter.ids,
+            authors = ?filter.authors,
+            kinds = ?filter.kinds,
+            since = ?filter.since,
+            until = ?filter.until,
+            limit = ?filter.limit,
+            tags = ?filter.tags,
+            "フィルター詳細"
+        );
+    }
+
+    match state.store.search_events_multi(&request.filters).await {
         Ok(events) => {
             tracing::info!(count = events.len(), "検索結果を返却");
             Json(events).into_response()
@@ -662,7 +673,10 @@ mod api_endpoint_tests {
             ids: Some(vec!["event_search_001".to_string()]),
             ..Default::default()
         };
-        let body = serde_json::to_string(&filter).unwrap();
+        let request_body = SearchRequest {
+            filters: vec![filter],
+        };
+        let body = serde_json::to_string(&request_body).unwrap();
 
         let request = Request::builder()
             .uri("/events/search")
@@ -688,8 +702,10 @@ mod api_endpoint_tests {
         let event = create_test_event("event_search_002", "pubkey_xyz", 7, vec![]);
         store.save_event(&event).await.unwrap();
 
-        let filter = SearchFilter::default();
-        let body = serde_json::to_string(&filter).unwrap();
+        let request_body = SearchRequest {
+            filters: vec![SearchFilter::default()],
+        };
+        let body = serde_json::to_string(&request_body).unwrap();
 
         let request = Request::builder()
             .uri("/events/search")
@@ -725,7 +741,10 @@ mod api_endpoint_tests {
             authors: Some(vec!["author_alice".to_string()]),
             ..Default::default()
         };
-        let body = serde_json::to_string(&filter).unwrap();
+        let request_body = SearchRequest {
+            filters: vec![filter],
+        };
+        let body = serde_json::to_string(&request_body).unwrap();
 
         let request = Request::builder()
             .uri("/events/search")
@@ -750,8 +769,10 @@ mod api_endpoint_tests {
     async fn test_search_events_without_auth_returns_unauthorized() {
         let (app, _store, _dir) = create_test_app_with_store().await;
 
-        let filter = SearchFilter::default();
-        let body = serde_json::to_string(&filter).unwrap();
+        let request_body = SearchRequest {
+            filters: vec![SearchFilter::default()],
+        };
+        let body = serde_json::to_string(&request_body).unwrap();
 
         let request = Request::builder()
             .uri("/events/search")
@@ -791,19 +812,20 @@ mod api_endpoint_tests {
         );
     }
 
-    /// POST /events/searchで空のJSONオブジェクトでも検索できることを確認
+    /// POST /events/searchで空のフィルターリストでも検索できることを確認
     #[tokio::test]
     async fn test_search_events_empty_filter_works() {
         let (app, store, _dir) = create_test_app_with_store().await;
         let event = create_test_event("event_search_005", "pubkey_abc", 1, vec![]);
         store.save_event(&event).await.unwrap();
 
+        // 空のフィルターリスト（{"filters":[]}）
         let request = Request::builder()
             .uri("/events/search")
             .method("POST")
             .header(header::AUTHORIZATION, format!("Bearer {}", TEST_TOKEN))
             .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from("{}"))
+            .body(Body::from(r#"{"filters":[]}"#))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -811,14 +833,15 @@ mod api_endpoint_tests {
         assert_eq!(
             response.status(),
             StatusCode::OK,
-            "空のフィルターでも200 OKを返すべき"
+            "空のフィルターリストでも200 OKを返すべき"
         );
 
         let response_body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
         let events: Vec<NostrEvent> = serde_json::from_slice(&response_body).unwrap();
-        assert!(!events.is_empty());
+        // 空のフィルターリストは空の結果を返す
+        assert!(events.is_empty());
     }
 
     // ========================================

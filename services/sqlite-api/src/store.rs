@@ -123,6 +123,16 @@ pub struct SearchFilter {
     pub tags: HashMap<String, Vec<String>>,
 }
 
+/// 検索リクエスト
+///
+/// 複数フィルターをOR結合で検索するためのリクエスト形式。
+/// Lambda側のHttpSqliteEventRepositoryから送信される。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SearchRequest {
+    /// フィルターリスト（OR結合で検索）
+    pub filters: Vec<SearchFilter>,
+}
+
 /// SQLiteイベントストア
 ///
 /// - 書き込み: 専用の単一接続（Arc<Mutex<Connection>>）
@@ -341,6 +351,51 @@ impl SqliteEventStore {
 
         conn.interact(move |conn| {
             Self::execute_search(conn, &filter)
+        })
+        .await?
+    }
+
+    /// 複数フィルターでイベントを検索（OR結合）
+    ///
+    /// 複数のフィルター条件をOR結合で検索し、結果をマージして返す。
+    /// 重複イベントは除外され、created_at降順でソートされる。
+    ///
+    /// # Arguments
+    /// * `filters` - 検索フィルター条件のリスト
+    ///
+    /// # Returns
+    /// * `Ok(Vec<NostrEvent>)` - マッチしたイベントのリスト（created_at降順、重複排除済み）
+    /// * `Err(StoreError)` - エラー
+    pub async fn search_events_multi(
+        &self,
+        filters: &[SearchFilter],
+    ) -> Result<Vec<NostrEvent>, StoreError> {
+        // 空のフィルターリストの場合は空の結果を返す
+        if filters.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let filters = filters.to_vec();
+        let conn = self.read_pool.get().await?;
+
+        conn.interact(move |conn| {
+            // 各フィルターの結果をマージ
+            // 各フィルターのlimitは既にLambda側でmax_limitにクランプ済み
+            let mut merged: HashMap<String, NostrEvent> = HashMap::new();
+
+            for filter in &filters {
+                let events = Self::execute_search(conn, filter)?;
+                for event in events {
+                    // IDで重複排除
+                    merged.entry(event.id.clone()).or_insert(event);
+                }
+            }
+
+            // created_at降順でソート
+            let mut results: Vec<NostrEvent> = merged.into_values().collect();
+            results.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+            Ok(results)
         })
         .await?
     }
