@@ -147,7 +147,7 @@ resource "aws_lambda_function" "default" {
   runtime          = "provided.al2023"
   filename         = data.archive_file.default.output_path
   source_code_hash = data.archive_file.default.output_base64sha256
-  timeout          = 10
+  timeout          = 30
   architectures    = ["arm64"]
 
   environment {
