@@ -21,7 +21,9 @@ pub use event_repository::{
 pub use http_sqlite::{
     HttpSqliteConfig, HttpSqliteConfigError, HttpSqliteEventRepository,
     HttpSqliteEventRepositoryError, HttpSqliteIndexer, HttpSqliteIndexerError,
-    HttpSqliteIndexerProcessError, HttpSqliteIndexerResult, HttpSqliteProcessAction, IndexerClient,
+    HttpSqliteIndexerProcessError, HttpSqliteIndexerResult, HttpSqliteProcessAction,
+    HttpSqliteRebuildConfig, HttpSqliteRebuildConfigError, HttpSqliteRebuildResult,
+    HttpSqliteRebuilder, HttpSqliteRebuilderError, IndexerClient,
 };
 pub use logging::init_logging;
 pub use opensearch::{

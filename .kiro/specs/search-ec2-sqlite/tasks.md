@@ -160,15 +160,15 @@
 
 ## Phase 4: データ移行
 
-- [ ] 4. インデックス復元ツールの実装
-- [ ] 4.1 RebuilderToolのHTTP API対応
+- [x] 4. インデックス復元ツールの実装
+- [x] 4.1 RebuilderToolのHTTP API対応
   - 既存のrebuilder.rsをIndexerClient使用に改修
   - DynamoDBから全イベントをスキャン
   - バッチ単位でEC2 HTTP APIにPOST
   - 既存イベントのスキップ（409をエラーとしない）
   - _Requirements: 6.1, 6.2, 6.4_
 
-- [ ] 4.2 進捗ログとリカバリー機能
+- [x] 4.2 進捗ログとリカバリー機能
   - バッチ処理ごとにイベント数をログ出力
   - 中断時のLastEvaluatedKeyをログ出力
   - 障害復旧時の再開をサポート
