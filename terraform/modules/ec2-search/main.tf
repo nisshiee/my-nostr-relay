@@ -61,6 +61,7 @@ variable "parameter_store_path" {
 
 # 現在のAWSリージョンを取得
 data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
 
 # デフォルトVPCを参照
 # 本プロジェクトの他のAWSリソース（Lambda、DynamoDB、OpenSearch等）はすべて
@@ -98,7 +99,7 @@ data "aws_subnets" "public" {
 
 resource "aws_security_group" "ec2_search" {
   name        = "nostr-relay-ec2-search"
-  description = "SQLite検索APIサーバー用セキュリティグループ"
+  description = "Security group for SQLite search API server"
   vpc_id      = data.aws_vpc.default.id
 
   # HTTPS（ポート443）のインバウンドを許可
@@ -255,6 +256,19 @@ resource "aws_iam_role_policy" "ec2_search_custom" {
             "kms:ViaService" = "ssm.${data.aws_region.current.name}.amazonaws.com"
           }
         }
+      },
+      {
+        Sid    = "SSMSendCommandForSelfUpdate"
+        Effect = "Allow"
+        Action = [
+          "ssm:SendCommand",
+          "ssm:GetCommandInvocation"
+        ]
+        # 自身のインスタンスに対してのみSSM Documentを実行可能
+        Resource = [
+          "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:document/nostr-relay-ec2-search-update-binary",
+          "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/*"
+        ]
       }
     ]
   })
@@ -289,11 +303,11 @@ resource "aws_instance" "search" {
   # EBS最適化を有効化（t4g.nanoはデフォルトでサポート）
   ebs_optimized = true
 
-  # ルートボリューム: gp3、10GB
-  # コスト: 月額約120円（東京リージョン）
+  # ルートボリューム: gp3、30GB（Amazon Linux 2023 AMIの最小要件）
+  # コスト: 月額約360円（東京リージョン）
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = 10
+    volume_size           = 30
     delete_on_termination = true
     encrypted             = true
 
@@ -314,21 +328,18 @@ resource "aws_instance" "search" {
   #
   # 要件:
   # - Caddyのインストールと設定（リバースプロキシ、TLS自動化）
-  # - SQLiteデータベースの初期化（WALモード、スキーマ作成）
+  # - SQLiteデータベース用ディレクトリの準備
   # - systemdサービスファイルの配置と有効化
-  # - S3からバイナリをダウンロード
-  # - Parameter StoreからAPIトークンを取得し環境変数に設定
+  #
+  # 注意: バイナリのダウンロードとAPIトークンの設定はSSM Documentで行う
+  # EC2作成後、手動でSSM Documentを実行する必要がある
   #
   # Requirements: 1.5, 1.6, 1.7, 1.8, 1.9, 3.4
   # ------------------------------------------------------------------------------
   user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
     # ドメインはrandom_stringから直接構築（循環依存を回避）
-    domain               = "${random_string.subdomain.result}.relay.${var.domain_name}"
-    binary_bucket        = var.binary_bucket
-    binary_key           = var.binary_key
-    binary_name          = var.binary_name
-    parameter_store_path = var.parameter_store_path
-    aws_region           = data.aws_region.current.name
+    domain      = "${random_string.subdomain.result}.relay.${var.domain_name}"
+    binary_name = var.binary_name
   }))
 
   # User Dataが変更された場合、インスタンスを再作成

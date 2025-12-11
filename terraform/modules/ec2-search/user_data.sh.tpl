@@ -6,8 +6,12 @@
 # 1. Caddyのインストールと設定（リバースプロキシ、TLS自動化）
 # 2. SQLiteデータベース用ディレクトリの準備（スキーマはRustアプリが作成）
 # 3. systemdサービスファイルの配置と有効化
-# 4. S3からバイナリをダウンロード
-# 5. Parameter StoreからAPIトークンを取得し環境変数に設定
+#
+# 注意: バイナリとAPIトークンのセットアップはこのスクリプトでは行わない。
+# EC2インスタンス作成後、手動でSSM Documentを実行する必要がある:
+#   aws ssm send-command \
+#     --document-name nostr-relay-ec2-search-update-binary \
+#     --targets "Key=tag:Name,Values=nostr-relay-ec2-search"
 #
 # Requirements: 1.5, 1.6, 1.7, 1.8, 1.9, 3.4
 # ------------------------------------------------------------------------------
@@ -20,11 +24,7 @@ echo "User Data script started at $(date)"
 
 # 変数（Terraformから注入）
 DOMAIN="${domain}"
-BINARY_BUCKET="${binary_bucket}"
-BINARY_KEY="${binary_key}"
 BINARY_NAME="${binary_name}"
-PARAMETER_STORE_PATH="${parameter_store_path}"
-AWS_REGION="${aws_region}"
 DB_PATH="/var/lib/nostr/events.db"
 
 # ------------------------------------------------------------------------------
@@ -139,29 +139,10 @@ chmod 750 /var/lib/nostr
 echo "SQLite database directory prepared at /var/lib/nostr"
 
 # ------------------------------------------------------------------------------
-# Parameter StoreからAPIトークンを取得
+# 環境変数ファイルの作成（スケルトン）
+# API_TOKENはSSM Documentで設定される
 # ------------------------------------------------------------------------------
-echo "Fetching API token from Parameter Store..."
-
-API_TOKEN=$(aws ssm get-parameter \
-    --name "$PARAMETER_STORE_PATH" \
-    --with-decryption \
-    --query 'Parameter.Value' \
-    --output text \
-    --region "$AWS_REGION")
-
-if [ -z "$API_TOKEN" ]; then
-    echo "ERROR: Failed to fetch API token from Parameter Store"
-    exit 1
-fi
-
-echo "API token fetched successfully"
-
-# ------------------------------------------------------------------------------
-# 環境変数ファイルの作成
-# systemdサービスから読み込む
-# ------------------------------------------------------------------------------
-echo "Creating environment file..."
+echo "Creating environment file skeleton..."
 
 # ディレクトリを先に作成（nostr-apiユーザーのみアクセス可能）
 mkdir -p /etc/nostr-api
@@ -170,8 +151,8 @@ chmod 700 /etc/nostr-api
 
 cat > /etc/nostr-api/env <<EOF
 # Nostr API サーバー環境変数
-# この値はParameter Store ($PARAMETER_STORE_PATH) から取得
-API_TOKEN=$API_TOKEN
+# API_TOKENはSSM Documentによって設定される
+API_TOKEN=PLACEHOLDER
 DB_PATH=$DB_PATH
 RUST_LOG=info
 # パニック時にバックトレースを出力
@@ -182,17 +163,13 @@ chown nostr-api:nostr-api /etc/nostr-api/env
 chmod 600 /etc/nostr-api/env
 
 # ------------------------------------------------------------------------------
-# S3からバイナリをダウンロード
+# バイナリ格納ディレクトリの作成
+# バイナリ自体はSSM Documentでダウンロードする
 # ------------------------------------------------------------------------------
-echo "Downloading binary from S3..."
+echo "Creating binary directory..."
 
 mkdir -p /opt/nostr-api
 chown nostr-api:nostr-api /opt/nostr-api
-aws s3 cp "s3://$BINARY_BUCKET/$BINARY_KEY" "/opt/nostr-api/$BINARY_NAME" --region "$AWS_REGION"
-chown nostr-api:nostr-api "/opt/nostr-api/$BINARY_NAME"
-chmod 755 "/opt/nostr-api/$BINARY_NAME"
-
-echo "Binary downloaded to /opt/nostr-api/$BINARY_NAME"
 
 # ------------------------------------------------------------------------------
 # systemdサービスファイルの作成
@@ -231,44 +208,10 @@ WantedBy=multi-user.target
 EOF
 
 # ------------------------------------------------------------------------------
-# バイナリ更新用スクリプトの作成
-# SSM Run Commandで実行可能
+# サービスの有効化
+# nostr-apiはSSM Document実行後に起動するため、ここでは有効化のみ
 # ------------------------------------------------------------------------------
-echo "Creating update script..."
-
-cat > /opt/nostr-api/update.sh <<'UPDATEEOF'
-#!/bin/bash
-# バイナリ更新スクリプト
-# SSM Run Commandで実行: aws ssm send-command --document-name AWS-RunShellScript --parameters commands=["/opt/nostr-api/update.sh"]
-
-set -euo pipefail
-
-BINARY_BUCKET="${binary_bucket}"
-BINARY_KEY="${binary_key}"
-BINARY_NAME="${binary_name}"
-AWS_REGION="${aws_region}"
-
-echo "Stopping nostr-api service..."
-systemctl stop nostr-api
-
-echo "Downloading new binary from S3..."
-aws s3 cp "s3://$BINARY_BUCKET/$BINARY_KEY" "/opt/nostr-api/$BINARY_NAME" --region "$AWS_REGION"
-chown nostr-api:nostr-api "/opt/nostr-api/$BINARY_NAME"
-chmod 755 "/opt/nostr-api/$BINARY_NAME"
-
-echo "Starting nostr-api service..."
-systemctl start nostr-api
-
-echo "Update completed at $(date)"
-systemctl status nostr-api
-UPDATEEOF
-
-chmod 755 /opt/nostr-api/update.sh
-
-# ------------------------------------------------------------------------------
-# サービスの有効化と起動
-# ------------------------------------------------------------------------------
-echo "Enabling and starting services..."
+echo "Enabling services..."
 
 # systemdデーモンをリロード
 systemctl daemon-reload
@@ -277,16 +220,22 @@ systemctl daemon-reload
 systemctl enable caddy
 systemctl start caddy
 
-# nostr-apiサービスを有効化・起動
+# nostr-apiサービスを有効化（起動はSSM Document実行後）
 systemctl enable nostr-api
-systemctl start nostr-api
 
 # ------------------------------------------------------------------------------
-# 完了確認
+# 完了
 # ------------------------------------------------------------------------------
-echo "Verifying services..."
+echo "Verifying Caddy service..."
 systemctl status caddy --no-pager || true
-systemctl status nostr-api --no-pager || true
 
+echo ""
+echo "========================================"
 echo "User Data script completed at $(date)"
-echo "EC2 Search Server provisioning complete!"
+echo "========================================"
+echo ""
+echo "注意: APIサーバーを起動するには、SSM Documentを手動実行してください:"
+echo "  aws ssm send-command \\"
+echo "    --document-name nostr-relay-ec2-search-update-binary \\"
+echo "    --targets \"Key=tag:Name,Values=nostr-relay-ec2-search\""
+echo ""

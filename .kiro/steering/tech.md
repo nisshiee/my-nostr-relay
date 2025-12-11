@@ -21,7 +21,24 @@ Client --> CloudFront --> Lambda@Edge (Router)
               |
        Lambda (Indexer)
               |
-        OpenSearch
+    +---------+---------+
+    |                   |
+OpenSearch         SQLite API
+(Primary)          (EC2 t4g.nano)
+```
+
+### EC2 SQLite検索API (`services/sqlite-api/`)
+
+SQLiteベースの軽量検索バックエンド。OpenSearchの代替として、コスト効率の高い検索機能を提供。
+
+```
+Internet --> Route53 --> EC2 (t4g.nano)
+                              |
+                           Caddy (TLS)
+                              |
+                         sqlite-api
+                              |
+                          SQLite DB
 ```
 
 ## Core Technologies
@@ -32,6 +49,16 @@ Client --> CloudFront --> Lambda@Edge (Router)
 - **Architecture**: ARM64 (Graviton2)
 - **Async**: tokio (full features)
 - **Serialization**: serde_json
+
+### SQLite API Service (`services/sqlite-api/`)
+- **Language**: Rust (Edition 2024)
+- **Runtime**: EC2 (Amazon Linux 2023)
+- **Architecture**: ARM64 (Graviton2, t4g.nano)
+- **Framework**: axum 0.8 (HTTPサーバー)
+- **Database**: SQLite (rusqlite with bundled)
+- **Connection Pool**: deadpool-sqlite
+- **TLS**: Caddy (Let's Encrypt自動証明書)
+- **Process Manager**: systemd
 
 ### Web Frontend (`apps/web/`)
 - **Framework**: Next.js 16
@@ -91,16 +118,61 @@ Client --> CloudFront --> Lambda@Edge (Router)
 ### Required Tools
 - Rust toolchain (Edition 2024対応)
 - cargo-lambda (Lambda向けビルド)
+- zig (クロスコンパイル用Cコンパイラ)
+- cargo-zigbuild (ARM64 Linuxクロスコンパイル)
 - Node.js 20+
 - Terraform
 - direnv (.envrc による環境変数管理)
 - aws-vault (AWS認証情報管理、プロファイル名: `nostr-relay`)
+
+### クロスコンパイル環境セットアップ
+```bash
+# macOSでARM64 Linux向けクロスコンパイル環境を構築
+brew install zig
+cargo install cargo-zigbuild
+rustup target add aarch64-unknown-linux-gnu
+```
 
 ### Common Commands
 
 ```bash
 # Relay Build (ARM64 for Lambda)
 cd services/relay && cargo lambda build --release --arm64
+
+# SQLite API Build (ARM64 for EC2)
+cd services/sqlite-api && cargo zigbuild --release --target aarch64-unknown-linux-gnu
+
+# SQLite API Deploy (S3経由)
+aws-vault exec nostr-relay -- aws s3 cp \
+  services/sqlite-api/target/aarch64-unknown-linux-gnu/release/sqlite-api \
+  s3://nostr-relay-binary-<account-id>/sqlite-api/sqlite-api
+
+# SQLite API Update (バイナリ更新・トークン更新・サービス再起動)
+aws-vault exec nostr-relay -- aws ssm send-command \
+  --document-name nostr-relay-ec2-search-update-binary \
+  --targets "Key=tag:Name,Values=nostr-relay-ec2-search"
+
+# EC2インスタンス再作成後の初期セットアップ
+# 注意: terraform applyでEC2が再作成された場合、user_dataは環境構築のみ行い、
+# バイナリとAPIトークンのセットアップは行わない。以下を手動実行する必要がある:
+# 1. user_data完了を待つ（約2分）
+# 2. SSM Documentを実行
+aws-vault exec nostr-relay -- aws ssm send-command \
+  --document-name nostr-relay-ec2-search-update-binary \
+  --targets "Key=tag:Name,Values=nostr-relay-ec2-search"
+
+# SQLite API Logs (EC2 journalctl経由)
+# 1. コマンド送信
+COMMAND_ID=$(aws-vault exec nostr-relay -- aws ssm send-command \
+  --instance-ids <instance-id> \
+  --document-name "AWS-RunShellScript" \
+  --parameters commands="journalctl -u nostr-api -n 100 --no-pager" \
+  --query 'Command.CommandId' --output text)
+# 2. 結果取得
+aws-vault exec nostr-relay -- aws ssm get-command-invocation \
+  --command-id $COMMAND_ID \
+  --instance-id <instance-id> \
+  --query 'StandardOutputContent' --output text
 
 # Web Dev
 cd apps/web && npm run dev
@@ -116,6 +188,10 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 |----------|-----------|
 | Rust for Relay | メモリ安全性、高性能、Lambda cold start最適化 |
 | ARM64 (Graviton2) | x86_64比で20%コスト削減、優れた性能/電力効率 |
+| cargo-zigbuild | QEMUより高速なクロスコンパイル、Docker不要、LLVMベースで最適化品質維持 |
+| EC2 for SQLite API | SQLiteのファイルベース特性上、EBSボリュームが必要。t4g.nanoで低コスト運用 |
+| rusqlite bundled | システムSQLiteに依存せず、クロスコンパイル容易 |
+| Caddy | Let's Encrypt自動TLS、設定シンプル、リバースプロキシ |
 | Serverless WebSocket | API Gateway v2でWebSocket接続管理、スケーラブル |
 | CloudFront + Lambda@Edge | 単一ドメインでWebSocket/HTTP両対応、エッジでのプロトコルルーティング |
 | DynamoDB | サーバーレス、従量課金、GSIによる柔軟なクエリパターン |

@@ -110,7 +110,7 @@ resource "aws_ssm_document" "update_binary" {
 
   content = yamlencode({
     schemaVersion = "2.2"
-    description   = "EC2検索APIサーバーのバイナリを更新する（S3から再ダウンロード→サービス再起動）"
+    description   = "EC2検索APIサーバーを更新する（バイナリ更新・APIトークン更新・サービス再起動）"
     parameters = {
       BinaryBucket = {
         type        = "String"
@@ -127,11 +127,16 @@ resource "aws_ssm_document" "update_binary" {
         description = "バイナリのファイル名"
         default     = var.binary_name
       }
+      ParameterStorePath = {
+        type        = "String"
+        description = "APIトークンを格納しているParameter Storeのパス"
+        default     = var.parameter_store_path
+      }
     }
     mainSteps = [
       {
         action = "aws:runShellScript"
-        name   = "updateBinary"
+        name   = "updateBinaryAndToken"
         inputs = {
           runCommand = [
             "#!/bin/bash",
@@ -141,28 +146,37 @@ resource "aws_ssm_document" "update_binary" {
             "BINARY_BUCKET='{{ BinaryBucket }}'",
             "BINARY_KEY='{{ BinaryKey }}'",
             "BINARY_NAME='{{ BinaryName }}'",
+            "PARAMETER_STORE_PATH='{{ ParameterStorePath }}'",
             "AWS_REGION='${data.aws_region.current.name}'",
             "",
-            "echo 'Starting binary update at '$(date)",
+            "echo '=== Update started at '$(date)' ==='",
             "",
-            "# サービスを停止",
+            "# 1. サービスを停止",
             "echo 'Stopping nostr-api service...'",
-            "systemctl stop nostr-api",
+            "systemctl stop nostr-api || true",
             "",
-            "# 新しいバイナリをダウンロード",
-            "echo 'Downloading new binary from S3...'",
+            "# 2. 新しいバイナリをダウンロード",
+            "echo 'Downloading binary from S3...'",
             "aws s3 cp \"s3://$BINARY_BUCKET/$BINARY_KEY\" \"/opt/nostr-api/$BINARY_NAME\" --region \"$AWS_REGION\"",
-            "",
-            "# 権限を設定",
             "chown nostr-api:nostr-api \"/opt/nostr-api/$BINARY_NAME\"",
             "chmod 755 \"/opt/nostr-api/$BINARY_NAME\"",
             "",
-            "# サービスを再起動",
+            "# 3. APIトークンを更新",
+            "echo 'Refreshing API token from Parameter Store...'",
+            "NEW_TOKEN=$(aws ssm get-parameter --name \"$PARAMETER_STORE_PATH\" --with-decryption --query 'Parameter.Value' --output text --region \"$AWS_REGION\")",
+            "if [ -n \"$NEW_TOKEN\" ]; then",
+            "    # sedのデリミタを|に変更（トークンに/が含まれる可能性があるため）",
+            "    sed -i \"s|^API_TOKEN=.*|API_TOKEN=$NEW_TOKEN|\" /etc/nostr-api/env",
+            "    echo 'API token updated in env file'",
+            "else",
+            "    echo 'Warning: Could not fetch API token, keeping existing value'",
+            "fi",
+            "",
+            "# 4. サービスを起動",
             "echo 'Starting nostr-api service...'",
             "systemctl start nostr-api",
             "",
-            "# ステータスを確認",
-            "echo 'Update completed at '$(date)",
+            "echo '=== Update completed at '$(date)' ==='",
             "systemctl status nostr-api --no-pager"
           ]
         }
