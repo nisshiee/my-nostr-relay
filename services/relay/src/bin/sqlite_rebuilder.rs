@@ -8,7 +8,7 @@
 /// - SQLITE_API_TOKEN_PARAM: Parameter Storeのパラメータパス（必須、Lambda環境）
 /// - SQLITE_API_TOKEN: APIトークン（テスト/ローカル用）
 /// - EVENTS_TABLE: DynamoDB Eventsテーブル名（必須）
-/// - REBUILD_BATCH_SIZE: バッチサイズ（デフォルト: 100）
+/// - REBUILD_BATCH_SIZE: バッチサイズ（デフォルト: 100、コマンドライン引数で上書き可能）
 ///
 /// # Lambda実行
 /// Lambda関数として実行する場合、空のペイロードでトリガーする。
@@ -19,12 +19,23 @@
 /// export SQLITE_API_ENDPOINT=https://xxx.relay.nostr.nisshiee.org
 /// export SQLITE_API_TOKEN=your-api-token
 /// export EVENTS_TABLE=nostr-relay-events
-/// export REBUILD_BATCH_SIZE=100
+///
+/// # 全件再構築
 /// cargo run --bin sqlite_rebuilder
+///
+/// # バッチサイズ指定
+/// cargo run --bin sqlite_rebuilder -- --batch-size 200
+///
+/// # リカバリー（中断位置から再開）
+/// cargo run --bin sqlite_rebuilder -- --start-key '{"id":"abc123..."}'
+///
+/// # 両方指定
+/// cargo run --bin sqlite_rebuilder -- --batch-size 200 --start-key '{"id":"abc123..."}'
 /// ```
 ///
 /// 要件: 6.1, 6.2, 6.3, 6.4, 6.5
 use aws_sdk_dynamodb::types::AttributeValue;
+use clap::Parser;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::infrastructure::{
     init_logging, HttpSqliteConfig, HttpSqliteRebuildConfig, HttpSqliteRebuilder, IndexerClient,
@@ -32,6 +43,22 @@ use relay::infrastructure::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{error, info};
+
+/// コマンドライン引数（ローカル実行用）
+#[derive(Parser, Debug)]
+#[command(name = "sqlite_rebuilder")]
+#[command(about = "DynamoDB EventsテーブルからSQLiteインデックスを再構築")]
+struct CliArgs {
+    /// バッチサイズ（1回のスキャンで取得するアイテム数）
+    /// 環境変数REBUILD_BATCH_SIZEより優先される
+    #[arg(long, short = 'b')]
+    batch_size: Option<u32>,
+
+    /// リカバリー用の開始キー（中断位置から再開する場合）
+    /// JSON形式: '{"id": "event_id_value"}'
+    #[arg(long, short = 's')]
+    start_key: Option<String>,
+}
 
 /// Lambda関数の入力（空または設定オーバーライド）
 #[derive(Debug, Deserialize, Default)]
@@ -138,7 +165,32 @@ async fn handler(event: LambdaEvent<RebuildInput>) -> Result<RebuildOutput, Erro
 
 /// ローカル実行用関数
 async fn run_local() -> Result<(), Error> {
-    match run_rebuild(None, None).await {
+    // コマンドライン引数をパース
+    let args = CliArgs::parse();
+
+    info!(
+        batch_size = ?args.batch_size,
+        start_key = ?args.start_key,
+        "コマンドライン引数をパース"
+    );
+
+    // start_keyをパースしてAttributeValue形式に変換
+    let start_key = if let Some(key_json) = args.start_key {
+        let parsed: HashMap<String, String> = serde_json::from_str(&key_json).map_err(|e| {
+            error!(error = %e, json = %key_json, "start_keyのJSONパースに失敗");
+            Error::from(format!("Invalid start_key JSON: {}", e))
+        })?;
+        Some(
+            parsed
+                .into_iter()
+                .map(|(k, v)| (k, AttributeValue::S(v)))
+                .collect(),
+        )
+    } else {
+        None
+    };
+
+    match run_rebuild(args.batch_size, start_key).await {
         Ok(result) => {
             info!(
                 scanned_count = result.scanned_count,
@@ -150,8 +202,14 @@ async fn run_local() -> Result<(), Error> {
 
             // 要件 6.5: 中断時のLastEvaluatedKeyをログ出力
             if let Some(ref key) = result.last_evaluated_key {
+                // リカバリー用にJSON形式でも出力
+                let key_json: HashMap<String, String> = key
+                    .iter()
+                    .filter_map(|(k, v)| v.as_s().ok().map(|s| (k.clone(), s.to_string())))
+                    .collect();
                 info!(
                     last_evaluated_key = ?key,
+                    last_evaluated_key_json = %serde_json::to_string(&key_json).unwrap_or_default(),
                     "次回のリカバリー用キー（未完了の場合）"
                 );
             }
