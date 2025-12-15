@@ -2,8 +2,8 @@
 pub mod config;
 pub mod connection_repository;
 pub mod event_repository;
+pub mod http_sqlite;
 pub mod logging;
-pub mod opensearch;
 pub mod relay_info_config;
 pub mod subscription_repository;
 pub mod websocket_sender;
@@ -17,13 +17,14 @@ pub use event_repository::{
     DynamoEventRepository, EventRepository, EventRepositoryError, QueryRepository,
     QueryRepositoryError, SaveResult,
 };
-pub use logging::init_logging;
-pub use opensearch::{
-    DocumentBuildError, Indexer, IndexerError, IndexerResult, NostrEventDocument,
-    OpenSearchClient, OpenSearchClientError, OpenSearchConfig, OpenSearchConfigError,
-    OpenSearchEventRepository, OpenSearchEventRepositoryError, ProcessAction, RebuildConfig,
-    RebuildConfigError, RebuildResult, Rebuilder, RebuilderError,
+pub use http_sqlite::{
+    HttpSqliteConfig, HttpSqliteConfigError, HttpSqliteEventRepository,
+    HttpSqliteEventRepositoryError, HttpSqliteIndexer, HttpSqliteIndexerError,
+    HttpSqliteIndexerProcessError, HttpSqliteIndexerResult, HttpSqliteProcessAction,
+    HttpSqliteRebuildConfig, HttpSqliteRebuildConfigError, HttpSqliteRebuildResult,
+    HttpSqliteRebuilder, HttpSqliteRebuilderError, IndexerClient,
 };
+pub use logging::init_logging;
 pub use relay_info_config::{is_valid_pubkey, parse_comma_separated, RelayInfoConfig};
 pub use subscription_repository::{
     DynamoSubscriptionRepository, MatchedSubscription, SubscriptionInfo, SubscriptionRepository,

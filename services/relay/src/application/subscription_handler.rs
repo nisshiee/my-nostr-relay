@@ -3,7 +3,7 @@
 /// NIP-01準拠のREQ/CLOSEメッセージ処理を実行する
 /// 要件: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 7.1, 7.2
 /// 要件: 19.2, 19.5, 19.6
-/// 追加要件（OpenSearch REQ処理）: 5.1, 5.4, 5.5, 5.6, 7.1, 7.2, 7.4, 7.5, 8.1, 8.2, 9.3, 9.4, 9.5
+/// 追加要件（REQ処理）: 5.1, 5.4, 5.5, 5.6, 7.1, 7.2, 7.4, 7.5, 8.1, 8.2, 9.3, 9.4, 9.5
 use nostr::Filter;
 use serde_json::Value;
 use std::time::Instant;
@@ -71,14 +71,14 @@ impl From<FilterValidationError> for SubscriptionHandlerError {
 /// REQ/CLOSEメッセージを処理するハンドラー
 ///
 /// サブスクリプションの作成、クエリ実行、イベント配信を行う
-/// QueryRepositoryを使用してOpenSearchまたはDynamoDBからイベントをクエリする (Task 8.1)
+/// QueryRepositoryを使用してSQLiteまたはDynamoDBからイベントをクエリする (Task 8.1)
 pub struct SubscriptionHandler<QR, SR, WS>
 where
     QR: QueryRepository,
     SR: SubscriptionRepository,
     WS: WebSocketSender,
 {
-    /// クエリリポジトリ（OpenSearchまたはDynamoDB）
+    /// クエリリポジトリ（SQLiteまたはDynamoDB）
     query_repo: QR,
     /// サブスクリプションリポジトリ
     subscription_repo: SR,
@@ -95,7 +95,7 @@ where
     /// 新しいSubscriptionHandlerを作成
     ///
     /// # Arguments
-    /// * `query_repo` - クエリリポジトリ（OpenSearchEventRepositoryまたはDynamoEventRepository）
+    /// * `query_repo` - クエリリポジトリ（HttpSqliteEventRepositoryまたはDynamoEventRepository）
     /// * `subscription_repo` - サブスクリプションリポジトリ
     /// * `ws_sender` - WebSocket送信
     pub fn new(query_repo: QR, subscription_repo: SR, ws_sender: WS) -> Self {
@@ -289,7 +289,7 @@ where
                     result_count = events.len(),
                     filter_count = filters.len(),
                     limit = ?limit,
-                    "OpenSearchクエリ完了"
+                    "クエリ完了"
                 );
                 events
             }

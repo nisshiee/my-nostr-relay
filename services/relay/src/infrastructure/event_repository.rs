@@ -2,7 +2,7 @@
 ///
 /// 要件: 8.10, 9.1, 10.2, 10.3, 10.4, 12.2, 12.3, 13.1, 13.2, 13.3, 13.4,
 ///       16.1, 16.2, 16.3, 16.4, 16.5, 16.6, 16.7, 16.8
-/// 追加要件（OpenSearch REQ処理）: 5.1-5.8, 9.1-9.5
+/// 追加要件（REQ処理）: 5.1-5.8, 9.1-9.5
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, TransactWriteItem};
 use aws_sdk_dynamodb::Client as DynamoDbClient;
@@ -60,7 +60,7 @@ impl From<EventRepositoryError> for QueryRepositoryError {
 /// クエリ専用リポジトリトレイト
 ///
 /// EventRepositoryのサブセットとして、検索操作のみを抽象化する。
-/// OpenSearchEventRepositoryとDynamoEventRepositoryの共通インターフェース。
+/// HttpSqliteEventRepositoryとDynamoEventRepositoryの共通インターフェース。
 /// 要件: 5.1-5.8, 9.1, 9.2
 #[async_trait]
 pub trait QueryRepository: Send + Sync {
@@ -156,7 +156,7 @@ pub trait EventRepository: QueryRepository {
     ///
     /// # Note
     /// この操作はDynamoDB DeleteItemを実行し、DynamoDB Streams経由で
-    /// OpenSearchからも自動的に削除される
+    /// SQLiteからも自動的に削除される
     ///
     /// 要件: 2.1（NIP-09イベントID指定削除）
     async fn delete_by_id(&self, event_id: &str) -> Result<bool, EventRepositoryError>;
@@ -668,7 +668,7 @@ impl QueryRepository for DynamoEventRepository {
         limit: Option<u32>,
     ) -> Result<Vec<Event>, QueryRepositoryError> {
         // 現時点ではすべてのクエリをスキャンベースで実装
-        // 将来の最適化: OpenSearchを使用した効率的なクエリ
+        // 本番環境ではHttpSqliteEventRepositoryを使用
         self.query_by_scan(filters, limit)
             .await
             .map_err(QueryRepositoryError::from)

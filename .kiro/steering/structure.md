@@ -12,9 +12,11 @@
 **Example**: `apps/web/` - Next.jsベースのWebフロントエンド
 
 ### Services (`services/`)
-**Purpose**: バックエンドサービス（Lambda関数等）
+**Purpose**: バックエンドサービス（Lambda関数、EC2アプリ等）
 **Pattern**: 1サービス = 1ディレクトリ、Cargoワークスペース対応
-**Example**: `services/relay/` - Nostrリレー実装
+**Examples**:
+- `services/relay/` - Nostrリレー実装 (Lambda)
+- `services/sqlite-api/` - SQLite検索API (EC2)
 
 ### Terraform (`terraform/`)
 **Purpose**: インフラストラクチャ定義
@@ -27,6 +29,11 @@ terraform/
     domain/            # Route53, ACM証明書
     api/               # Lambda, API Gateway, CloudFront, Lambda@Edge
     web/               # Vercelプロジェクト
+    ec2-search/        # EC2 SQLite検索API
+      main.tf          # EC2インスタンス, Security Group, EIP, Route53
+      s3.tf            # バイナリ配布用S3バケット, SSMドキュメント
+      ssm.tf           # Parameter Store (APIトークン), IAMポリシー
+      user_data.sh.tpl # EC2初期化スクリプト (Caddy, systemd)
 ```
 
 ### Protocol Reference (`nips/`)
@@ -59,9 +66,9 @@ terraform/
 - HTTP系:
   - `nip11_info.rs` -> `nostr_relay_nip11` (NIP-11リレー情報)
 - DynamoDB Streams系:
-  - `indexer.rs` -> `nostr_relay_indexer` (OpenSearchインデックス)
+  - `indexer.rs` -> `nostr_relay_indexer` (SQLite APIへのインデックス)
 - 運用ツール系:
-  - `rebuilder.rs` -> `nostr_relay_rebuilder` (インデックス再構築)
+  - `sqlite_rebuilder.rs` (SQLiteインデックス再構築、CLI)
 
 ## Import Organization
 
@@ -101,9 +108,9 @@ import { ... } from './components';
   - **HTTP系** (`lambda_http`): Lambda Function URL経由
     - NIP-11 -> `nip11_info.rs` (環境変数から11個のリレー情報フィールド読み込み)
   - **DynamoDB Streams系** (`lambda_runtime`): DynamoDB Streams経由
-    - `indexer.rs` (INSERT/MODIFY/REMOVEイベントをOpenSearchにインデックス)
-  - **運用ツール系** (`lambda_runtime`): 手動/スケジュール実行
-    - `rebuilder.rs` (DynamoDBからOpenSearchインデックス再構築)
+    - `indexer.rs` (INSERT/MODIFY/REMOVEイベントをSQLite APIにインデックス)
+  - **運用ツール系** (CLIバイナリ): ローカル/EC2で手動実行
+    - `sqlite_rebuilder.rs` (DynamoDBからSQLiteインデックス再構築)
 
 ### レイヤードアーキテクチャ（Relay Service）
 ```
@@ -129,12 +136,19 @@ src/
 
 **Infrastructure層**: 外部システムとの連携
 - DynamoDB接続設定・Repository実装
-- OpenSearch連携（クライアント、インデクサー、再構築ツール）
+- HTTP SQLite連携（`http_sqlite/`モジュール: クライアント、インデクサー、再構築ツール）
 - WebSocket送信機能（API Gateway Management API）
 - 構造化ログ初期化（tracing）
 
+### SQLite API パターン (`services/sqlite-api/`)
+- 単一バイナリ構成（`src/main.rs`）
+- axum HTTPサーバーフレームワーク
+- SQLite接続プール (deadpool-sqlite)
+- ビルド: `cargo zigbuild --release --target aarch64-unknown-linux-gnu`
+- デプロイ: S3アップロード → SSM Run Commandでバイナリ更新
+
 ### Terraform モジュールパターン
-- 各モジュールは単一責務（domain, api, web）
+- 各モジュールは単一責務（domain, api, web, ec2-search）
 - 変数で依存関係を注入（zone_id, certificate_arn等）
 - 出力値で他モジュールへ情報を公開
 - 複雑なモジュールはリソース種別でファイル分割:
@@ -142,7 +156,7 @@ src/
   - `api/cloudfront.tf` - CloudFrontディストリビューション
   - `api/lambda_edge.tf` - Lambda@Edgeルーター
   - `api/dynamodb.tf` - DynamoDBテーブル
-  - `api/opensearch.tf` - OpenSearch Service, Indexer Lambda
+  - `api/indexer.tf` - Indexer Lambda
   - `api/nip11.tf` - NIP-11 Lambda Function URL
   - `api/cloudwatch_logs.tf` - CloudWatch Logsロググループ（90日保存）
 

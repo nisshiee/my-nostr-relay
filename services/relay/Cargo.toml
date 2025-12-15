@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 
 [dependencies]
@@ -22,6 +22,9 @@ aws-sdk-apigatewaymanagement = "1"
 # AWS SDK - 認証と設定
 aws-config = "1"
 
+# AWS SDK - SSM Parameter Store（APIトークン取得用）
+aws-sdk-ssm = "1"
+
 # 非同期トレイトサポート
 async-trait = "0.1"
 
@@ -39,14 +42,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # 非同期ランタイム
 tokio = { version = "1.48.0", features = ["full"] }
 
-# OpenSearchクライアント with AWS認証（rustls-tlsを使用してクロスコンパイル対応）
-opensearch = { version = "2.3", default-features = false, features = ["aws-auth", "rustls-tls"] }
-
 # URL解析
 url = "2"
 
+# HTTPクライアント（EC2 HTTP API接続用、rustls-tlsを使用してクロスコンパイル対応）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# HTTPクライアント再試行ミドルウェア（IndexerClient用）
+reqwest-middleware = "0.4"
+reqwest-retry = "0.7"
+
 # AWS Lambda イベント型定義（DynamoDB Streams等）
 aws_lambda_events = "0.15"
+
+# コマンドライン引数パーサー（sqlite_rebuilder用）
+clap = { version = "4", features = ["derive"] }
 
 # DynamoDB AttributeValue（aws_lambda_eventsで使用）
 serde_dynamo = "4"
@@ -56,3 +66,7 @@ serde_dynamo = "4"
 serial_test = "3"
 # テスト用日時操作（aws_lambda_eventsが依存）
 chrono = "0.4"
+
+# リリースビルドでもbacktraceを有効にする
+[profile.release]
+debug = 1  # シンボル情報を含める（backtrace用）

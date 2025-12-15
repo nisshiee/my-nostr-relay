@@ -3,32 +3,44 @@
 /// API Gateway WebSocketのメッセージリクエストを処理し、
 /// EVENT, REQ, CLOSEメッセージを適切なハンドラーに委譲する。
 ///
-/// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3, 19.2, 19.5, 19.6
-/// 追加要件（OpenSearch REQ処理）: Task 8.1 - OpenSearchEventRepositoryを使用
+/// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3
+///
+/// 検索基盤: EC2 SQLite API (HttpSqliteEventRepository)
+/// - SQLiteが設定されている場合はSQLiteを使用
+/// - SQLiteが設定されていない場合はDynamoDBにフォールバック
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::application::DefaultHandler;
 use relay::domain::LimitationConfig;
 use relay::infrastructure::{
     init_logging, ApiGatewayWebSocketSender, DynamoDbConfig, DynamoEventRepository,
-    DynamoSubscriptionRepository, OpenSearchConfig, OpenSearchEventRepository,
+    DynamoSubscriptionRepository, HttpSqliteConfig, HttpSqliteEventRepository,
 };
 use serde_json::Value;
 use tokio::sync::OnceCell;
 use tracing::{error, info, trace};
 
-/// OpenSearchEventRepositoryの静的インスタンス
+/// HttpSqliteEventRepositoryの静的インスタンス
 ///
 /// Lambda warm start時にコネクションを再利用するため、
-/// 一度初期化したクライアントを静的に保持する。
-static OPENSEARCH_REPO: OnceCell<OpenSearchEventRepository> = OnceCell::const_new();
+/// 一度初期化したリポジトリを静的に保持する。
+/// Task 3.3: EC2 + SQLite検索基盤への接続
+/// Task 3.6: 初期化時にSSMからトークンを取得するため非同期に変更
+static HTTP_SQLITE_REPO: OnceCell<HttpSqliteEventRepository> = OnceCell::const_new();
 
-/// OpenSearchEventRepositoryを取得（初期化されていなければ初期化）
-async fn get_opensearch_repo(
-    config: &OpenSearchConfig,
-) -> Result<&'static OpenSearchEventRepository, relay::infrastructure::OpenSearchEventRepositoryError>
-{
-    OPENSEARCH_REPO
-        .get_or_try_init(|| async { OpenSearchEventRepository::new(config).await })
+/// HttpSqliteEventRepositoryを取得（初期化されていなければ初期化）
+///
+/// # 戻り値
+/// * `Ok(&'static HttpSqliteEventRepository)` - 静的参照へのリポジトリ
+/// * `Err(HttpSqliteConfigError)` - 設定読み込みエラー
+///
+/// Task 3.3: EC2 + SQLite検索基盤への接続
+/// Task 3.6: SSMからAPIトークンを取得（非同期初期化）
+async fn get_http_sqlite_repo() -> Result<&'static HttpSqliteEventRepository, relay::infrastructure::HttpSqliteConfigError> {
+    HTTP_SQLITE_REPO
+        .get_or_try_init(|| async {
+            let config = HttpSqliteConfig::from_env_with_ssm().await?;
+            Ok(HttpSqliteEventRepository::new(config))
+        })
         .await
 }
 
@@ -50,6 +62,10 @@ async fn main() -> Result<(), Error> {
 /// 2. WebSocket送信用のエンドポイントURLを構築
 /// 3. DefaultHandlerを使用してメッセージを処理
 /// 4. 成功時は200 OK、失敗時は適切なレスポンスを返却
+///
+/// # 検索バックエンド
+/// - SQLite (HttpSqliteEventRepository): プライマリ検索バックエンド
+/// - DynamoDB (DynamoEventRepository): SQLiteが設定されていない場合のフォールバック
 async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     // requestContextから情報を取得
     let request_context = event.payload.get("requestContext");
@@ -150,52 +166,30 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
     // 制限値設定を環境変数から読み込み
     let limitation_config = LimitationConfig::from_env();
 
-    // OpenSearch設定を環境変数から読み込み（Task 8.1）
-    // OPENSEARCH_ENDPOINTが設定されている場合はOpenSearchEventRepositoryを使用
-    // 設計決定: 初期化失敗時はDynamoDBへのフォールバックは行わず、エラーを返す
-    let opensearch_config = OpenSearchConfig::from_env();
-    let result = match opensearch_config {
-        Ok(os_config) => {
-            // OpenSearchEventRepositoryを取得（静的保持でwarm start時再利用）
-            match get_opensearch_repo(&os_config).await {
-                Ok(query_repo) => {
-                    info!(
-                        connection_id = connection_id,
-                        endpoint = os_config.endpoint(),
-                        index_name = os_config.index_name(),
-                        "OpenSearchEventRepositoryを使用してクエリを実行"
-                    );
+    // SQLiteを試行、失敗時はDynamoDBにフォールバック
+    let result = match get_http_sqlite_repo().await {
+        Ok(query_repo) => {
+            info!(
+                connection_id = connection_id,
+                backend = "sqlite",
+                endpoint = query_repo.config().endpoint(),
+                "SQLiteバックエンドを使用"
+            );
 
-                    // OpenSearchをクエリ用に使用（静的リポジトリをクローン）
-                    let default_handler = DefaultHandler::with_query_repo(
-                        event_repo,
-                        query_repo.clone(),
-                        subscription_repo,
-                        ws_sender,
-                        limitation_config,
-                    );
-                    default_handler.handle(&event.payload).await
-                }
-                Err(err) => {
-                    // OpenSearch初期化失敗時はエラーを返す（フォールバックしない）
-                    error!(
-                        connection_id = connection_id,
-                        error = %err,
-                        "OpenSearchEventRepository初期化失敗"
-                    );
-                    return Ok(serde_json::json!({
-                        "statusCode": 500,
-                        "body": "OpenSearch initialization failed"
-                    }));
-                }
-            }
+            let default_handler = DefaultHandler::with_query_repo(
+                event_repo,
+                query_repo.clone(),
+                subscription_repo,
+                ws_sender,
+                limitation_config,
+            );
+            default_handler.handle(&event.payload).await
         }
-        Err(_) => {
-            // OPENSEARCH_ENDPOINTが設定されていない場合はDynamoDBを使用
-            // これはフォールバックではなく、設定に基づく選択
+        Err(err) => {
             trace!(
                 connection_id = connection_id,
-                "OpenSearch設定なし、DynamoEventRepositoryを使用"
+                error = %err,
+                "SQLite設定なし、DynamoDBを使用"
             );
 
             let default_handler = DefaultHandler::with_config(
@@ -234,4 +228,3 @@ async fn handler(event: LambdaEvent<Value>) -> Result<Value, Error> {
         }
     }
 }
-

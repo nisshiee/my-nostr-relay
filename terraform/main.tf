@@ -31,6 +31,8 @@ provider "vercel" {
   # VERCEL_API_TOKEN is required
 }
 
+data "aws_caller_identity" "current" {}
+
 locals {
   domain_name = "nostr.nisshiee.org"
 }
@@ -103,16 +105,38 @@ module "api" {
   relay_terms_of_service = "https://nostr.nisshiee.org/relay/terms"
   relay_posting_policy   = "https://nostr.nisshiee.org/relay/posting-policy"
 
+  # Task 3.5: EC2 SQLite検索API設定
+  sqlite_api_endpoint         = module.ec2_search.search_api_url
+  sqlite_api_token_param_path = module.ec2_search.parameter_store_path
+  lambda_ssm_policy_arn       = module.ec2_search.lambda_ssm_policy_arn
+
   providers = {
     aws           = aws
     aws.us_east_1 = aws.us_east_1
   }
+
+  depends_on = [module.ec2_search]
 }
 
 module "web" {
   source      = "./modules/web"
   domain_name = local.domain_name
   zone_id     = module.domain.zone_id
+}
+
+# ------------------------------------------------------------------------------
+# EC2 Search Module
+# SQLiteベースの検索APIサーバー用インフラストラクチャ
+# OpenSearch Serviceの低コスト代替として導入
+# ------------------------------------------------------------------------------
+module "ec2_search" {
+  source               = "./modules/ec2-search"
+  domain_name          = local.domain_name
+  zone_id              = module.domain.zone_id
+  binary_bucket        = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
+  binary_key           = "sqlite-api/sqlite-api"
+  binary_name          = "sqlite-api"
+  parameter_store_path = "/nostr-relay/ec2-search/api-token"
 }
 
 output "nameservers" {
@@ -127,7 +151,68 @@ output "cloudfront_domain_name" {
   value = module.api.cloudfront_domain_name
 }
 
-output "opensearch_endpoint" {
-  description = "OpenSearchドメインエンドポイント"
-  value       = module.api.opensearch_endpoint
+output "ec2_search_security_group_id" {
+  description = "EC2検索サーバー用セキュリティグループID"
+  value       = module.ec2_search.security_group_id
+}
+
+output "ec2_search_instance_id" {
+  description = "EC2検索サーバーインスタンスID"
+  value       = module.ec2_search.instance_id
+}
+
+output "ec2_search_private_ip" {
+  description = "EC2検索サーバーのプライベートIPアドレス"
+  value       = module.ec2_search.private_ip
+}
+
+output "ec2_search_elastic_ip" {
+  description = "EC2検索サーバーのElastic IP（パブリックIPアドレス）"
+  value       = module.ec2_search.elastic_ip
+}
+
+output "ec2_search_api_endpoint" {
+  description = "EC2検索APIエンドポイントFQDN"
+  value       = module.ec2_search.search_api_endpoint
+}
+
+output "ec2_search_api_url" {
+  description = "EC2検索APIのベースURL"
+  value       = module.ec2_search.search_api_url
+  sensitive   = true
+}
+
+output "ec2_search_parameter_store_path" {
+  description = "APIトークンを保存するParameter Storeのパス"
+  value       = module.ec2_search.parameter_store_path
+}
+
+output "ec2_search_binary_bucket" {
+  description = "HTTP APIサーバーバイナリを格納するS3バケット名"
+  value       = module.ec2_search.binary_bucket
+}
+
+output "ec2_search_api_token_parameter_arn" {
+  description = "APIトークンパラメータのARN"
+  value       = module.ec2_search.api_token_parameter_arn
+}
+
+output "ec2_search_lambda_ssm_policy_arn" {
+  description = "Lambda用SSMアクセスポリシーのARN（Lambda IAMロールにアタッチ用）"
+  value       = module.ec2_search.lambda_ssm_policy_arn
+}
+
+output "ec2_search_binary_bucket_arn" {
+  description = "バイナリ配布用S3バケットのARN"
+  value       = module.ec2_search.binary_bucket_arn
+}
+
+output "ec2_search_ssm_document_name" {
+  description = "バイナリ更新用SSMドキュメント名"
+  value       = module.ec2_search.ssm_document_name
+}
+
+output "ec2_search_ssm_document_arn" {
+  description = "バイナリ更新用SSMドキュメントのARN"
+  value       = module.ec2_search.ssm_document_arn
 }

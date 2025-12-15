@@ -21,6 +21,27 @@ variable "certificate_arn" {
 }
 
 # ------------------------------------------------------------------------------
+# EC2 SQLite検索API関連変数
+# Task 3.5: Lambda環境変数とIAM設定
+# ------------------------------------------------------------------------------
+variable "sqlite_api_endpoint" {
+  description = "EC2 SQLite検索APIのエンドポイントURL"
+  type        = string
+}
+
+variable "sqlite_api_token_param_path" {
+  description = "APIトークンを保存するParameter Storeのパス"
+  type        = string
+}
+
+variable "lambda_ssm_policy_arn" {
+  description = "Lambda用SSMアクセスポリシーのARN"
+  type        = string
+}
+
+# Task 6.1: search_backend_priority変数は廃止（SQLiteのみ使用）
+
+# ------------------------------------------------------------------------------
 # IAM Role
 # ------------------------------------------------------------------------------
 resource "aws_iam_role" "lambda_exec" {
@@ -41,6 +62,15 @@ resource "aws_iam_role" "lambda_exec" {
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
   role       = aws_iam_role.lambda_exec.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# ------------------------------------------------------------------------------
+# Task 3.5: Parameter Storeアクセス用IAMポリシーをアタッチ
+# Lambda関数がEC2検索API用のAPIトークンを取得するために必要
+# ------------------------------------------------------------------------------
+resource "aws_iam_role_policy_attachment" "lambda_ssm" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = var.lambda_ssm_policy_arn
 }
 
 # ------------------------------------------------------------------------------
@@ -67,6 +97,8 @@ resource "aws_lambda_function" "connect" {
       EVENTS_TABLE        = aws_dynamodb_table.events.name
       CONNECTIONS_TABLE   = aws_dynamodb_table.connections.name
       SUBSCRIPTIONS_TABLE = aws_dynamodb_table.subscriptions.name
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
     }
   }
 }
@@ -92,6 +124,8 @@ resource "aws_lambda_function" "disconnect" {
       EVENTS_TABLE        = aws_dynamodb_table.events.name
       CONNECTIONS_TABLE   = aws_dynamodb_table.connections.name
       SUBSCRIPTIONS_TABLE = aws_dynamodb_table.subscriptions.name
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
     }
   }
 }
@@ -109,7 +143,7 @@ resource "aws_lambda_function" "default" {
   runtime          = "provided.al2023"
   filename         = data.archive_file.default.output_path
   source_code_hash = data.archive_file.default.output_base64sha256
-  timeout          = 10
+  timeout          = 30
   architectures    = ["arm64"]
 
   environment {
@@ -118,9 +152,11 @@ resource "aws_lambda_function" "default" {
       CONNECTIONS_TABLE    = aws_dynamodb_table.connections.name
       SUBSCRIPTIONS_TABLE  = aws_dynamodb_table.subscriptions.name
       API_GATEWAY_ENDPOINT = "https://${aws_apigatewayv2_api.relay.id}.execute-api.ap-northeast-1.amazonaws.com/${aws_apigatewayv2_stage.default.name}"
-      # Task 1.3: OpenSearch環境変数
-      OPENSEARCH_ENDPOINT = "https://${aws_opensearch_domain.nostr_relay.endpoint}"
-      OPENSEARCH_INDEX    = "nostr_events"
+      # Task 6.1: OpenSearch環境変数を削除、SQLite検索APIのみ使用
+      SQLITE_API_ENDPOINT    = var.sqlite_api_endpoint
+      SQLITE_API_TOKEN_PARAM = var.sqlite_api_token_param_path
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
     }
   }
 }

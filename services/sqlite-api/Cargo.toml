@@ -1,0 +1,48 @@
+[package]
+name = "sqlite-api"
+version = "1.0.0"
+edition = "2024"
+description = "EC2上で動作するNostrイベント検索用HTTP APIサーバー"
+
+# ARM64向けバイナリ設定
+[[bin]]
+name = "sqlite-api"
+path = "src/main.rs"
+
+[dependencies]
+# HTTPサーバーフレームワーク (tower互換、async-trait不要)
+axum = "0.8"
+
+# SQLiteバインディング (バンドル版でクロスコンパイル対応)
+# deadpool-sqlite 0.12 が依存する rusqlite 0.37 を使用
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# 読み取り用async接続プール (rusqlite互換、Tokio対応)
+deadpool-sqlite = "0.12"
+
+# 非同期ランタイム
+tokio = { version = "1", features = ["full"] }
+
+# 構造化ログ
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# HTTPミドルウェア（リクエストトレーシング用）
+tower-http = { version = "0.6", features = ["trace"] }
+
+# シリアライズ/デシリアライズ
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# エラーハンドリング
+thiserror = "2"
+
+[dev-dependencies]
+# axumテスト用（oneshot等）
+tower = "0.5"
+# テスト用一時ディレクトリ
+tempfile = "3"
+
+# リリースビルドでもbacktraceを有効にする
+[profile.release]
+debug = 1  # シンボル情報を含める（backtrace用）
