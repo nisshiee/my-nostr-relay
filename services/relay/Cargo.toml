@@ -42,9 +42,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # 非同期ランタイム
 tokio = { version = "1.48.0", features = ["full"] }
 
-# OpenSearchクライアント with AWS認証（rustls-tlsを使用してクロスコンパイル対応）
-opensearch = { version = "2.3", default-features = false, features = ["aws-auth", "rustls-tls"] }
-
 # URL解析
 url = "2"
 

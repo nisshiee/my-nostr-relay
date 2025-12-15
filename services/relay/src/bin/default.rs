@@ -4,7 +4,6 @@
 /// EVENT, REQ, CLOSEメッセージを適切なハンドラーに委譲する。
 ///
 /// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3
-/// Task 6.1: OpenSearch参照を削除し、SQLiteのみを使用
 ///
 /// 検索基盤: EC2 SQLite API (HttpSqliteEventRepository)
 /// - SQLiteが設定されている場合はSQLiteを使用

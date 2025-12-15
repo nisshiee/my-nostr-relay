@@ -6,7 +6,6 @@
 ///
 /// 要件: 5.3, 5.4 (search-ec2-sqlite)
 /// Task 3.6: SSM Parameter StoreからAPIトークンを取得
-/// Task 6.1: OpenSearch参照を削除し、SQLiteのみを使用
 use aws_lambda_events::event::dynamodb::Event;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::infrastructure::{
@@ -66,7 +65,6 @@ async fn main() -> Result<(), Error> {
 /// - 5.3: INSERT/MODIFYイベントでPOST /eventsを送信
 /// - 5.4: REMOVEイベントでDELETE /events/{id}を送信
 /// - Task 3.6: SSMからAPIトークンを取得
-/// - Task 6.1: SQLiteのみを使用（OpenSearch廃止）
 async fn handler(event: LambdaEvent<Event>) -> Result<(), Error> {
     let event = event.payload;
     let record_count = event.records.len();

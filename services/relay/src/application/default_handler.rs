@@ -2,7 +2,7 @@
 ///
 /// $defaultルートでLambdaが呼び出された際の処理を実行する
 /// 要件: 5.1, 6.1, 7.1, 14.4, 15.1, 15.2, 15.3
-/// 追加要件（OpenSearch REQ処理）: Task 8.1 - QueryRepository依存注入
+/// 追加要件（REQ処理）: Task 8.1 - QueryRepository依存注入
 use serde_json::Value;
 
 use crate::application::{ClientMessage, EventHandler, MessageParser, ParseError, SubscriptionHandler};
@@ -50,7 +50,7 @@ impl std::error::Error for DefaultHandlerError {}
 ///
 /// # 型パラメータ
 /// - `ER`: EventRepository - イベントの保存に使用
-/// - `QR`: QueryRepository - イベントのクエリに使用（Task 8.1: OpenSearch対応）
+/// - `QR`: QueryRepository - イベントのクエリに使用（Task 8.1: SQLite対応）
 /// - `SR`: SubscriptionRepository - サブスクリプション管理に使用
 /// - `WS`: WebSocketSender - WebSocket送信に使用
 pub struct DefaultHandler<ER, QR, SR, WS>
@@ -122,11 +122,11 @@ where
     /// クエリ用に別のリポジトリを使用してDefaultHandlerを作成（Task 8.1）
     ///
     /// EventRepositoryはイベント保存に、QueryRepositoryはクエリに使用する。
-    /// これにより、DynamoDBで保存しながらOpenSearchでクエリすることが可能。
+    /// これにより、DynamoDBで保存しながらSQLiteでクエリすることが可能。
     ///
     /// # Arguments
     /// * `event_repo` - イベント保存用リポジトリ（DynamoEventRepository）
-    /// * `query_repo` - クエリ用リポジトリ（OpenSearchEventRepository）
+    /// * `query_repo` - クエリ用リポジトリ（HttpSqliteEventRepository）
     /// * `subscription_repo` - サブスクリプション管理用リポジトリ
     /// * `ws_sender` - WebSocket送信
     /// * `limitation_config` - 制限値設定

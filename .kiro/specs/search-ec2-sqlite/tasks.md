@@ -237,7 +237,7 @@
   - terraform applyでリソースを削除
   - _Requirements: 7.1, 7.2_
 
-- [ ] 6.3 Rustコードベースのクリーンアップ
+- [x] 6.3 Rustコードベースのクリーンアップ
   - OpenSearch関連の依存関係を削除（Cargo.toml）
   - OpenSearchEventRepository等の関連コードを削除
   - 未使用のインポートを整理

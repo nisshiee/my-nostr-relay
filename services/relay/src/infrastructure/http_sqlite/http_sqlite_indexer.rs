@@ -1,7 +1,7 @@
 // HttpSqliteIndexer - DynamoDB StreamsからHTTP SQLiteへのインデックス処理
 //
 // DynamoDB Streamsイベントを受け取り、IndexerClientを使用してEC2 HTTP APIに
-// イベントを登録/削除する。OpenSearch Indexerと同様のインターフェースを提供。
+// イベントを登録/削除する。
 //
 // 要件: 5.3, 5.4
 
