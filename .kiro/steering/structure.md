@@ -66,9 +66,9 @@ terraform/
 - HTTP系:
   - `nip11_info.rs` -> `nostr_relay_nip11` (NIP-11リレー情報)
 - DynamoDB Streams系:
-  - `indexer.rs` -> `nostr_relay_indexer` (OpenSearchインデックス)
+  - `indexer.rs` -> `nostr_relay_indexer` (SQLite APIへのインデックス)
 - 運用ツール系:
-  - `rebuilder.rs` -> `nostr_relay_rebuilder` (インデックス再構築)
+  - `sqlite_rebuilder.rs` (SQLiteインデックス再構築、CLI)
 
 ## Import Organization
 
@@ -108,9 +108,9 @@ import { ... } from './components';
   - **HTTP系** (`lambda_http`): Lambda Function URL経由
     - NIP-11 -> `nip11_info.rs` (環境変数から11個のリレー情報フィールド読み込み)
   - **DynamoDB Streams系** (`lambda_runtime`): DynamoDB Streams経由
-    - `indexer.rs` (INSERT/MODIFY/REMOVEイベントをOpenSearchにインデックス)
-  - **運用ツール系** (`lambda_runtime`): 手動/スケジュール実行
-    - `rebuilder.rs` (DynamoDBからOpenSearchインデックス再構築)
+    - `indexer.rs` (INSERT/MODIFY/REMOVEイベントをSQLite APIにインデックス)
+  - **運用ツール系** (CLIバイナリ): ローカル/EC2で手動実行
+    - `sqlite_rebuilder.rs` (DynamoDBからSQLiteインデックス再構築)
 
 ### レイヤードアーキテクチャ（Relay Service）
 ```
@@ -136,7 +136,7 @@ src/
 
 **Infrastructure層**: 外部システムとの連携
 - DynamoDB接続設定・Repository実装
-- OpenSearch連携（クライアント、インデクサー、再構築ツール）
+- HTTP SQLite連携（`http_sqlite/`モジュール: クライアント、インデクサー、再構築ツール）
 - WebSocket送信機能（API Gateway Management API）
 - 構造化ログ初期化（tracing）
 
@@ -156,7 +156,7 @@ src/
   - `api/cloudfront.tf` - CloudFrontディストリビューション
   - `api/lambda_edge.tf` - Lambda@Edgeルーター
   - `api/dynamodb.tf` - DynamoDBテーブル
-  - `api/opensearch.tf` - OpenSearch Service, Indexer Lambda
+  - `api/indexer.tf` - Indexer Lambda
   - `api/nip11.tf` - NIP-11 Lambda Function URL
   - `api/cloudwatch_logs.tf` - CloudWatch Logsロググループ（90日保存）
 
