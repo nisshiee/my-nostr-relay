@@ -39,11 +39,7 @@ variable "lambda_ssm_policy_arn" {
   type        = string
 }
 
-variable "search_backend_priority" {
-  description = "検索バックエンドの優先順位 (opensearch or sqlite)"
-  type        = string
-  default     = "opensearch"
-}
+# Task 6.1: search_backend_priority変数は廃止（SQLiteのみ使用）
 
 # ------------------------------------------------------------------------------
 # IAM Role
@@ -156,14 +152,9 @@ resource "aws_lambda_function" "default" {
       CONNECTIONS_TABLE    = aws_dynamodb_table.connections.name
       SUBSCRIPTIONS_TABLE  = aws_dynamodb_table.subscriptions.name
       API_GATEWAY_ENDPOINT = "https://${aws_apigatewayv2_api.relay.id}.execute-api.ap-northeast-1.amazonaws.com/${aws_apigatewayv2_stage.default.name}"
-      # Task 1.3: OpenSearch環境変数（Phase 4で削除予定）
-      OPENSEARCH_ENDPOINT = "https://${aws_opensearch_domain.nostr_relay.endpoint}"
-      OPENSEARCH_INDEX    = "nostr_events"
-      # Task 3.5: EC2 SQLite検索API環境変数
+      # Task 6.1: OpenSearch環境変数を削除、SQLite検索APIのみ使用
       SQLITE_API_ENDPOINT    = var.sqlite_api_endpoint
       SQLITE_API_TOKEN_PARAM = var.sqlite_api_token_param_path
-      # 並行稼働: 検索バックエンドの優先順位 ("opensearch" or "sqlite")
-      SEARCH_BACKEND_PRIORITY = var.search_backend_priority
       # パニック時にバックトレースを出力
       RUST_BACKTRACE = "1"
     }

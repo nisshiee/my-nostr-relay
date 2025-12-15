@@ -223,14 +223,14 @@
 ## Phase 6: OpenSearch廃止
 
 - [ ] 6. OpenSearch関連リソースのクリーンアップ
-- [ ] 6.1 OpenSearch接続の無効化
+- [x] 6.1 OpenSearch接続の無効化
 
   - Lambda関数からOpenSearch参照を削除
   - 環境変数からOpenSearch関連設定を削除
   - デプロイして新構成での動作を確認
   - _Requirements: 7.4_
 
-- [ ] 6.2 TerraformからOpenSearchリソース削除
+- [x] 6.2 TerraformからOpenSearchリソース削除
 
   - opensearch.tfからOpenSearch Serviceドメインを削除
   - Indexer LambdaのOpenSearch関連IAMポリシーを削除

@@ -151,11 +151,6 @@ output "cloudfront_domain_name" {
   value = module.api.cloudfront_domain_name
 }
 
-output "opensearch_endpoint" {
-  description = "OpenSearchドメインエンドポイント"
-  value       = module.api.opensearch_endpoint
-}
-
 output "ec2_search_security_group_id" {
   description = "EC2検索サーバー用セキュリティグループID"
   value       = module.ec2_search.security_group_id
