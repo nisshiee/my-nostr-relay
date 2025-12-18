@@ -1,0 +1,22 @@
+{
+  "feature_name": "aws-budget-service-shutdown",
+  "created_at": "2025-12-17T01:20:42Z",
+  "updated_at": "2025-12-17T02:30:00Z",
+  "language": "ja",
+  "phase": "tasks-approved",
+  "approvals": {
+    "requirements": {
+      "generated": true,
+      "approved": true
+    },
+    "design": {
+      "generated": true,
+      "approved": true
+    },
+    "tasks": {
+      "generated": true,
+      "approved": true
+    }
+  },
+  "ready_for_implementation": true
+}
