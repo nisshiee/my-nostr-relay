@@ -41,6 +41,27 @@ variable "slack_channel_id" {
   type        = string
 }
 
+variable "relay_lambda_function_names" {
+  description = "停止対象のrelay Lambda関数名リスト"
+  type        = list(string)
+}
+
+variable "ec2_instance_id" {
+  description = "sqlite-api EC2インスタンスID"
+  type        = string
+}
+
+variable "cloudfront_distribution_id" {
+  description = "CloudFrontディストリビューションID"
+  type        = string
+}
+
+variable "sqlite_api_systemd_service" {
+  description = "sqlite-apiのsystemdサービス名"
+  type        = string
+  default     = "nostr-api"
+}
+
 # ------------------------------------------------------------------------------
 # Task 4.1: 予算アラート用SNSトピック
 #
@@ -221,6 +242,255 @@ resource "aws_chatbot_slack_channel_configuration" "budget_alerts" {
 }
 
 # ------------------------------------------------------------------------------
+# Task 4.3: Shutdown Lambda用IAMロールとポリシー
+#
+# 要件:
+# - Lambda PutFunctionConcurrency/GetFunction権限を付与
+# - EC2 StopInstances/DescribeInstances権限を付与
+# - SSM SendCommand/GetCommandInvocation権限を付与
+# - CloudFront UpdateDistribution/GetDistribution権限を付与
+# - SNS Publish権限を付与
+# - CloudWatch Logs権限を付与
+# - リソースARNを限定して最小権限を実現
+#
+# Requirements: 5.2, 5.3
+# ------------------------------------------------------------------------------
+
+# Shutdown Lambda用IAMロール
+resource "aws_iam_role" "shutdown_lambda" {
+  name = "nostr-relay-shutdown-lambda"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Name = "nostr-relay-shutdown-lambda"
+  }
+}
+
+# Shutdown Lambda用IAMポリシー
+resource "aws_iam_role_policy" "shutdown_lambda" {
+  name = "nostr-relay-shutdown-lambda-policy"
+  role = aws_iam_role.shutdown_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Lambda Concurrency制御権限
+      # relay Lambda関数のreserved concurrencyを0に設定/削除
+      {
+        Sid    = "LambdaConcurrencyControl"
+        Effect = "Allow"
+        Action = [
+          "lambda:PutFunctionConcurrency",
+          "lambda:GetFunction"
+        ]
+        Resource = [
+          for name in var.relay_lambda_function_names :
+          "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${name}"
+        ]
+      },
+      # EC2停止権限
+      # sqlite-api EC2インスタンスを停止
+      {
+        Sid    = "EC2StopControl"
+        Effect = "Allow"
+        Action = [
+          "ec2:StopInstances"
+        ]
+        Resource = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/${var.ec2_instance_id}"
+      },
+      # EC2状態確認権限
+      # インスタンス状態を確認するために必要
+      {
+        Sid    = "EC2DescribeInstances"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances"
+        ]
+        Resource = "*"
+      },
+      # SSM Run Command権限
+      # sqlite-apiのgraceful stopを実行
+      {
+        Sid    = "SSMRunCommand"
+        Effect = "Allow"
+        Action = [
+          "ssm:SendCommand"
+        ]
+        Resource = [
+          "arn:aws:ssm:${data.aws_region.current.name}::document/AWS-RunShellScript",
+          "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/${var.ec2_instance_id}"
+        ]
+      },
+      # SSMコマンド結果取得権限
+      {
+        Sid    = "SSMGetCommandInvocation"
+        Effect = "Allow"
+        Action = [
+          "ssm:GetCommandInvocation"
+        ]
+        Resource = "*"
+      },
+      # CloudFront無効化権限
+      {
+        Sid    = "CloudFrontControl"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:UpdateDistribution",
+          "cloudfront:GetDistribution"
+        ]
+        Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${var.cloudfront_distribution_id}"
+      },
+      # SNS通知権限
+      # 結果通知をSNSトピックに発行
+      {
+        Sid    = "SNSPublish"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = aws_sns_topic.result.arn
+      },
+      # CloudWatch Logs権限
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/nostr-relay-shutdown:*"
+      }
+    ]
+  })
+}
+
+# ------------------------------------------------------------------------------
+# Task 4.3: Recovery Lambda用IAMロールとポリシー
+#
+# 要件:
+# - Lambda DeleteFunctionConcurrency/GetFunction権限を付与
+# - EC2 StartInstances/DescribeInstances権限を付与
+# - CloudFront UpdateDistribution/GetDistribution権限を付与
+# - SNS Publish権限を付与
+# - CloudWatch Logs権限を付与
+# - リソースARNを限定して最小権限を実現
+#
+# Requirements: 5.2, 5.3
+# ------------------------------------------------------------------------------
+
+# Recovery Lambda用IAMロール
+resource "aws_iam_role" "recovery_lambda" {
+  name = "nostr-relay-recovery-lambda"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+
+  tags = {
+    Name = "nostr-relay-recovery-lambda"
+  }
+}
+
+# Recovery Lambda用IAMポリシー
+resource "aws_iam_role_policy" "recovery_lambda" {
+  name = "nostr-relay-recovery-lambda-policy"
+  role = aws_iam_role.recovery_lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # Lambda Concurrency制御権限
+      # relay Lambda関数のreserved concurrency設定を削除
+      {
+        Sid    = "LambdaConcurrencyControl"
+        Effect = "Allow"
+        Action = [
+          "lambda:DeleteFunctionConcurrency",
+          "lambda:GetFunction"
+        ]
+        Resource = [
+          for name in var.relay_lambda_function_names :
+          "arn:aws:lambda:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:function:${name}"
+        ]
+      },
+      # EC2起動権限
+      # sqlite-api EC2インスタンスを起動
+      {
+        Sid    = "EC2StartControl"
+        Effect = "Allow"
+        Action = [
+          "ec2:StartInstances"
+        ]
+        Resource = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:instance/${var.ec2_instance_id}"
+      },
+      # EC2状態確認権限
+      # インスタンス状態を確認するために必要
+      {
+        Sid    = "EC2DescribeInstances"
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances"
+        ]
+        Resource = "*"
+      },
+      # CloudFront有効化権限
+      {
+        Sid    = "CloudFrontControl"
+        Effect = "Allow"
+        Action = [
+          "cloudfront:UpdateDistribution",
+          "cloudfront:GetDistribution"
+        ]
+        Resource = "arn:aws:cloudfront::${data.aws_caller_identity.current.account_id}:distribution/${var.cloudfront_distribution_id}"
+      },
+      # SNS通知権限
+      # 結果通知をSNSトピックに発行
+      {
+        Sid    = "SNSPublish"
+        Effect = "Allow"
+        Action = [
+          "sns:Publish"
+        ]
+        Resource = aws_sns_topic.result.arn
+      },
+      # CloudWatch Logs権限
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/nostr-relay-recovery:*"
+      }
+    ]
+  })
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
@@ -262,4 +532,24 @@ output "chatbot_configuration_arn" {
 output "chatbot_role_arn" {
   description = "AWS Chatbot IAMロールARN"
   value       = aws_iam_role.chatbot.arn
+}
+
+output "shutdown_lambda_role_arn" {
+  description = "Shutdown Lambda IAMロールARN"
+  value       = aws_iam_role.shutdown_lambda.arn
+}
+
+output "shutdown_lambda_role_name" {
+  description = "Shutdown Lambda IAMロール名"
+  value       = aws_iam_role.shutdown_lambda.name
+}
+
+output "recovery_lambda_role_arn" {
+  description = "Recovery Lambda IAMロールARN"
+  value       = aws_iam_role.recovery_lambda.arn
+}
+
+output "recovery_lambda_role_name" {
+  description = "Recovery Lambda IAMロール名"
+  value       = aws_iam_role.recovery_lambda.name
 }

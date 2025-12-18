@@ -97,7 +97,7 @@
   - _Requirements: 2.3, 2.4_
   - _Note: 4.1に依存_
 
-- [ ] 4.3 Shutdown/Recovery Lambda用IAMロールとポリシー
+- [x] 4.3 Shutdown/Recovery Lambda用IAMロールとポリシー
   - Shutdown Lambda用IAMロールを作成
   - Lambda PutFunctionConcurrency/DeleteFunctionConcurrency/GetFunction権限を付与
   - EC2 StopInstances/StartInstances/DescribeInstances権限を付与
