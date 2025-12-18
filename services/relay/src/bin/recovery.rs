@@ -14,7 +14,8 @@
 /// 要件: 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::infrastructure::{
-    init_logging, AwsEc2Ops, Ec2Ops, InstanceState, RecoveryConfig, RecoveryResult, StepResult,
+    init_logging, AwsEc2Ops, Ec2Ops, HealthCheckOps, HttpHealthCheck, InstanceState,
+    RecoveryConfig, RecoveryResult, StepResult,
 };
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -432,6 +433,12 @@ async fn execute_step2_start_ec2(config: &RecoveryConfig) -> Result<String, Stri
     }
 }
 
+/// ヘルスチェックの最大リトライ回数
+const HEALTH_CHECK_MAX_RETRIES: u32 = 5;
+
+/// ヘルスチェックのリトライ間隔（秒）
+const HEALTH_CHECK_RETRY_INTERVAL_SECS: u64 = 5;
+
 /// Step 3: sqlite-apiヘルスチェック
 ///
 /// /healthエンドポイントにHTTP GETリクエストを送信。
@@ -440,10 +447,53 @@ async fn execute_step2_start_ec2(config: &RecoveryConfig) -> Result<String, Stri
 /// # 戻り値
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
-async fn execute_step3_health_check(_config: &RecoveryConfig) -> Result<String, String> {
-    // TODO: Task 3.3で実装
-    info!("Step 3: sqlite-apiヘルスチェック（プレースホルダー）");
-    Ok("sqlite-api healthy (placeholder)".to_string())
+async fn execute_step3_health_check(config: &RecoveryConfig) -> Result<String, String> {
+    let endpoint = config.sqlite_api_endpoint();
+
+    info!(
+        endpoint = %endpoint,
+        max_retries = HEALTH_CHECK_MAX_RETRIES,
+        retry_interval_secs = HEALTH_CHECK_RETRY_INTERVAL_SECS,
+        "Step 3: sqlite-apiヘルスチェック開始"
+    );
+
+    // ヘルスチェッカーを作成
+    let health_checker = HttpHealthCheck::new();
+
+    // リトライ付きヘルスチェックを実行
+    match health_checker
+        .check_health_with_retry(
+            endpoint,
+            HEALTH_CHECK_MAX_RETRIES,
+            HEALTH_CHECK_RETRY_INTERVAL_SECS,
+        )
+        .await
+    {
+        Ok(result) => {
+            let message = result.message();
+            info!(
+                healthy = result.healthy,
+                status_code = result.status_code,
+                attempts = result.attempts,
+                duration_ms = result.total_duration_ms,
+                message = %message,
+                "sqlite-apiヘルスチェック成功"
+            );
+            Ok(message)
+        }
+        Err(err) => {
+            let error_message = format!(
+                "sqlite-apiヘルスチェック失敗: {} ({}回リトライ後)",
+                err, HEALTH_CHECK_MAX_RETRIES
+            );
+            warn!(
+                error = %err,
+                max_retries = HEALTH_CHECK_MAX_RETRIES,
+                "sqlite-apiヘルスチェック失敗"
+            );
+            Err(error_message)
+        }
+    }
 }
 
 /// Step 4: relay Lambda関数の有効化
@@ -555,5 +605,19 @@ mod tests {
         assert!(!result.skipped);
         assert_eq!(result.error_step.as_ref().unwrap(), "step2");
         assert_eq!(result.error_message.as_ref().unwrap(), "failed");
+    }
+
+    // ==================== ヘルスチェック定数テスト ====================
+
+    #[test]
+    fn test_health_check_max_retries_value() {
+        // 設計書に基づく最大リトライ回数: 5回
+        assert_eq!(HEALTH_CHECK_MAX_RETRIES, 5);
+    }
+
+    #[test]
+    fn test_health_check_retry_interval_value() {
+        // 設計書に基づくリトライ間隔: 5秒
+        assert_eq!(HEALTH_CHECK_RETRY_INTERVAL_SECS, 5);
     }
 }
