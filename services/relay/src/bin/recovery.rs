@@ -14,7 +14,7 @@
 /// 要件: 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::infrastructure::{
-    init_logging, RecoveryConfig, RecoveryResult, StepResult,
+    init_logging, AwsEc2Ops, Ec2Ops, InstanceState, RecoveryConfig, RecoveryResult, StepResult,
 };
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -279,7 +279,6 @@ async fn handler(event: LambdaEvent<Value>) -> Result<(), Error> {
 }
 
 /// EC2状態確認の結果
-#[allow(dead_code)] // Task 3.2で実装時に使用
 enum Ec2CheckResult {
     /// EC2が既に稼働中（スキップする）
     AlreadyRunning,
@@ -295,12 +294,73 @@ enum Ec2CheckResult {
 /// # 戻り値
 /// * `Ok(Ec2CheckResult)` - 確認結果
 /// * `Err(String)` - エラーメッセージ
-async fn execute_step1_check_ec2_state(_config: &RecoveryConfig) -> Result<Ec2CheckResult, String> {
-    // TODO: Task 3.2で実装
-    // 現在はプレースホルダーとしてNeedsRecoveryを返す
-    info!("Step 1: EC2状態確認（プレースホルダー）");
-    Ok(Ec2CheckResult::NeedsRecovery)
+async fn execute_step1_check_ec2_state(config: &RecoveryConfig) -> Result<Ec2CheckResult, String> {
+    let instance_id = config.ec2_instance_id();
+
+    info!(
+        instance_id = %instance_id,
+        "Step 1: EC2状態確認開始"
+    );
+
+    // EC2操作クライアントを作成
+    let ec2_ops = AwsEc2Ops::from_config().await;
+
+    // インスタンス状態を取得
+    match ec2_ops.get_instance_state(instance_id).await {
+        Ok(state) => {
+            info!(
+                instance_id = %instance_id,
+                state = %state,
+                "EC2インスタンス状態取得成功"
+            );
+
+            match state {
+                InstanceState::Running => {
+                    // 既に稼働中
+                    Ok(Ec2CheckResult::AlreadyRunning)
+                }
+                InstanceState::Stopped => {
+                    // 停止中 -> 復旧が必要
+                    Ok(Ec2CheckResult::NeedsRecovery)
+                }
+                InstanceState::Pending | InstanceState::Stopping => {
+                    // 遷移中の状態 -> エラー扱い
+                    Err(format!(
+                        "EC2インスタンスが遷移中の状態です: {}",
+                        state
+                    ))
+                }
+                InstanceState::ShuttingDown | InstanceState::Terminated => {
+                    // 終了済み -> エラー扱い
+                    Err(format!(
+                        "EC2インスタンスが終了状態です: {}",
+                        state
+                    ))
+                }
+                InstanceState::Unknown(s) => {
+                    Err(format!(
+                        "EC2インスタンスが不明な状態です: {}",
+                        s
+                    ))
+                }
+            }
+        }
+        Err(err) => {
+            warn!(
+                instance_id = %instance_id,
+                error = %err,
+                "EC2インスタンス状態取得失敗"
+            );
+            Err(format!("EC2状態確認失敗: {}", err))
+        }
+    }
 }
+
+/// EC2起動待機のタイムアウト秒数（最大2分）
+const EC2_START_TIMEOUT_SECS: u64 = 120;
+
+/// EC2起動待機のポーリング間隔秒数
+const EC2_START_POLL_INTERVAL_SECS: u64 = 5;
 
 /// Step 2: EC2インスタンス起動
 ///
@@ -309,10 +369,67 @@ async fn execute_step1_check_ec2_state(_config: &RecoveryConfig) -> Result<Ec2Ch
 /// # 戻り値
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
-async fn execute_step2_start_ec2(_config: &RecoveryConfig) -> Result<String, String> {
-    // TODO: Task 3.2で実装
-    info!("Step 2: EC2起動（プレースホルダー）");
-    Ok("instance started (placeholder)".to_string())
+async fn execute_step2_start_ec2(config: &RecoveryConfig) -> Result<String, String> {
+    let instance_id = config.ec2_instance_id();
+
+    info!(
+        instance_id = %instance_id,
+        "Step 2: EC2起動開始"
+    );
+
+    // EC2操作クライアントを作成
+    let ec2_ops = AwsEc2Ops::from_config().await;
+
+    // StartInstances APIを呼び出し
+    match ec2_ops.start_instance(instance_id).await {
+        Ok(start_result) => {
+            info!(
+                instance_id = %instance_id,
+                previous_state = %start_result.previous_state,
+                current_state = %start_result.current_state,
+                "StartInstances成功、Running状態待機開始"
+            );
+
+            // Running状態になるまで待機（最大2分）
+            match ec2_ops
+                .wait_for_running(
+                    instance_id,
+                    EC2_START_TIMEOUT_SECS,
+                    EC2_START_POLL_INTERVAL_SECS,
+                )
+                .await
+            {
+                Ok(()) => {
+                    let message = format!(
+                        "instance started ({} -> running)",
+                        start_result.previous_state
+                    );
+                    info!(
+                        instance_id = %instance_id,
+                        message = %message,
+                        "EC2起動完了"
+                    );
+                    Ok(message)
+                }
+                Err(err) => {
+                    warn!(
+                        instance_id = %instance_id,
+                        error = %err,
+                        "EC2 Running状態待機失敗"
+                    );
+                    Err(format!("EC2 Running状態待機失敗: {}", err))
+                }
+            }
+        }
+        Err(err) => {
+            warn!(
+                instance_id = %instance_id,
+                error = %err,
+                "EC2起動失敗"
+            );
+            Err(format!("EC2起動失敗: {}", err))
+        }
+    }
 }
 
 /// Step 3: sqlite-apiヘルスチェック

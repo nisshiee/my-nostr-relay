@@ -88,6 +88,21 @@ pub struct StopInstanceResult {
     pub message: String,
 }
 
+/// EC2インスタンス起動結果
+#[derive(Debug, Clone)]
+pub struct StartInstanceResult {
+    /// インスタンスID
+    pub instance_id: String,
+    /// 成功したかどうか
+    pub success: bool,
+    /// 以前の状態
+    pub previous_state: InstanceState,
+    /// 現在の状態
+    pub current_state: InstanceState,
+    /// 結果メッセージ
+    pub message: String,
+}
+
 impl StopInstanceResult {
     /// 成功結果を作成
     pub fn success(
@@ -123,6 +138,41 @@ impl StopInstanceResult {
     }
 }
 
+impl StartInstanceResult {
+    /// 成功結果を作成
+    pub fn success(
+        instance_id: impl Into<String>,
+        previous_state: InstanceState,
+        current_state: InstanceState,
+    ) -> Self {
+        let id = instance_id.into();
+        let message = format!(
+            "インスタンス {} を起動しました ({} -> {})",
+            id, previous_state, current_state
+        );
+        Self {
+            instance_id: id,
+            success: true,
+            previous_state,
+            current_state,
+            message,
+        }
+    }
+
+    /// 失敗結果を作成
+    pub fn failure(instance_id: impl Into<String>, error: impl std::fmt::Display) -> Self {
+        let id = instance_id.into();
+        let message = format!("インスタンス {} の起動に失敗しました: {}", id, error);
+        Self {
+            instance_id: id,
+            success: false,
+            previous_state: InstanceState::Unknown("unknown".to_string()),
+            current_state: InstanceState::Unknown("unknown".to_string()),
+            message,
+        }
+    }
+}
+
 /// EC2操作トレイト（テスト用の抽象化）
 #[async_trait]
 pub trait Ec2Ops: Send + Sync {
@@ -136,6 +186,16 @@ pub trait Ec2Ops: Send + Sync {
     /// * `Err(Ec2OpsError)` - エラー
     async fn stop_instance(&self, instance_id: &str) -> Result<StopInstanceResult, Ec2OpsError>;
 
+    /// EC2インスタンスを起動する
+    ///
+    /// # 引数
+    /// * `instance_id` - EC2インスタンスID
+    ///
+    /// # 戻り値
+    /// * `Ok(StartInstanceResult)` - 起動結果
+    /// * `Err(Ec2OpsError)` - エラー
+    async fn start_instance(&self, instance_id: &str) -> Result<StartInstanceResult, Ec2OpsError>;
+
     /// EC2インスタンスの状態を取得する
     ///
     /// # 引数
@@ -145,6 +205,23 @@ pub trait Ec2Ops: Send + Sync {
     /// * `Ok(InstanceState)` - インスタンス状態
     /// * `Err(Ec2OpsError)` - エラー
     async fn get_instance_state(&self, instance_id: &str) -> Result<InstanceState, Ec2OpsError>;
+
+    /// EC2インスタンスがRunning状態になるまで待機する
+    ///
+    /// # 引数
+    /// * `instance_id` - EC2インスタンスID
+    /// * `timeout_secs` - タイムアウト秒数
+    /// * `poll_interval_secs` - ポーリング間隔秒数
+    ///
+    /// # 戻り値
+    /// * `Ok(())` - Running状態になった
+    /// * `Err(Ec2OpsError)` - タイムアウトまたはエラー
+    async fn wait_for_running(
+        &self,
+        instance_id: &str,
+        timeout_secs: u64,
+        poll_interval_secs: u64,
+    ) -> Result<(), Ec2OpsError>;
 }
 
 /// 実際のAWS EC2 SDKを使用したEC2操作実装
@@ -229,6 +306,67 @@ impl Ec2Ops for AwsEc2Ops {
         }
     }
 
+    async fn start_instance(&self, instance_id: &str) -> Result<StartInstanceResult, Ec2OpsError> {
+        info!(
+            instance_id = %instance_id,
+            "EC2インスタンス起動開始"
+        );
+
+        // StartInstances APIを呼び出し
+        let result = self
+            .client
+            .start_instances()
+            .instance_ids(instance_id)
+            .send()
+            .await;
+
+        match result {
+            Ok(response) => {
+                // StartingInstancesから結果を取得
+                if let Some(instance_change) = response.starting_instances().first() {
+                    let previous_state = instance_change
+                        .previous_state()
+                        .and_then(|s| s.name())
+                        .map(|n| InstanceState::from(n.as_str()))
+                        .unwrap_or(InstanceState::Unknown("unknown".to_string()));
+
+                    let current_state = instance_change
+                        .current_state()
+                        .and_then(|s| s.name())
+                        .map(|n| InstanceState::from(n.as_str()))
+                        .unwrap_or(InstanceState::Unknown("unknown".to_string()));
+
+                    info!(
+                        instance_id = %instance_id,
+                        previous_state = %previous_state,
+                        current_state = %current_state,
+                        "StartInstances成功"
+                    );
+
+                    Ok(StartInstanceResult::success(
+                        instance_id,
+                        previous_state,
+                        current_state,
+                    ))
+                } else {
+                    warn!(
+                        instance_id = %instance_id,
+                        "StartInstances応答にインスタンス情報が含まれていません"
+                    );
+                    Err(Ec2OpsError::InstanceNotFound(instance_id.to_string()))
+                }
+            }
+            Err(err) => {
+                warn!(
+                    instance_id = %instance_id,
+                    error = %err,
+                    "StartInstancesエラー"
+                );
+                Err(Ec2OpsError::AwsSdkError(err.to_string()))
+            }
+        }
+    }
+
     async fn get_instance_state(&self, instance_id: &str) -> Result<InstanceState, Ec2OpsError> {
         let result = self
             .client
@@ -276,6 +414,82 @@ impl Ec2Ops for AwsEc2Ops {
             }
         }
     }
+
+    async fn wait_for_running(
+        &self,
+        instance_id: &str,
+        timeout_secs: u64,
+        poll_interval_secs: u64,
+    ) -> Result<(), Ec2OpsError> {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let timeout = Duration::from_secs(timeout_secs);
+        let poll_interval = Duration::from_secs(poll_interval_secs);
+
+        info!(
+            instance_id = %instance_id,
+            timeout_secs = timeout_secs,
+            poll_interval_secs = poll_interval_secs,
+            "EC2インスタンスRunning状態待機開始"
+        );
+
+        loop {
+            // 現在の状態を取得
+            let state = self.get_instance_state(instance_id).await?;
+
+            match &state {
+                InstanceState::Running => {
+                    info!(
+                        instance_id = %instance_id,
+                        elapsed_secs = start.elapsed().as_secs(),
+                        "EC2インスタンスがRunning状態になりました"
+                    );
+                    return Ok(());
+                }
+                // 異常状態への遷移を検出して早期終了
+                InstanceState::ShuttingDown | InstanceState::Terminated => {
+                    let message = format!(
+                        "インスタンスが異常状態に遷移しました: {}",
+                        state
+                    );
+                    warn!(
+                        instance_id = %instance_id,
+                        current_state = %state,
+                        "EC2インスタンスが復旧不可能な状態に遷移"
+                    );
+                    return Err(Ec2OpsError::AwsSdkError(message));
+                }
+                // Pending, Stopping, Stopped, Unknownは待機継続
+                _ => {}
+            }
+
+            // タイムアウトチェック
+            if start.elapsed() > timeout {
+                let message = format!(
+                    "タイムアウト({}秒): 現在の状態={}",
+                    timeout_secs, state
+                );
+                warn!(
+                    instance_id = %instance_id,
+                    elapsed_secs = start.elapsed().as_secs(),
+                    current_state = %state,
+                    "EC2インスタンスRunning状態待機タイムアウト"
+                );
+                return Err(Ec2OpsError::OperationTimeout(message));
+            }
+
+            info!(
+                instance_id = %instance_id,
+                current_state = %state,
+                elapsed_secs = start.elapsed().as_secs(),
+                "Running状態待機中..."
+            );
+
+            // 次のポーリングまで待機
+            tokio::time::sleep(poll_interval).await;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -284,33 +498,77 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
+    use std::sync::Mutex;
+
+    /// インスタンス設定（状態、操作成功フラグ、状態遷移シーケンス）
+    struct InstanceConfig {
+        /// 現在の状態
+        state: InstanceState,
+        /// 操作成功フラグ
+        success: bool,
+        /// 状態遷移シーケンス（get_instance_state呼び出しごとに次の状態に遷移）
+        state_sequence: Vec<InstanceState>,
+        /// シーケンスのインデックス
+        sequence_index: usize,
+    }
+
     /// テスト用のモックEC2操作
     struct MockEc2Ops {
-        /// インスタンスIDに対応する状態と成功フラグ
-        instances: std::collections::HashMap<String, (InstanceState, bool)>,
+        /// インスタンスIDに対応する設定
+        instances: Mutex<std::collections::HashMap<String, InstanceConfig>>,
         /// stop_instance呼び出し回数
         stop_call_count: Arc<AtomicUsize>,
+        /// start_instance呼び出し回数
+        start_call_count: Arc<AtomicUsize>,
         /// get_instance_state呼び出し回数
         get_state_call_count: Arc<AtomicUsize>,
+        /// wait_for_running呼び出し回数
+        wait_call_count: Arc<AtomicUsize>,
     }
 
     impl MockEc2Ops {
         fn new() -> Self {
             Self {
-                instances: std::collections::HashMap::new(),
+                instances: Mutex::new(std::collections::HashMap::new()),
                 stop_call_count: Arc::new(AtomicUsize::new(0)),
+                start_call_count: Arc::new(AtomicUsize::new(0)),
                 get_state_call_count: Arc::new(AtomicUsize::new(0)),
+                wait_call_count: Arc::new(AtomicUsize::new(0)),
             }
         }
 
         fn with_instance(
-            mut self,
+            self,
             instance_id: impl Into<String>,
             state: InstanceState,
-            stop_success: bool,
+            success: bool,
         ) -> Self {
-            self.instances
-                .insert(instance_id.into(), (state, stop_success));
+            let mut instances = self.instances.lock().unwrap();
+            instances.insert(
+                instance_id.into(),
+                InstanceConfig {
+                    state,
+                    success,
+                    state_sequence: Vec::new(),
+                    sequence_index: 0,
+                },
+            );
+            drop(instances);
+            self
+        }
+
+        /// 状態遷移シーケンスを設定（get_instance_state呼び出しごとに次の状態に遷移）
+        fn with_state_sequence(
+            self,
+            instance_id: impl Into<String>,
+            sequence: Vec<InstanceState>,
+        ) -> Self {
+            let id = instance_id.into();
+            let mut instances = self.instances.lock().unwrap();
+            if let Some(config) = instances.get_mut(&id) {
+                config.state_sequence = sequence;
+            }
+            drop(instances);
             self
         }
 
@@ -318,8 +576,17 @@ mod tests {
             self.stop_call_count.load(Ordering::SeqCst)
         }
 
+        fn start_call_count(&self) -> usize {
+            self.start_call_count.load(Ordering::SeqCst)
+        }
+
         fn get_state_call_count(&self) -> usize {
             self.get_state_call_count.load(Ordering::SeqCst)
+        }
+
+        #[allow(dead_code)]
+        fn wait_call_count(&self) -> usize {
+            self.wait_call_count.load(Ordering::SeqCst)
         }
     }
 
@@ -331,13 +598,32 @@ mod tests {
         ) -> Result<StopInstanceResult, Ec2OpsError> {
             self.stop_call_count.fetch_add(1, Ordering::SeqCst);
 
-            match self.instances.get(instance_id) {
-                Some((state, true)) => Ok(StopInstanceResult::success(
+            let instances = self.instances.lock().unwrap();
+            match instances.get(instance_id) {
+                Some(config) if config.success => Ok(StopInstanceResult::success(
                     instance_id,
-                    state.clone(),
+                    config.state.clone(),
                     InstanceState::Stopping,
                 )),
-                Some((_, false)) => Err(Ec2OpsError::AwsSdkError("mock error".to_string())),
+                Some(_) => Err(Ec2OpsError::AwsSdkError("mock error".to_string())),
+                None => Err(Ec2OpsError::InstanceNotFound(instance_id.to_string())),
+            }
+        }
+
+        async fn start_instance(
+            &self,
+            instance_id: &str,
+        ) -> Result<StartInstanceResult, Ec2OpsError> {
+            self.start_call_count.fetch_add(1, Ordering::SeqCst);
+
+            let instances = self.instances.lock().unwrap();
+            match instances.get(instance_id) {
+                Some(config) if config.success => Ok(StartInstanceResult::success(
+                    instance_id,
+                    config.state.clone(),
+                    InstanceState::Pending,
+                )),
+                Some(_) => Err(Ec2OpsError::AwsSdkError("mock error".to_string())),
                 None => Err(Ec2OpsError::InstanceNotFound(instance_id.to_string())),
             }
         }
@@ -348,8 +634,41 @@ mod tests {
         ) -> Result<InstanceState, Ec2OpsError> {
             self.get_state_call_count.fetch_add(1, Ordering::SeqCst);
 
-            match self.instances.get(instance_id) {
-                Some((state, _)) => Ok(state.clone()),
+            let mut instances = self.instances.lock().unwrap();
+            match instances.get_mut(instance_id) {
+                Some(config) => {
+                    // シーケンスがある場合は次の状態を返す
+                    if !config.state_sequence.is_empty()
+                        && config.sequence_index < config.state_sequence.len()
+                    {
+                        let state = config.state_sequence[config.sequence_index].clone();
+                        config.sequence_index += 1;
+                        Ok(state)
+                    } else if !config.state_sequence.is_empty() {
+                        // シーケンスの最後を返し続ける
+                        Ok(config.state_sequence.last().unwrap().clone())
+                    } else {
+                        Ok(config.state.clone())
+                    }
+                }
+                None => Err(Ec2OpsError::InstanceNotFound(instance_id.to_string())),
+            }
+        }
+
+        async fn wait_for_running(
+            &self,
+            instance_id: &str,
+            _timeout_secs: u64,
+            _poll_interval_secs: u64,
+        ) -> Result<(), Ec2OpsError> {
+            self.wait_call_count.fetch_add(1, Ordering::SeqCst);
+
+            let instances = self.instances.lock().unwrap();
+            match instances.get(instance_id) {
+                Some(config) if config.success => Ok(()),
+                Some(_) => Err(Ec2OpsError::OperationTimeout(
+                    "mock timeout".to_string(),
+                )),
                 None => Err(Ec2OpsError::InstanceNotFound(instance_id.to_string())),
             }
         }
@@ -415,6 +734,38 @@ mod tests {
         assert_eq!(result.instance_id, "i-1234567890");
         assert!(!result.success);
         assert!(result.message.contains("i-1234567890"));
+        assert!(result.message.contains("失敗"));
+        assert!(result.message.contains("API error"));
+    }
+
+    // ==================== StartInstanceResult テスト ====================
+
+    #[test]
+    fn test_start_instance_result_success() {
+        let result = StartInstanceResult::success(
+            "i-1234567890",
+            InstanceState::Stopped,
+            InstanceState::Pending,
+        );
+
+        assert_eq!(result.instance_id, "i-1234567890");
+        assert!(result.success);
+        assert_eq!(result.previous_state, InstanceState::Stopped);
+        assert_eq!(result.current_state, InstanceState::Pending);
+        assert!(result.message.contains("i-1234567890"));
+        assert!(result.message.contains("起動"));
+        assert!(result.message.contains("stopped"));
+        assert!(result.message.contains("pending"));
+    }
+
+    #[test]
+    fn test_start_instance_result_failure() {
+        let result = StartInstanceResult::failure("i-1234567890", "API error");
+
+        assert_eq!(result.instance_id, "i-1234567890");
+        assert!(!result.success);
+        assert!(result.message.contains("i-1234567890"));
+        assert!(result.message.contains("起動"));
         assert!(result.message.contains("失敗"));
         assert!(result.message.contains("API error"));
     }
@@ -502,5 +853,106 @@ mod tests {
             }
             _ => panic!("Expected InstanceNotFound"),
         }
+    }
+
+    // ==================== MockEc2Ops start_instance テスト ====================
+
+    #[tokio::test]
+    async fn test_mock_ec2_ops_start_success() {
+        let mock = MockEc2Ops::new().with_instance("i-1234567890", InstanceState::Stopped, true);
+
+        let result = mock.start_instance("i-1234567890").await;
+
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        assert!(result.success);
+        assert_eq!(result.previous_state, InstanceState::Stopped);
+        assert_eq!(result.current_state, InstanceState::Pending);
+        assert_eq!(mock.start_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_ec2_ops_start_failure() {
+        let mock = MockEc2Ops::new().with_instance("i-1234567890", InstanceState::Stopped, false);
+
+        let result = mock.start_instance("i-1234567890").await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Ec2OpsError::AwsSdkError(_) => {}
+            _ => panic!("Expected AwsSdkError"),
+        }
+        assert_eq!(mock.start_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mock_ec2_ops_start_not_found() {
+        let mock = MockEc2Ops::new();
+
+        let result = mock.start_instance("i-nonexistent").await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Ec2OpsError::InstanceNotFound(id) => {
+                assert_eq!(id, "i-nonexistent");
+            }
+            _ => panic!("Expected InstanceNotFound"),
+        }
+    }
+
+    // ==================== MockEc2Ops wait_for_running テスト ====================
+
+    #[tokio::test]
+    async fn test_mock_ec2_ops_wait_for_running_success() {
+        let mock = MockEc2Ops::new().with_instance("i-1234567890", InstanceState::Stopped, true);
+
+        let result = mock.wait_for_running("i-1234567890", 120, 5).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mock_ec2_ops_wait_for_running_timeout() {
+        let mock = MockEc2Ops::new().with_instance("i-1234567890", InstanceState::Stopped, false);
+
+        let result = mock.wait_for_running("i-1234567890", 120, 5).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Ec2OpsError::OperationTimeout(_) => {}
+            _ => panic!("Expected OperationTimeout"),
+        }
+    }
+
+    // ==================== MockEc2Ops 状態遷移シーケンステスト ====================
+
+    #[tokio::test]
+    async fn test_mock_ec2_ops_state_sequence() {
+        let mock = MockEc2Ops::new()
+            .with_instance("i-1234567890", InstanceState::Stopped, true)
+            .with_state_sequence(
+                "i-1234567890",
+                vec![
+                    InstanceState::Pending,
+                    InstanceState::Pending,
+                    InstanceState::Running,
+                ],
+            );
+
+        // 最初の呼び出し: Pending
+        let state = mock.get_instance_state("i-1234567890").await.unwrap();
+        assert_eq!(state, InstanceState::Pending);
+
+        // 2回目の呼び出し: Pending
+        let state = mock.get_instance_state("i-1234567890").await.unwrap();
+        assert_eq!(state, InstanceState::Pending);
+
+        // 3回目の呼び出し: Running
+        let state = mock.get_instance_state("i-1234567890").await.unwrap();
+        assert_eq!(state, InstanceState::Running);
+
+        // 4回目以降: Running（最後の状態を維持）
+        let state = mock.get_instance_state("i-1234567890").await.unwrap();
+        assert_eq!(state, InstanceState::Running);
     }
 }

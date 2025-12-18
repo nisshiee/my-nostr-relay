@@ -41,7 +41,7 @@ pub use recovery_config::{RecoveryConfig, RecoveryConfigError, RecoveryResult, S
 pub use shutdown_config::{PhaseResult, ShutdownConfig, ShutdownConfigError, ShutdownResult};
 pub use lambda_ops::{AwsLambdaOps, DisableFunctionResult, LambdaOps, LambdaOpsError};
 pub use ssm_ops::{AwsSsmOps, RunCommandResult, SsmOps, SsmOpsError};
-pub use ec2_ops::{AwsEc2Ops, Ec2Ops, Ec2OpsError, InstanceState, StopInstanceResult};
+pub use ec2_ops::{AwsEc2Ops, Ec2Ops, Ec2OpsError, InstanceState, StartInstanceResult, StopInstanceResult};
 pub use cloudfront_ops::{AwsCloudFrontOps, CloudFrontOps, CloudFrontOpsError, DisableDistributionResult};
 pub use sns_ops::{AwsSnsOps, PublishResult, SnsOps, SnsOpsError};
 pub use websocket_sender::{ApiGatewayWebSocketSender, SendError, WebSocketSender};

@@ -54,7 +54,7 @@
   - Cargo.tomlにrecoveryバイナリターゲットを追加
   - _Requirements: 4.3_
 
-- [ ] 3.2 Step 1-2: EC2状態確認と起動処理
+- [x] 3.2 Step 1-2: EC2状態確認と起動処理
   - aws-sdk-ec2のDescribeInstances APIでEC2状態を確認
   - 既にrunning状態の場合はスキップフラグを設定しログ記録
   - stopped状態の場合はStartInstances APIでEC2を起動
