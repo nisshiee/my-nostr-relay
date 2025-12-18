@@ -14,7 +14,7 @@
 /// 要件: 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.8, 3.9, 3.10
 use aws_lambda_events::event::sns::SnsEvent;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-use relay::infrastructure::{init_logging, PhaseResult, ShutdownConfig, ShutdownResult};
+use relay::infrastructure::{init_logging, AwsLambdaOps, LambdaOps, PhaseResult, ShutdownConfig, ShutdownResult};
 use tracing::{error, info, warn};
 
 #[tokio::main]
@@ -205,15 +205,20 @@ async fn handler(event: LambdaEvent<SnsEvent>) -> Result<(), Error> {
 /// * `Ok(String)` - 成功メッセージ（無効化した関数数）
 /// * `Err(String)` - エラーメッセージ
 async fn execute_phase1_lambda_disable(config: &ShutdownConfig) -> Result<String, String> {
-    // TODO: Task 2.2で実装
-    // aws-sdk-lambdaを使用してPutFunctionConcurrency APIを呼び出し
-    let function_count = config.relay_lambda_function_names().len();
+    let function_names = config.relay_lambda_function_names();
+    let function_count = function_names.len();
+
     info!(
         function_count = function_count,
-        functions = ?config.relay_lambda_function_names(),
-        "Phase 1: Lambda無効化（未実装）"
+        functions = ?function_names,
+        "Phase 1: Lambda関数の無効化を開始"
     );
-    Ok(format!("{} functions disabled (stub)", function_count))
+
+    // AWS Lambda クライアントを作成
+    let lambda_ops = AwsLambdaOps::from_config().await;
+
+    // 各Lambda関数のreserved concurrencyを0に設定
+    lambda_ops.disable_functions(function_names).await
 }
 
 /// Phase 2: 実行中Lambda関数の完了を待機

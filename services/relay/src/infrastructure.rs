@@ -3,6 +3,7 @@ pub mod config;
 pub mod connection_repository;
 pub mod event_repository;
 pub mod http_sqlite;
+pub mod lambda_ops;
 pub mod logging;
 pub mod relay_info_config;
 pub mod shutdown_config;
@@ -32,4 +33,5 @@ pub use subscription_repository::{
     SubscriptionRepositoryError,
 };
 pub use shutdown_config::{PhaseResult, ShutdownConfig, ShutdownConfigError, ShutdownResult};
+pub use lambda_ops::{AwsLambdaOps, DisableFunctionResult, LambdaOps, LambdaOpsError};
 pub use websocket_sender::{ApiGatewayWebSocketSender, SendError, WebSocketSender};

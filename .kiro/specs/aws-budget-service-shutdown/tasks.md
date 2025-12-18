@@ -20,7 +20,7 @@
   - Cargo.tomlにshutdownバイナリターゲットを追加
   - _Requirements: 3.1, 3.8_
 
-- [ ] 2.2 Phase 1: relay Lambda関数の無効化処理
+- [x] 2.2 Phase 1: relay Lambda関数の無効化処理
   - aws-sdk-lambdaを使用してPutFunctionConcurrency APIを呼び出し
   - 複数のLambda関数（connect/disconnect/default）に対してreserved concurrencyを0に設定
   - 各関数の処理結果をPhaseResultに記録
