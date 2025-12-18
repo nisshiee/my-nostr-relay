@@ -89,7 +89,7 @@
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 2.1, 2.2, 5.1_
   - _Note: Lambda実装（Task 2, 3）完了後に実施_
 
-- [ ] 4.2 結果通知用SNSトピックとAWS Chatbot Slack連携
+- [x] 4.2 結果通知用SNSトピックとAWS Chatbot Slack連携
   - 停止/復旧結果通知用の別SNSトピックを作成
   - aws_chatbot_slack_channel_configurationリソースでSlack連携を設定
   - slack_workspace_idとslack_channel_id変数で通知先を設定可能に
