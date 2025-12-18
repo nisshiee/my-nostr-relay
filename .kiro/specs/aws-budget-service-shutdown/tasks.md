@@ -12,7 +12,7 @@
 
 ## Task 2: Shutdown Lambda実装
 
-- [ ] 2.1 (P) Shutdown Lambdaの基本構造とSNSトリガー対応
+- [x] 2.1 (P) Shutdown Lambdaの基本構造とSNSトリガー対応
   - services/relay/src/bin/shutdown.rsを新規作成
   - lambda_runtimeを使用したSNSイベントハンドラーを実装
   - 環境変数からLambda関数名リスト、EC2インスタンスID、CloudFront ID、SNSトピックARNを読み込み

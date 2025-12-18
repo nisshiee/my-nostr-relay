@@ -5,6 +5,7 @@ pub mod event_repository;
 pub mod http_sqlite;
 pub mod logging;
 pub mod relay_info_config;
+pub mod shutdown_config;
 pub mod subscription_repository;
 pub mod websocket_sender;
 
@@ -30,4 +31,5 @@ pub use subscription_repository::{
     DynamoSubscriptionRepository, MatchedSubscription, SubscriptionInfo, SubscriptionRepository,
     SubscriptionRepositoryError,
 };
+pub use shutdown_config::{PhaseResult, ShutdownConfig, ShutdownConfigError, ShutdownResult};
 pub use websocket_sender::{ApiGatewayWebSocketSender, SendError, WebSocketSender};

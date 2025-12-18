@@ -61,11 +61,12 @@ clap = { version = "4", features = ["derive"] }
 # DynamoDB AttributeValue（aws_lambda_eventsで使用）
 serde_dynamo = "4"
 
+# 日時操作（タイムスタンプ生成用）
+chrono = "0.4"
+
 [dev-dependencies]
 # テストのシリアル実行（環境変数テストの競合防止）
 serial_test = "3"
-# テスト用日時操作（aws_lambda_eventsが依存）
-chrono = "0.4"
 
 # リリースビルドでもbacktraceを有効にする
 [profile.release]
