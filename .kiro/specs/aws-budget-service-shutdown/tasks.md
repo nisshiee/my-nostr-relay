@@ -69,7 +69,7 @@
   - _Requirements: 4.5_
   - _Note: 3.2に依存_
 
-- [ ] 3.4 Step 4-5: Lambda有効化、CloudFront有効化、結果通知
+- [x] 3.4 Step 4-5: Lambda有効化、CloudFront有効化、結果通知
   - aws-sdk-lambdaのDeleteFunctionConcurrency APIでreserved concurrency設定を削除
   - aws-sdk-cloudfrontのGetDistribution/UpdateDistribution APIでディストリビューションを有効化
   - 各ステップでエラー発生時は即座に処理中断

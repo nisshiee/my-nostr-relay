@@ -14,8 +14,9 @@
 /// 要件: 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::infrastructure::{
-    init_logging, AwsEc2Ops, Ec2Ops, HealthCheckOps, HttpHealthCheck, InstanceState,
-    RecoveryConfig, RecoveryResult, StepResult,
+    init_logging, AwsCloudFrontOps, AwsEc2Ops, AwsLambdaOps, AwsSnsOps, CloudFrontOps, Ec2Ops,
+    HealthCheckOps, HttpHealthCheck, InstanceState, LambdaOps, RecoveryConfig, RecoveryResult,
+    SnsOps, StepResult,
 };
 use serde_json::Value;
 use tracing::{error, info, warn};
@@ -503,10 +504,21 @@ async fn execute_step3_health_check(config: &RecoveryConfig) -> Result<String, S
 /// # 戻り値
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
-async fn execute_step4_enable_lambdas(_config: &RecoveryConfig) -> Result<String, String> {
-    // TODO: Task 3.4で実装
-    info!("Step 4: Lambda有効化（プレースホルダー）");
-    Ok("lambdas enabled (placeholder)".to_string())
+async fn execute_step4_enable_lambdas(config: &RecoveryConfig) -> Result<String, String> {
+    let function_names = config.relay_lambda_function_names();
+    let function_count = function_names.len();
+
+    info!(
+        function_count = function_count,
+        functions = ?function_names,
+        "Step 4: Lambda関数の有効化を開始"
+    );
+
+    // AWS Lambda クライアントを作成
+    let lambda_ops = AwsLambdaOps::from_config().await;
+
+    // 各Lambda関数のreserved concurrency設定を削除
+    lambda_ops.enable_functions(function_names).await
 }
 
 /// Step 5: CloudFrontディストリビューション有効化
@@ -516,10 +528,41 @@ async fn execute_step4_enable_lambdas(_config: &RecoveryConfig) -> Result<String
 /// # 戻り値
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
-async fn execute_step5_enable_cloudfront(_config: &RecoveryConfig) -> Result<String, String> {
-    // TODO: Task 3.4で実装
-    info!("Step 5: CloudFront有効化（プレースホルダー）");
-    Ok("distribution enabled (placeholder)".to_string())
+async fn execute_step5_enable_cloudfront(config: &RecoveryConfig) -> Result<String, String> {
+    let distribution_id = config.cloudfront_distribution_id();
+
+    info!(
+        distribution_id = %distribution_id,
+        "Step 5: CloudFront有効化開始"
+    );
+
+    // CloudFront操作クライアントを作成
+    let cloudfront_ops = AwsCloudFrontOps::from_config().await;
+
+    // ディストリビューションを有効化
+    match cloudfront_ops.enable_distribution(distribution_id).await {
+        Ok(result) => {
+            info!(
+                distribution_id = %distribution_id,
+                was_disabled = result.was_disabled,
+                message = %result.message,
+                "Step 5: CloudFront有効化成功"
+            );
+            if result.was_disabled {
+                Ok("distribution enabled".to_string())
+            } else {
+                Ok("distribution already enabled".to_string())
+            }
+        }
+        Err(err) => {
+            warn!(
+                distribution_id = %distribution_id,
+                error = %err,
+                "Step 5: CloudFront有効化失敗"
+            );
+            Err(format!("CloudFront有効化失敗: {}", err))
+        }
+    }
 }
 
 /// 結果をSNSトピックに発行
@@ -534,22 +577,46 @@ async fn publish_result_to_sns(
     config: &RecoveryConfig,
     result: &RecoveryResult,
 ) -> Result<(), String> {
-    // TODO: SNS通知を実装
     let topic_arn = config.result_sns_topic_arn();
 
     info!(
         topic_arn = %topic_arn,
         overall_success = result.overall_success,
         skipped = result.skipped,
-        "結果SNS通知開始（プレースホルダー）"
+        "結果SNS通知開始"
     );
 
-    // TODO: Task 3.4でAwsSnsOpsを使用して実装
-    // 現在はログ出力のみ
-    let result_json = serde_json::to_string_pretty(result).unwrap_or_default();
-    info!(result = %result_json, "SNS通知内容");
+    // SNS操作クライアントを作成
+    let sns_ops = AwsSnsOps::from_config().await;
 
-    Ok(())
+    // 件名を生成（スキップ/成功/失敗で変える）
+    let subject = if result.skipped {
+        "Budget Recovery: サービス稼働中のためスキップ"
+    } else if result.overall_success {
+        "Budget Recovery: 全ステップ成功"
+    } else {
+        "Budget Recovery: 一部ステップ失敗"
+    };
+
+    // 結果をJSONとしてSNSに発行
+    match sns_ops.publish_json(topic_arn, result, Some(subject)).await {
+        Ok(publish_result) => {
+            info!(
+                topic_arn = %topic_arn,
+                message_id = %publish_result.message_id,
+                "結果SNS通知成功"
+            );
+            Ok(())
+        }
+        Err(err) => {
+            warn!(
+                topic_arn = %topic_arn,
+                error = %err,
+                "結果SNS通知失敗"
+            );
+            Err(format!("SNS通知失敗: {}", err))
+        }
+    }
 }
 
 #[cfg(test)]
