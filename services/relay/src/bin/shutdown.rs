@@ -92,7 +92,7 @@ async fn handler(event: LambdaEvent<SnsEvent>) -> Result<(), Error> {
     // フェーズ結果を記録するベクター
     let mut phases: Vec<PhaseResult> = Vec::new();
 
-    // Phase 1: Lambda無効化（TODO: Task 2.2で実装）
+    // Phase 1: Lambda無効化
     let phase1_start = std::time::Instant::now();
     let phase1_result = execute_phase1_lambda_disable(&config).await;
     let phase1_duration = phase1_start.elapsed().as_millis() as u64;
@@ -107,7 +107,7 @@ async fn handler(event: LambdaEvent<SnsEvent>) -> Result<(), Error> {
         }
     });
 
-    // Phase 2: 処理完了待ち（TODO: Task 2.3で実装）
+    // Phase 2: 処理完了待ち
     let phase2_start = std::time::Instant::now();
     let phase2_result = execute_phase2_wait_completion().await;
     let phase2_duration = phase2_start.elapsed().as_millis() as u64;
@@ -122,7 +122,7 @@ async fn handler(event: LambdaEvent<SnsEvent>) -> Result<(), Error> {
         }
     });
 
-    // Phase 3: sqlite-api停止（TODO: Task 2.3で実装）
+    // Phase 3: sqlite-api停止
     let phase3_start = std::time::Instant::now();
     let phase3_result = execute_phase3_sqlite_api_stop(&config).await;
     let phase3_duration = phase3_start.elapsed().as_millis() as u64;
@@ -137,7 +137,7 @@ async fn handler(event: LambdaEvent<SnsEvent>) -> Result<(), Error> {
         }
     });
 
-    // Phase 4: EC2停止（TODO: Task 2.3で実装）
+    // Phase 4: EC2停止
     let phase4_start = std::time::Instant::now();
     let phase4_result = execute_phase4_ec2_stop(&config).await;
     let phase4_duration = phase4_start.elapsed().as_millis() as u64;
@@ -152,7 +152,7 @@ async fn handler(event: LambdaEvent<SnsEvent>) -> Result<(), Error> {
         }
     });
 
-    // Phase 5: CloudFront無効化（TODO: Task 2.4で実装）
+    // Phase 5: CloudFront無効化
     let phase5_start = std::time::Instant::now();
     let phase5_result = execute_phase5_cloudfront_disable(&config).await;
     let phase5_duration = phase5_start.elapsed().as_millis() as u64;
@@ -190,7 +190,7 @@ async fn handler(event: LambdaEvent<SnsEvent>) -> Result<(), Error> {
         );
     }
 
-    // SNS通知（TODO: Task 2.4で実装）
+    // SNS通知
     if let Err(err) = publish_result_to_sns(&config, &result).await {
         error!(error = %err, "結果SNS通知失敗");
     }

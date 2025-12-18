@@ -78,7 +78,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<(), Error> {
     // 完了したステップを記録するベクター
     let mut completed_steps: Vec<StepResult> = Vec::new();
 
-    // Step 1: EC2状態確認（TODO: Task 3.2で実装）
+    // Step 1: EC2状態確認
     let step1_start = std::time::Instant::now();
     let step1_result = execute_step1_check_ec2_state(&config).await;
     let step1_duration = step1_start.elapsed().as_millis() as u64;
@@ -139,7 +139,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         }
     }
 
-    // Step 2: EC2起動（TODO: Task 3.2で実装）
+    // Step 2: EC2起動
     let step2_start = std::time::Instant::now();
     let step2_result = execute_step2_start_ec2(&config).await;
     let step2_duration = step2_start.elapsed().as_millis() as u64;
@@ -169,7 +169,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         }
     }
 
-    // Step 3: sqlite-apiヘルスチェック（TODO: Task 3.3で実装）
+    // Step 3: sqlite-apiヘルスチェック
     let step3_start = std::time::Instant::now();
     let step3_result = execute_step3_health_check(&config).await;
     let step3_duration = step3_start.elapsed().as_millis() as u64;
@@ -199,7 +199,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         }
     }
 
-    // Step 4: Lambda有効化（TODO: Task 3.4で実装）
+    // Step 4: Lambda有効化
     let step4_start = std::time::Instant::now();
     let step4_result = execute_step4_enable_lambdas(&config).await;
     let step4_duration = step4_start.elapsed().as_millis() as u64;
@@ -229,7 +229,7 @@ async fn handler(event: LambdaEvent<Value>) -> Result<(), Error> {
         }
     }
 
-    // Step 5: CloudFront有効化（TODO: Task 3.4で実装）
+    // Step 5: CloudFront有効化
     let step5_start = std::time::Instant::now();
     let step5_result = execute_step5_enable_cloudfront(&config).await;
     let step5_duration = step5_start.elapsed().as_millis() as u64;
