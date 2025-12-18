@@ -80,7 +80,7 @@
 
 ## Task 4: Terraformモジュール（modules/budget）構築
 
-- [ ] 4.1 予算アラート用SNSトピックとAWS Budget設定
+- [x] 4.1 予算アラート用SNSトピックとAWS Budget設定
   - terraform/modules/budgetディレクトリを新規作成
   - AWS Budgetリソースを作成し月額コスト閾値を設定
   - 閾値超過時に通知を送信するアラートSNSトピックを作成
