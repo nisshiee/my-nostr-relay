@@ -17,6 +17,7 @@ resource "aws_cloudfront_distribution" "relay" {
   is_ipv6_enabled = true
   comment         = "Nostr Relay CloudFront Distribution"
   aliases         = ["relay.${var.domain_name}"]
+  price_class     = "PriceClass_200"
 
   # --------------------------------------
   # デフォルトオリジン: WebSocket API Gateway
@@ -89,8 +90,8 @@ resource "aws_cloudfront_distribution" "relay" {
   # --------------------------------------
   restrictions {
     geo_restriction {
-      restriction_type = "blacklist"
-      locations        = ["CN", "RU", "KP"]
+      restriction_type = "whitelist"
+      locations        = ["JP"]
     }
   }
 
