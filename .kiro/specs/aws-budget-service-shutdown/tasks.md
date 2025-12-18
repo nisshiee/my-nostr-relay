@@ -36,7 +36,7 @@
   - _Requirements: 3.3, 3.4, 3.6_
   - _Note: 2.2に依存_
 
-- [ ] 2.4 Phase 5: CloudFront無効化と結果通知
+- [x] 2.4 Phase 5: CloudFront無効化と結果通知
   - aws-sdk-cloudfrontのGetDistribution/UpdateDistribution APIでディストリビューションを無効化
   - 全フェーズの結果をJSON形式でCloudWatch Logsに構造化ログ出力
   - aws-sdk-snsのPublish APIで結果通知SNSトピックにShutdownResult全体を発行

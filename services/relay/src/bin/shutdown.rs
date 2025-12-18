@@ -15,8 +15,8 @@
 use aws_lambda_events::event::sns::SnsEvent;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
 use relay::infrastructure::{
-    init_logging, AwsEc2Ops, AwsLambdaOps, AwsSsmOps, Ec2Ops, LambdaOps, PhaseResult,
-    ShutdownConfig, ShutdownResult, SsmOps,
+    init_logging, AwsCloudFrontOps, AwsEc2Ops, AwsLambdaOps, AwsSnsOps, AwsSsmOps,
+    CloudFrontOps, Ec2Ops, LambdaOps, PhaseResult, ShutdownConfig, ShutdownResult, SnsOps, SsmOps,
 };
 use tracing::{error, info, warn};
 
@@ -338,20 +338,47 @@ async fn execute_phase4_ec2_stop(config: &ShutdownConfig) -> Result<String, Stri
 
 /// Phase 5: CloudFrontディストリビューションを無効化
 ///
-/// UpdateDistribution APIを呼び出してCloudFrontを無効化する。
+/// GetDistribution/UpdateDistribution APIを呼び出してCloudFrontを無効化する。
 /// 伝播には最大15分かかる可能性がある。
 ///
 /// # 戻り値
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
 async fn execute_phase5_cloudfront_disable(config: &ShutdownConfig) -> Result<String, String> {
-    // TODO: Task 2.4で実装
-    // aws-sdk-cloudfrontを使用してUpdateDistribution APIを呼び出し
+    let distribution_id = config.cloudfront_distribution_id();
+
     info!(
-        cloudfront_distribution_id = config.cloudfront_distribution_id(),
-        "Phase 5: CloudFront無効化（未実装）"
+        distribution_id = %distribution_id,
+        "Phase 5: CloudFront無効化開始"
     );
-    Ok("distribution disabled (stub)".to_string())
+
+    // CloudFront操作クライアントを作成
+    let cloudfront_ops = AwsCloudFrontOps::from_config().await;
+
+    // ディストリビューションを無効化
+    match cloudfront_ops.disable_distribution(distribution_id).await {
+        Ok(result) => {
+            info!(
+                distribution_id = %distribution_id,
+                was_enabled = result.was_enabled,
+                message = %result.message,
+                "Phase 5: CloudFront無効化成功"
+            );
+            if result.was_enabled {
+                Ok("distribution disabled".to_string())
+            } else {
+                Ok("distribution already disabled".to_string())
+            }
+        }
+        Err(err) => {
+            warn!(
+                distribution_id = %distribution_id,
+                error = %err,
+                "Phase 5: CloudFront無効化失敗"
+            );
+            Err(format!("CloudFront無効化失敗: {}", err))
+        }
+    }
 }
 
 /// 結果をSNSトピックに発行
@@ -362,16 +389,47 @@ async fn execute_phase5_cloudfront_disable(config: &ShutdownConfig) -> Result<St
 /// # 戻り値
 /// * `Ok(())` - 発行成功
 /// * `Err(String)` - エラーメッセージ
-async fn publish_result_to_sns(config: &ShutdownConfig, result: &ShutdownResult) -> Result<(), String> {
-    // TODO: Task 2.4で実装
-    // aws-sdk-snsを使用してPublish APIを呼び出し
-    let result_json = serde_json::to_string(result).map_err(|e| e.to_string())?;
+async fn publish_result_to_sns(
+    config: &ShutdownConfig,
+    result: &ShutdownResult,
+) -> Result<(), String> {
+    let topic_arn = config.result_sns_topic_arn();
+
     info!(
-        sns_topic_arn = config.result_sns_topic_arn(),
-        result_length = result_json.len(),
-        "結果SNS通知（未実装）"
+        topic_arn = %topic_arn,
+        overall_success = result.overall_success,
+        "結果SNS通知開始"
     );
-    Ok(())
+
+    // SNS操作クライアントを作成
+    let sns_ops = AwsSnsOps::from_config().await;
+
+    // 件名を生成（成功/失敗で変える）
+    let subject = if result.overall_success {
+        "Budget Shutdown: 全フェーズ成功"
+    } else {
+        "Budget Shutdown: 一部フェーズ失敗"
+    };
+
+    // 結果をJSONとしてSNSに発行
+    match sns_ops.publish_json(topic_arn, result, Some(subject)).await {
+        Ok(publish_result) => {
+            info!(
+                topic_arn = %topic_arn,
+                message_id = %publish_result.message_id,
+                "結果SNS通知成功"
+            );
+            Ok(())
+        }
+        Err(err) => {
+            warn!(
+                topic_arn = %topic_arn,
+                error = %err,
+                "結果SNS通知失敗"
+            );
+            Err(format!("SNS通知失敗: {}", err))
+        }
+    }
 }
 
 #[cfg(test)]

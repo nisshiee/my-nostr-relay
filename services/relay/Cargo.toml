@@ -31,6 +31,12 @@ aws-sdk-lambda = "1"
 # AWS SDK - EC2（Shutdown/Recovery Lambda用）
 aws-sdk-ec2 = "1"
 
+# AWS SDK - CloudFront（Shutdown/Recovery Lambda用）
+aws-sdk-cloudfront = "1"
+
+# AWS SDK - SNS（Shutdown/Recovery Lambda結果通知用）
+aws-sdk-sns = "1"
+
 # 非同期トレイトサポート
 async-trait = "0.1"
 

@@ -1,4 +1,5 @@
 // インフラストラクチャ層モジュール
+pub mod cloudfront_ops;
 pub mod config;
 pub mod connection_repository;
 pub mod ec2_ops;
@@ -8,6 +9,7 @@ pub mod lambda_ops;
 pub mod logging;
 pub mod relay_info_config;
 pub mod shutdown_config;
+pub mod sns_ops;
 pub mod ssm_ops;
 pub mod subscription_repository;
 pub mod websocket_sender;
@@ -38,4 +40,6 @@ pub use shutdown_config::{PhaseResult, ShutdownConfig, ShutdownConfigError, Shut
 pub use lambda_ops::{AwsLambdaOps, DisableFunctionResult, LambdaOps, LambdaOpsError};
 pub use ssm_ops::{AwsSsmOps, RunCommandResult, SsmOps, SsmOpsError};
 pub use ec2_ops::{AwsEc2Ops, Ec2Ops, Ec2OpsError, InstanceState, StopInstanceResult};
+pub use cloudfront_ops::{AwsCloudFrontOps, CloudFrontOps, CloudFrontOpsError, DisableDistributionResult};
+pub use sns_ops::{AwsSnsOps, PublishResult, SnsOps, SnsOpsError};
 pub use websocket_sender::{ApiGatewayWebSocketSender, SendError, WebSocketSender};
