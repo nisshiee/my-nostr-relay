@@ -14,7 +14,10 @@
 /// 要件: 3.1, 3.2, 3.3, 3.4, 3.6, 3.7, 3.8, 3.9, 3.10
 use aws_lambda_events::event::sns::SnsEvent;
 use lambda_runtime::{service_fn, Error, LambdaEvent};
-use relay::infrastructure::{init_logging, AwsLambdaOps, LambdaOps, PhaseResult, ShutdownConfig, ShutdownResult};
+use relay::infrastructure::{
+    init_logging, AwsEc2Ops, AwsLambdaOps, AwsSsmOps, Ec2Ops, LambdaOps, PhaseResult,
+    ShutdownConfig, ShutdownResult, SsmOps,
+};
 use tracing::{error, info, warn};
 
 #[tokio::main]
@@ -221,6 +224,9 @@ async fn execute_phase1_lambda_disable(config: &ShutdownConfig) -> Result<String
     lambda_ops.disable_functions(function_names).await
 }
 
+/// Phase 2で待機する秒数
+const PHASE2_WAIT_SECONDS: u64 = 30;
+
 /// Phase 2: 実行中Lambda関数の完了を待機
 ///
 /// Lambda関数がreserved concurrency=0に設定された後、
@@ -230,10 +236,20 @@ async fn execute_phase1_lambda_disable(config: &ShutdownConfig) -> Result<String
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
 async fn execute_phase2_wait_completion() -> Result<String, String> {
-    // TODO: Task 2.3で実装
-    // tokio::time::sleepで30秒待機
-    info!("Phase 2: 処理完了待ち（未実装）");
-    Ok("waited 30s (stub)".to_string())
+    info!(
+        wait_seconds = PHASE2_WAIT_SECONDS,
+        "Phase 2: 処理完了待ち開始"
+    );
+
+    // 30秒待機
+    tokio::time::sleep(std::time::Duration::from_secs(PHASE2_WAIT_SECONDS)).await;
+
+    info!(
+        wait_seconds = PHASE2_WAIT_SECONDS,
+        "Phase 2: 処理完了待ち終了"
+    );
+
+    Ok(format!("waited {}s", PHASE2_WAIT_SECONDS))
 }
 
 /// Phase 3: SSM Run Command経由でsqlite-apiを停止
@@ -245,14 +261,36 @@ async fn execute_phase2_wait_completion() -> Result<String, String> {
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
 async fn execute_phase3_sqlite_api_stop(config: &ShutdownConfig) -> Result<String, String> {
-    // TODO: Task 2.3で実装
-    // aws-sdk-ssmを使用してSendCommand APIを呼び出し
+    let instance_id = config.ec2_instance_id();
+    let service_name = config.sqlite_api_systemd_service();
+
     info!(
-        ec2_instance_id = config.ec2_instance_id(),
-        systemd_service = config.sqlite_api_systemd_service(),
-        "Phase 3: sqlite-api停止（未実装）"
+        instance_id = %instance_id,
+        service_name = %service_name,
+        "Phase 3: sqlite-api停止開始"
     );
-    Ok("graceful shutdown completed (stub)".to_string())
+
+    // SSM操作クライアントを作成
+    let ssm_ops = AwsSsmOps::from_config().await;
+
+    // systemctl stopコマンドをSSM経由で実行
+    match ssm_ops.stop_systemd_service(instance_id, service_name).await {
+        Ok(result) => {
+            info!(
+                command_id = %result.command_id,
+                message = %result.message,
+                "Phase 3: sqlite-api停止成功"
+            );
+            Ok(format!("graceful shutdown completed: {}", result.message))
+        }
+        Err(err) => {
+            warn!(
+                error = %err,
+                "Phase 3: sqlite-api停止失敗"
+            );
+            Err(format!("sqlite-api停止失敗: {}", err))
+        }
+    }
 }
 
 /// Phase 4: EC2インスタンスを停止
@@ -263,13 +301,39 @@ async fn execute_phase3_sqlite_api_stop(config: &ShutdownConfig) -> Result<Strin
 /// * `Ok(String)` - 成功メッセージ
 /// * `Err(String)` - エラーメッセージ
 async fn execute_phase4_ec2_stop(config: &ShutdownConfig) -> Result<String, String> {
-    // TODO: Task 2.3で実装
-    // aws-sdk-ec2を使用してStopInstances APIを呼び出し
+    let instance_id = config.ec2_instance_id();
+
     info!(
-        ec2_instance_id = config.ec2_instance_id(),
-        "Phase 4: EC2停止（未実装）"
+        instance_id = %instance_id,
+        "Phase 4: EC2停止開始"
     );
-    Ok("instance stopped (stub)".to_string())
+
+    // EC2操作クライアントを作成
+    let ec2_ops = AwsEc2Ops::from_config().await;
+
+    // StopInstances APIを呼び出し
+    match ec2_ops.stop_instance(instance_id).await {
+        Ok(result) => {
+            info!(
+                instance_id = %instance_id,
+                previous_state = %result.previous_state,
+                current_state = %result.current_state,
+                "Phase 4: EC2停止成功"
+            );
+            Ok(format!(
+                "instance stopped ({} -> {})",
+                result.previous_state, result.current_state
+            ))
+        }
+        Err(err) => {
+            warn!(
+                instance_id = %instance_id,
+                error = %err,
+                "Phase 4: EC2停止失敗"
+            );
+            Err(format!("EC2停止失敗: {}", err))
+        }
+    }
 }
 
 /// Phase 5: CloudFrontディストリビューションを無効化

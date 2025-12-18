@@ -28,7 +28,7 @@
   - _Requirements: 3.2_
   - _Note: 2.1に依存_
 
-- [ ] 2.3 Phase 2-4: 待機、sqlite-api停止、EC2停止
+- [x] 2.3 Phase 2-4: 待機、sqlite-api停止、EC2停止
   - Phase 2: 実行中Lambda関数の完了を待つため30秒待機
   - Phase 3: aws-sdk-ssmのSendCommand APIでsystemctl stop nostr-apiを実行、GetCommandInvocationで完了確認
   - Phase 4: aws-sdk-ec2のStopInstances APIでEC2インスタンスを停止
