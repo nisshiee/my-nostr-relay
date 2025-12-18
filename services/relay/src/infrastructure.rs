@@ -7,6 +7,7 @@ pub mod event_repository;
 pub mod http_sqlite;
 pub mod lambda_ops;
 pub mod logging;
+pub mod recovery_config;
 pub mod relay_info_config;
 pub mod shutdown_config;
 pub mod sns_ops;
@@ -36,6 +37,7 @@ pub use subscription_repository::{
     DynamoSubscriptionRepository, MatchedSubscription, SubscriptionInfo, SubscriptionRepository,
     SubscriptionRepositoryError,
 };
+pub use recovery_config::{RecoveryConfig, RecoveryConfigError, RecoveryResult, StepResult};
 pub use shutdown_config::{PhaseResult, ShutdownConfig, ShutdownConfigError, ShutdownResult};
 pub use lambda_ops::{AwsLambdaOps, DisableFunctionResult, LambdaOps, LambdaOpsError};
 pub use ssm_ops::{AwsSsmOps, RunCommandResult, SsmOps, SsmOpsError};

@@ -46,7 +46,7 @@
 
 ## Task 3: Recovery Lambda実装
 
-- [ ] 3.1 (P) Recovery Lambdaの基本構造とEventBridgeトリガー対応
+- [x] 3.1 (P) Recovery Lambdaの基本構造とEventBridgeトリガー対応
   - services/relay/src/bin/recovery.rsを新規作成
   - lambda_runtimeを使用したEventBridgeイベントハンドラーを実装
   - 環境変数からLambda関数名リスト、EC2インスタンスID、CloudFront ID、SQLite APIエンドポイント、SNSトピックARNを読み込み
