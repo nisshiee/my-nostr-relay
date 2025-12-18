@@ -42,6 +42,8 @@ thiserror = "2"
 tower = "0.5"
 # テスト用一時ディレクトリ
 tempfile = "3"
+# HTTPクライアント（統合テスト用）
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 # リリースビルドでもbacktraceを有効にする
 [profile.release]

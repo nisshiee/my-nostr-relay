@@ -2,7 +2,7 @@
 
 ## Task 1: sqlite-api Graceful Shutdown対応
 
-- [ ] 1.1 (P) SIGTERMシグナルハンドリングの実装
+- [x] 1.1 (P) SIGTERMシグナルハンドリングの実装
   - tokio::signalを使用してSIGTERMとCtrl+Cを待機するshutdown_signal()関数を作成
   - axum::serveのwith_graceful_shutdown()でサーバーに統合
   - シグナル受信時に新規リクエスト受付を停止し、処理中リクエストの完了を待機
