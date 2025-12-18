@@ -38,6 +38,27 @@ locals {
 }
 
 # ------------------------------------------------------------------------------
+# Budget Module用変数
+# Task 4.5: 予算管理モジュールの設定変数
+# ------------------------------------------------------------------------------
+
+variable "budget_limit_amount" {
+  description = "月額予算閾値（USD）"
+  type        = string
+  default     = "10"
+}
+
+variable "slack_team_id" {
+  description = "Slack Team ID（例: T07EA123LEP）。AWS ChatbotでSlackワークスペース連携後に取得"
+  type        = string
+}
+
+variable "slack_channel_id" {
+  description = "Slackチャンネル ID（例: C07EZ1ABC23）。通知先チャンネルのID"
+  type        = string
+}
+
+# ------------------------------------------------------------------------------
 # Modules
 # ------------------------------------------------------------------------------
 
@@ -139,6 +160,50 @@ module "ec2_search" {
   parameter_store_path = "/nostr-relay/ec2-search/api-token"
 }
 
+# ------------------------------------------------------------------------------
+# Budget Module
+# Task 4.5: AWS予算アラートに基づくサービス自動停止・復旧機能
+#
+# 要件:
+# - AWS Budgetの閾値超過時にサービスを自動停止
+# - 月初に自動でサービスを復旧
+# - Slack通知により停止/復旧状態を運用者に即時通知
+#
+# Requirements: 5.6
+# ------------------------------------------------------------------------------
+module "budget" {
+  source = "./modules/budget"
+
+  # 予算設定
+  budget_limit_amount = var.budget_limit_amount
+
+  # Slack連携設定
+  slack_team_id    = var.slack_team_id
+  slack_channel_id = var.slack_channel_id
+
+  # 停止対象のrelay Lambda関数名リスト
+  # modules/api で定義されているLambda関数を参照
+  relay_lambda_function_names = [
+    "nostr_relay_connect",
+    "nostr_relay_disconnect",
+    "nostr_relay_default"
+  ]
+
+  # sqlite-api EC2インスタンスID
+  # modules/ec2-searchの出力を参照
+  ec2_instance_id = module.ec2_search.instance_id
+
+  # CloudFrontディストリビューションID
+  # modules/apiの出力を参照
+  cloudfront_distribution_id = module.api.cloudfront_distribution_id
+
+  # sqlite-apiヘルスチェックエンドポイント
+  # Recovery Lambdaがsqlite-apiの起動確認に使用
+  sqlite_api_endpoint = module.ec2_search.search_api_url
+
+  depends_on = [module.api, module.ec2_search]
+}
+
 output "nameservers" {
   value = module.domain.nameservers
 }
@@ -215,4 +280,49 @@ output "ec2_search_ssm_document_name" {
 output "ec2_search_ssm_document_arn" {
   description = "バイナリ更新用SSMドキュメントのARN"
   value       = module.ec2_search.ssm_document_arn
+}
+
+# ------------------------------------------------------------------------------
+# Budget Module Outputs
+# Task 4.5: 予算管理モジュールの出力
+# ------------------------------------------------------------------------------
+
+output "budget_alert_sns_topic_arn" {
+  description = "予算アラートSNSトピックARN"
+  value       = module.budget.alert_sns_topic_arn
+}
+
+output "budget_result_sns_topic_arn" {
+  description = "結果通知SNSトピックARN"
+  value       = module.budget.result_sns_topic_arn
+}
+
+output "budget_shutdown_lambda_function_name" {
+  description = "Shutdown Lambda関数名"
+  value       = module.budget.shutdown_lambda_function_name
+}
+
+output "budget_recovery_lambda_function_name" {
+  description = "Recovery Lambda関数名"
+  value       = module.budget.recovery_lambda_function_name
+}
+
+output "budget_name" {
+  description = "AWS Budget名"
+  value       = module.budget.budget_name
+}
+
+output "budget_limit_amount" {
+  description = "設定された予算閾値（USD）"
+  value       = module.budget.budget_limit_amount
+}
+
+output "budget_monthly_recovery_rule_name" {
+  description = "EventBridge月次復旧ルール名"
+  value       = module.budget.monthly_recovery_rule_name
+}
+
+output "budget_chatbot_configuration_arn" {
+  description = "AWS Chatbot Slack Channel Configuration ARN"
+  value       = module.budget.chatbot_configuration_arn
 }

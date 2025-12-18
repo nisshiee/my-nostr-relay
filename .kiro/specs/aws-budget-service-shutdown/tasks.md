@@ -122,7 +122,7 @@
   - _Requirements: 4.1, 4.2, 5.4, 5.5_
   - _Note: 4.3に依存_
 
-- [ ] 4.5 モジュール変数と出力、メイン設定への統合
+- [x] 4.5 モジュール変数と出力、メイン設定への統合
   - relay_lambda_function_names、ec2_instance_id、cloudfront_distribution_id変数を定義
   - 既存モジュール（modules/api, modules/ec2-search）から必要なリソースIDを参照
   - alert_sns_topic_arn、result_sns_topic_arn、shutdown/recovery_lambda_function_name出力を定義
