@@ -62,6 +62,17 @@ variable "sqlite_api_systemd_service" {
   default     = "nostr-api"
 }
 
+variable "sqlite_api_endpoint" {
+  description = "sqlite-apiヘルスチェックエンドポイントURL"
+  type        = string
+}
+
+variable "recovery_schedule_time" {
+  description = "月次復旧実行時刻（cron式）"
+  type        = string
+  default     = "cron(5 15 1 * ? *)" # 毎月1日 00:05 JST (UTC 15:05)
+}
+
 # ------------------------------------------------------------------------------
 # Task 4.1: 予算アラート用SNSトピック
 #
@@ -491,6 +502,188 @@ resource "aws_iam_role_policy" "recovery_lambda" {
 }
 
 # ------------------------------------------------------------------------------
+# Task 4.4: Shutdown Lambda関数
+#
+# 要件:
+# - ARM64アーキテクチャでデプロイ
+# - タイムアウト180秒、メモリ256MB
+# - 環境変数でLambda関数名リスト、EC2インスタンスID、CloudFront ID、
+#   SNSトピックARN、sqlite-apiサービス名を設定
+# - SNSトピックからのトリガー権限を設定
+#
+# Requirements: 5.4, 4.1
+# ------------------------------------------------------------------------------
+
+# Shutdown Lambda用ZIPアーカイブ
+data "archive_file" "shutdown" {
+  type        = "zip"
+  source_file = "${path.module}/../../../services/relay/target/lambda/shutdown/bootstrap"
+  output_path = "${path.module}/../../dist/shutdown.zip"
+}
+
+# Shutdown Lambda関数
+resource "aws_lambda_function" "shutdown" {
+  function_name    = "nostr-relay-shutdown"
+  role             = aws_iam_role.shutdown_lambda.arn
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  filename         = data.archive_file.shutdown.output_path
+  source_code_hash = data.archive_file.shutdown.output_base64sha256
+  timeout          = 180
+  memory_size      = 256
+  architectures    = ["arm64"]
+
+  environment {
+    variables = {
+      # 停止対象のrelay Lambda関数名（カンマ区切り）
+      RELAY_LAMBDA_FUNCTION_NAMES = join(",", var.relay_lambda_function_names)
+      # sqlite-api EC2インスタンスID
+      EC2_INSTANCE_ID = var.ec2_instance_id
+      # CloudFrontディストリビューションID
+      CLOUDFRONT_DISTRIBUTION_ID = var.cloudfront_distribution_id
+      # 結果通知SNSトピックARN
+      RESULT_SNS_TOPIC_ARN = aws_sns_topic.result.arn
+      # sqlite-apiのsystemdサービス名
+      SQLITE_API_SYSTEMD_SERVICE = var.sqlite_api_systemd_service
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
+    }
+  }
+
+  tags = {
+    Name = "nostr-relay-shutdown"
+  }
+}
+
+# CloudWatch Logsロググループ（Shutdown Lambda用）
+resource "aws_cloudwatch_log_group" "shutdown_lambda" {
+  name              = "/aws/lambda/nostr-relay-shutdown"
+  retention_in_days = 90
+
+  tags = {
+    Name = "nostr-relay-shutdown-logs"
+  }
+}
+
+# SNSトピックからShutdown Lambdaを起動する権限
+resource "aws_lambda_permission" "shutdown_sns" {
+  statement_id  = "AllowSNSInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.shutdown.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.budget_alert.arn
+}
+
+# SNSトピックからShutdown Lambdaへのサブスクリプション
+resource "aws_sns_topic_subscription" "shutdown_lambda" {
+  topic_arn = aws_sns_topic.budget_alert.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.shutdown.arn
+}
+
+# ------------------------------------------------------------------------------
+# Task 4.4: Recovery Lambda関数
+#
+# 要件:
+# - ARM64アーキテクチャでデプロイ
+# - タイムアウト180秒、メモリ256MB
+# - 環境変数でLambda関数名リスト、EC2インスタンスID、CloudFront ID、
+#   SNSトピックARN、sqlite-apiエンドポイントを設定
+# - EventBridgeからのトリガー権限を設定
+#
+# Requirements: 5.4, 4.2
+# ------------------------------------------------------------------------------
+
+# Recovery Lambda用ZIPアーカイブ
+data "archive_file" "recovery" {
+  type        = "zip"
+  source_file = "${path.module}/../../../services/relay/target/lambda/recovery/bootstrap"
+  output_path = "${path.module}/../../dist/recovery.zip"
+}
+
+# Recovery Lambda関数
+resource "aws_lambda_function" "recovery" {
+  function_name    = "nostr-relay-recovery"
+  role             = aws_iam_role.recovery_lambda.arn
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  filename         = data.archive_file.recovery.output_path
+  source_code_hash = data.archive_file.recovery.output_base64sha256
+  timeout          = 180
+  memory_size      = 256
+  architectures    = ["arm64"]
+
+  environment {
+    variables = {
+      # 有効化対象のrelay Lambda関数名（カンマ区切り）
+      RELAY_LAMBDA_FUNCTION_NAMES = join(",", var.relay_lambda_function_names)
+      # sqlite-api EC2インスタンスID
+      EC2_INSTANCE_ID = var.ec2_instance_id
+      # CloudFrontディストリビューションID
+      CLOUDFRONT_DISTRIBUTION_ID = var.cloudfront_distribution_id
+      # 結果通知SNSトピックARN
+      RESULT_SNS_TOPIC_ARN = aws_sns_topic.result.arn
+      # sqlite-apiヘルスチェックエンドポイントURL
+      SQLITE_API_ENDPOINT = var.sqlite_api_endpoint
+      # パニック時にバックトレースを出力
+      RUST_BACKTRACE = "1"
+    }
+  }
+
+  tags = {
+    Name = "nostr-relay-recovery"
+  }
+}
+
+# CloudWatch Logsロググループ（Recovery Lambda用）
+resource "aws_cloudwatch_log_group" "recovery_lambda" {
+  name              = "/aws/lambda/nostr-relay-recovery"
+  retention_in_days = 90
+
+  tags = {
+    Name = "nostr-relay-recovery-logs"
+  }
+}
+
+# ------------------------------------------------------------------------------
+# Task 4.4: EventBridge Scheduleルール（月次Recovery トリガー）
+#
+# 要件:
+# - 毎月1日にRecovery Lambdaをトリガー
+# - スケジュール時刻を変数で設定可能（デフォルト: 毎月1日 00:05 JST）
+# - EventBridgeからRecovery Lambdaを起動する権限を設定
+#
+# Requirements: 4.1, 4.2, 5.5
+# ------------------------------------------------------------------------------
+
+# EventBridge Scheduleルール
+resource "aws_cloudwatch_event_rule" "monthly_recovery" {
+  name                = "nostr-relay-monthly-recovery"
+  description         = "毎月1日にNostr Relayサービスを自動復旧する"
+  schedule_expression = var.recovery_schedule_time
+
+  tags = {
+    Name = "nostr-relay-monthly-recovery"
+  }
+}
+
+# EventBridge -> Recovery Lambda ターゲット
+resource "aws_cloudwatch_event_target" "monthly_recovery" {
+  rule      = aws_cloudwatch_event_rule.monthly_recovery.name
+  target_id = "recovery-lambda"
+  arn       = aws_lambda_function.recovery.arn
+}
+
+# EventBridgeからRecovery Lambdaを起動する権限
+resource "aws_lambda_permission" "recovery_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.recovery.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.monthly_recovery.arn
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
@@ -552,4 +745,35 @@ output "recovery_lambda_role_arn" {
 output "recovery_lambda_role_name" {
   description = "Recovery Lambda IAMロール名"
   value       = aws_iam_role.recovery_lambda.name
+}
+
+# Task 4.4: Lambda関数出力
+output "shutdown_lambda_function_name" {
+  description = "Shutdown Lambda関数名"
+  value       = aws_lambda_function.shutdown.function_name
+}
+
+output "shutdown_lambda_function_arn" {
+  description = "Shutdown Lambda関数ARN"
+  value       = aws_lambda_function.shutdown.arn
+}
+
+output "recovery_lambda_function_name" {
+  description = "Recovery Lambda関数名"
+  value       = aws_lambda_function.recovery.function_name
+}
+
+output "recovery_lambda_function_arn" {
+  description = "Recovery Lambda関数ARN"
+  value       = aws_lambda_function.recovery.arn
+}
+
+output "monthly_recovery_rule_arn" {
+  description = "EventBridge月次復旧ルールARN"
+  value       = aws_cloudwatch_event_rule.monthly_recovery.arn
+}
+
+output "monthly_recovery_rule_name" {
+  description = "EventBridge月次復旧ルール名"
+  value       = aws_cloudwatch_event_rule.monthly_recovery.name
 }

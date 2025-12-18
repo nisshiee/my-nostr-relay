@@ -110,7 +110,7 @@
   - _Requirements: 5.2, 5.3_
   - _Note: 4.1に依存_
 
-- [ ] 4.4 Lambda関数とEventBridge Scheduleリソース
+- [x] 4.4 Lambda関数とEventBridge Scheduleリソース
   - Shutdown Lambda関数をARM64アーキテクチャで定義
   - Recovery Lambda関数をARM64アーキテクチャで定義
   - 両Lambda関数のタイムアウトを180秒、メモリを256MBに設定
