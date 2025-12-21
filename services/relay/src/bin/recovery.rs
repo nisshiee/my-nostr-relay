@@ -567,7 +567,7 @@ async fn execute_step5_enable_cloudfront(config: &RecoveryConfig) -> Result<Stri
 
 /// 結果をSNSトピックに発行
 ///
-/// RecoveryResultをJSON形式でSNSトピックに発行し、
+/// RecoveryResultをAWS Chatbotカスタム通知フォーマットでSNSトピックに発行し、
 /// AWS Chatbot経由でSlack通知を行う。
 ///
 /// # 戻り値
@@ -589,17 +589,11 @@ async fn publish_result_to_sns(
     // SNS操作クライアントを作成
     let sns_ops = AwsSnsOps::from_config().await;
 
-    // 件名を生成（スキップ/成功/失敗で変える）
-    let subject = if result.skipped {
-        "Budget Recovery: サービス稼働中のためスキップ"
-    } else if result.overall_success {
-        "Budget Recovery: 全ステップ成功"
-    } else {
-        "Budget Recovery: 一部ステップ失敗"
-    };
+    // AWS Chatbotカスタム通知フォーマットに変換
+    let notification = result.to_chatbot_notification();
 
     // 結果をJSONとしてSNSに発行
-    match sns_ops.publish_json(topic_arn, result, Some(subject)).await {
+    match sns_ops.publish_json(topic_arn, &notification, None).await {
         Ok(publish_result) => {
             info!(
                 topic_arn = %topic_arn,

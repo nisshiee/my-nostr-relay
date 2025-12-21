@@ -184,6 +184,47 @@ impl ShutdownResult {
             total_duration_ms,
         }
     }
+
+    /// AWS Chatbotカスタム通知フォーマットに変換
+    ///
+    /// Slack通知用のメッセージを生成する。
+    /// 成功時は緑のチェックマーク、失敗時は赤い警告アイコンを使用。
+    pub fn to_chatbot_notification(&self) -> crate::infrastructure::ChatbotNotification {
+        // タイトルを決定
+        let title = if self.overall_success {
+            "✅ Budget Shutdown: サービス停止完了".to_string()
+        } else {
+            "⚠️ Budget Shutdown: 一部処理が失敗".to_string()
+        };
+
+        // 本文を生成
+        let mut description = String::new();
+
+        // 各フェーズの結果を表示
+        description.push_str("*処理結果:*\n");
+        for phase in &self.phases {
+            let status_icon = if phase.success { "✓" } else { "✗" };
+            description.push_str(&format!(
+                "• {} `{}`: {} ({}ms)\n",
+                status_icon, phase.phase, phase.message, phase.duration_ms
+            ));
+        }
+
+        // 合計時間
+        description.push_str(&format!(
+            "\n*合計実行時間:* {}ms",
+            self.total_duration_ms
+        ));
+
+        // キーワード
+        let keywords = if self.overall_success {
+            vec!["shutdown".to_string(), "success".to_string()]
+        } else {
+            vec!["shutdown".to_string(), "partial-failure".to_string()]
+        };
+
+        crate::infrastructure::ChatbotNotification::with_keywords(title, description, keywords)
+    }
 }
 
 #[cfg(test)]

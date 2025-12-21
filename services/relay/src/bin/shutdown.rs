@@ -383,7 +383,7 @@ async fn execute_phase5_cloudfront_disable(config: &ShutdownConfig) -> Result<St
 
 /// 結果をSNSトピックに発行
 ///
-/// ShutdownResultをJSON形式でSNSトピックに発行し、
+/// ShutdownResultをAWS Chatbotカスタム通知フォーマットでSNSトピックに発行し、
 /// AWS Chatbot経由でSlack通知を行う。
 ///
 /// # 戻り値
@@ -404,15 +404,11 @@ async fn publish_result_to_sns(
     // SNS操作クライアントを作成
     let sns_ops = AwsSnsOps::from_config().await;
 
-    // 件名を生成（成功/失敗で変える）
-    let subject = if result.overall_success {
-        "Budget Shutdown: 全フェーズ成功"
-    } else {
-        "Budget Shutdown: 一部フェーズ失敗"
-    };
+    // AWS Chatbotカスタム通知フォーマットに変換
+    let notification = result.to_chatbot_notification();
 
     // 結果をJSONとしてSNSに発行
-    match sns_ops.publish_json(topic_arn, result, Some(subject)).await {
+    match sns_ops.publish_json(topic_arn, &notification, None).await {
         Ok(publish_result) => {
             info!(
                 topic_arn = %topic_arn,

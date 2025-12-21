@@ -2,12 +2,13 @@
 //!
 //! Shutdown/Recovery Lambdaで使用するSNS通知機能を提供する。
 //! - 結果メッセージのSNSトピックへの発行
+//! - AWS Chatbotカスタム通知フォーマットのサポート
 //!
 //! 要件: 3.9, 4.8
 
 use async_trait::async_trait;
 use aws_sdk_sns::Client as SnsClient;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -20,6 +21,116 @@ pub enum SnsOpsError {
     /// JSON シリアライズエラー
     #[error("JSONシリアライズエラー: {0}")]
     SerializeError(String),
+}
+
+// ============================================================================
+// AWS Chatbotカスタム通知フォーマット
+//
+// AWS Chatbot（Amazon Q Developer in chat applications）がSlack/Teamsに
+// カスタム通知を表示するには、特定のJSON形式が必要。
+// 参考: https://docs.aws.amazon.com/chatbot/latest/adminguide/custom-notifs.html
+// ============================================================================
+
+/// AWS Chatbotカスタム通知のコンテンツ
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatbotNotificationContent {
+    /// テキストタイプ（"client-markdown"のみサポート）
+    #[serde(rename = "textType", skip_serializing_if = "Option::is_none")]
+    pub text_type: Option<String>,
+    /// 通知タイトル（最大250文字）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// 通知本文（必須、最大8000文字）
+    pub description: String,
+    /// 次のステップ（箇条書きで表示）
+    #[serde(rename = "nextSteps", skip_serializing_if = "Option::is_none")]
+    pub next_steps: Option<Vec<String>>,
+    /// キーワード（タグとして表示）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<Vec<String>>,
+}
+
+/// AWS Chatbotカスタム通知のメタデータ
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatbotNotificationMetadata {
+    /// スレッドID（同じIDのメッセージはスレッドにグループ化）
+    #[serde(rename = "threadId", skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    /// サマリー（スレッド親メッセージに表示）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    /// 追加コンテキスト
+    #[serde(rename = "additionalContext", skip_serializing_if = "Option::is_none")]
+    pub additional_context: Option<std::collections::HashMap<String, String>>,
+}
+
+/// AWS Chatbotカスタム通知
+///
+/// AWS Chatbotが認識するカスタム通知フォーマット。
+/// SNSトピックにこの形式のJSONを発行すると、Slack/Teamsに通知が表示される。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatbotNotification {
+    /// バージョン（"1.0"固定）
+    pub version: String,
+    /// ソース（"custom"固定）
+    pub source: String,
+    /// イベントID（オプション）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// 通知コンテンツ
+    pub content: ChatbotNotificationContent,
+    /// メタデータ（オプション）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ChatbotNotificationMetadata>,
+}
+
+impl ChatbotNotification {
+    /// シンプルな通知を作成
+    ///
+    /// # 引数
+    /// * `title` - 通知タイトル
+    /// * `description` - 通知本文
+    pub fn simple(title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            version: "1.0".to_string(),
+            source: "custom".to_string(),
+            id: None,
+            content: ChatbotNotificationContent {
+                text_type: Some("client-markdown".to_string()),
+                title: Some(title.into()),
+                description: description.into(),
+                next_steps: None,
+                keywords: None,
+            },
+            metadata: None,
+        }
+    }
+
+    /// キーワード付きの通知を作成
+    ///
+    /// # 引数
+    /// * `title` - 通知タイトル
+    /// * `description` - 通知本文
+    /// * `keywords` - キーワード（タグとして表示）
+    pub fn with_keywords(
+        title: impl Into<String>,
+        description: impl Into<String>,
+        keywords: Vec<String>,
+    ) -> Self {
+        Self {
+            version: "1.0".to_string(),
+            source: "custom".to_string(),
+            id: None,
+            content: ChatbotNotificationContent {
+                text_type: Some("client-markdown".to_string()),
+                title: Some(title.into()),
+                description: description.into(),
+                next_steps: None,
+                keywords: Some(keywords),
+            },
+            metadata: None,
+        }
+    }
 }
 
 /// SNSメッセージ発行結果

@@ -245,6 +245,81 @@ impl RecoveryResult {
             total_duration_ms,
         }
     }
+
+    /// AWS Chatbotカスタム通知フォーマットに変換
+    ///
+    /// Slack通知用のメッセージを生成する。
+    pub fn to_chatbot_notification(&self) -> crate::infrastructure::ChatbotNotification {
+        // タイトルを決定
+        let title = if self.skipped {
+            "ℹ️ Budget Recovery: スキップ".to_string()
+        } else if self.overall_success {
+            "✅ Budget Recovery: サービス復旧完了".to_string()
+        } else {
+            "❌ Budget Recovery: 復旧失敗".to_string()
+        };
+
+        // 本文を生成
+        let mut description = String::new();
+
+        if self.skipped {
+            // スキップ時
+            if let Some(reason) = &self.skip_reason {
+                description.push_str(&format!("*スキップ理由:* {}", reason));
+            }
+        } else if self.overall_success {
+            // 成功時
+            if let Some(steps) = &self.steps {
+                description.push_str("*処理結果:*\n");
+                for step in steps {
+                    let status_icon = if step.success { "✓" } else { "✗" };
+                    description.push_str(&format!(
+                        "• {} `{}`: {} ({}ms)\n",
+                        status_icon, step.step, step.message, step.duration_ms
+                    ));
+                }
+                description.push_str(&format!(
+                    "\n*合計実行時間:* {}ms",
+                    self.total_duration_ms
+                ));
+            }
+        } else {
+            // エラー時
+            if let (Some(error_step), Some(error_message)) = (&self.error_step, &self.error_message)
+            {
+                description.push_str(&format!(
+                    "*エラー発生ステップ:* `{}`\n*エラー内容:* {}\n",
+                    error_step, error_message
+                ));
+            }
+
+            // 完了したステップを表示
+            if let Some(completed) = &self.completed_steps
+                && !completed.is_empty()
+            {
+                description.push_str("\n*完了済みステップ:*\n");
+                for step in completed {
+                    description.push_str(&format!(
+                        "• ✓ `{}`: {} ({}ms)\n",
+                        step.step, step.message, step.duration_ms
+                    ));
+                }
+            }
+
+            description.push_str("\n⚠️ 手動での対応が必要な可能性があります。");
+        }
+
+        // キーワード
+        let keywords = if self.skipped {
+            vec!["recovery".to_string(), "skipped".to_string()]
+        } else if self.overall_success {
+            vec!["recovery".to_string(), "success".to_string()]
+        } else {
+            vec!["recovery".to_string(), "error".to_string()]
+        };
+
+        crate::infrastructure::ChatbotNotification::with_keywords(title, description, keywords)
+    }
 }
 
 #[cfg(test)]

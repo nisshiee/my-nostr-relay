@@ -44,6 +44,6 @@ pub use lambda_ops::{AwsLambdaOps, DisableFunctionResult, EnableFunctionResult, 
 pub use ssm_ops::{AwsSsmOps, RunCommandResult, SsmOps, SsmOpsError};
 pub use ec2_ops::{AwsEc2Ops, Ec2Ops, Ec2OpsError, InstanceState, StartInstanceResult, StopInstanceResult};
 pub use cloudfront_ops::{AwsCloudFrontOps, CloudFrontOps, CloudFrontOpsError, DisableDistributionResult, EnableDistributionResult};
-pub use sns_ops::{AwsSnsOps, PublishResult, SnsOps, SnsOpsError};
+pub use sns_ops::{AwsSnsOps, ChatbotNotification, PublishResult, SnsOps, SnsOpsError};
 pub use health_check_ops::{HealthCheckError, HealthCheckOps, HealthCheckResult, HttpHealthCheck};
 pub use websocket_sender::{ApiGatewayWebSocketSender, SendError, WebSocketSender};
