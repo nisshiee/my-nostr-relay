@@ -132,14 +132,14 @@
 
 ## Task 5: ビルドと統合
 
-- [ ] 5.1 Lambda関数のビルドとデプロイ準備
+- [x] 5.1 Lambda関数のビルドとデプロイ準備
   - cargo lambda build --release --arm64でShutdown/Recovery Lambdaをビルド
   - Terraformが参照するビルド成果物パスを確認
   - 既存のLambdaビルドワークフローとの整合性を確認
   - _Requirements: 5.4_
   - _Note: Task 2, 3完了後に実施_
 
-- [ ] 5.2 sqlite-apiのビルドとデプロイ
+- [x] 5.2 sqlite-apiのビルドとデプロイ
   - cargo zigbuild --release --target aarch64-unknown-linux-gnuでsqlite-apiをビルド
   - S3へバイナリをアップロード
   - SSM Run Commandでバイナリ更新を実行
@@ -148,6 +148,11 @@
   - _Note: Task 1完了後に実施_
 
 - [ ] 5.3 Terraformモジュール適用
+  - **前提: AWS ChatbotでSlackワークスペース連携を手動設定**
+    1. AWS Console → AWS Chatbot → Configure new client → Slack
+    2. Slackの認証ページでワークスペースを選択し「Allow」をクリック
+    3. Workspace details画面からslack_team_idを取得
+    4. 通知先Slackチャンネルのslack_channel_idを取得
   - terraform planで変更内容を確認
   - terraform applyでmodules/budgetリソースを作成
   - Budget、SNS、Lambda、EventBridge、IAMリソースが正しく作成されたことを確認
