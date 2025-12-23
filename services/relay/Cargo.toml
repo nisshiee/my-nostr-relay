@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2024"
 
 [dependencies]
@@ -24,6 +24,18 @@ aws-config = "1"
 
 # AWS SDK - SSM Parameter Store（APIトークン取得用）
 aws-sdk-ssm = "1"
+
+# AWS SDK - Lambda（Shutdown/Recovery Lambda用）
+aws-sdk-lambda = "1"
+
+# AWS SDK - EC2（Shutdown/Recovery Lambda用）
+aws-sdk-ec2 = "1"
+
+# AWS SDK - CloudFront（Shutdown/Recovery Lambda用）
+aws-sdk-cloudfront = "1"
+
+# AWS SDK - SNS（Shutdown/Recovery Lambda結果通知用）
+aws-sdk-sns = "1"
 
 # 非同期トレイトサポート
 async-trait = "0.1"
@@ -61,11 +73,12 @@ clap = { version = "4", features = ["derive"] }
 # DynamoDB AttributeValue（aws_lambda_eventsで使用）
 serde_dynamo = "4"
 
+# 日時操作（タイムスタンプ生成用）
+chrono = "0.4"
+
 [dev-dependencies]
 # テストのシリアル実行（環境変数テストの競合防止）
 serial_test = "3"
-# テスト用日時操作（aws_lambda_eventsが依存）
-chrono = "0.4"
 
 # リリースビルドでもbacktraceを有効にする
 [profile.release]

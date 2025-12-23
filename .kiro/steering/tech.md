@@ -72,6 +72,7 @@ Internet --> Route53 --> EC2 (t4g.nano)
 - **Search**: EC2 SQLite API (REQクエリ処理、DynamoDB Streamsからインデックス)
 - **CDN**: CloudFront + Lambda@Edge (プロトコルルーティング)
 - **Logging**: CloudWatch Logs (90日保存、法的対処・不正利用防止)
+- **Cost Management**: AWS Budgets, SNS, AWS Chatbot, EventBridge (予算超過時自動停止・月初復旧)
 - **Frontend Hosting**: Vercel
 
 ## Key Libraries
@@ -83,6 +84,10 @@ Internet --> Route53 --> EC2 (t4g.nano)
 - `aws-sdk-dynamodb` - DynamoDB操作
 - `aws-sdk-apigatewaymanagement` - WebSocketメッセージ送信
 - `aws-sdk-ssm` - SSM Parameter Store (APIトークン取得)
+- `aws-sdk-lambda` - Lambda関数制御 (Concurrency設定)
+- `aws-sdk-ec2` - EC2インスタンス制御 (起動/停止)
+- `aws-sdk-cloudfront` - CloudFrontディストリビューション制御
+- `aws-sdk-sns` - SNS通知発行
 - `aws-config` - AWS SDK認証・設定
 - `reqwest` - HTTPクライアント (EC2 SQLite API接続用、rustls-tls)
 - `reqwest-middleware` / `reqwest-retry` - HTTPリトライミドルウェア
@@ -206,6 +211,8 @@ cd terraform && aws-vault exec nostr-relay -- terraform apply
 | アクセスログ記録 | IPアドレス、User-Agent、リクエスト時刻、イベント種別を記録 |
 | Vercel for Frontend | Next.js最適化ホスティング、GitHubとの連携 |
 | Edition 2024 | 最新のRust機能を活用 |
+| AWS Budgets + Lambda自動停止 | 予算超過時にサービス自動停止、月初自動復旧でコスト制御 |
+| AWS Chatbot Slack連携 | 停止/復旧イベントをSlack通知、運用者への即時アラート |
 
 ## Domain Configuration
 

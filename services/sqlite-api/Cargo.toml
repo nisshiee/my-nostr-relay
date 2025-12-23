@@ -1,6 +1,6 @@
 [package]
 name = "sqlite-api"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 description = "EC2上で動作するNostrイベント検索用HTTP APIサーバー"
 
@@ -42,6 +42,8 @@ thiserror = "2"
 tower = "0.5"
 # テスト用一時ディレクトリ
 tempfile = "3"
+# HTTPクライアント（統合テスト用）
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 
 # リリースビルドでもbacktraceを有効にする
 [profile.release]
