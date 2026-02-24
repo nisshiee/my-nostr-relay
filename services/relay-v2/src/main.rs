@@ -12,6 +12,7 @@ use axum::{
 use tracing::info;
 
 use relay::logging;
+use relay::nip11::RelayInformation;
 use relay::relay::Relay;
 use relay::store::InMemoryEventStore;
 use relay::ws;
@@ -42,7 +43,54 @@ async fn handler(
 }
 
 async fn handle_nip11() -> Response {
-    todo!()
+    use axum::http::{StatusCode, HeaderMap, HeaderValue};
+    
+    let mut headers = HeaderMap::new();
+    
+    // CORSヘッダーの設定（NIP-11必須）
+    headers.insert(
+        "Access-Control-Allow-Origin", 
+        HeaderValue::from_static("*")
+    );
+    headers.insert(
+        "Access-Control-Allow-Headers", 
+        HeaderValue::from_static("Accept, Content-Type")
+    );
+    headers.insert(
+        "Access-Control-Allow-Methods", 
+        HeaderValue::from_static("GET, OPTIONS")
+    );
+    
+    // Content-Type設定
+    headers.insert(
+        "Content-Type", 
+        HeaderValue::from_static("application/json")
+    );
+
+    // 環境変数からリレー情報を取得
+    match RelayInformation::from_env() {
+        Ok(info) => {
+            match serde_json::to_string(&info) {
+                Ok(json) => (StatusCode::OK, headers, json).into_response(),
+                Err(e) => {
+                    tracing::error!(error = %e, "NIP-11情報のJSON化に失敗");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        headers,
+                        "{\"error\":\"Internal server error\"}".to_string()
+                    ).into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "NIP-11情報の取得に失敗");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                headers,
+                "{\"error\":\"Relay information not configured\"}".to_string()
+            ).into_response()
+        }
+    }
 }
 
 #[tokio::main]
