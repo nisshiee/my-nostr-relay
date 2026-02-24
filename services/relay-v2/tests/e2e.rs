@@ -13,8 +13,14 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// テスト用リレーサーバーを起動し、アドレスを返す
 async fn start_relay() -> SocketAddr {
+    start_relay_with_config(relay::config::LimitationConfig::default()).await
+}
+
+/// カスタム制限値設定でテスト用リレーサーバーを起動し、アドレスを返す
+async fn start_relay_with_config(limitation: relay::config::LimitationConfig) -> SocketAddr {
     let store = relay::store::InMemoryEventStore::new();
     let relay_instance = Arc::new(relay::relay::Relay::new(store));
+    let limitation = Arc::new(limitation);
 
     let app = axum::Router::new()
         .route(
@@ -22,10 +28,11 @@ async fn start_relay() -> SocketAddr {
             axum::routing::get(
                 move |ws: axum::extract::ws::WebSocketUpgrade| {
                     let relay_clone = relay_instance.clone();
+                    let lim_clone = limitation.clone();
                     async move {
                         let conn_id = uuid::Uuid::now_v7().to_string();
                         ws.on_upgrade(move |socket| {
-                            relay::ws::handle_socket(socket, relay_clone, conn_id)
+                            relay::ws::handle_socket(socket, relay_clone, conn_id, lim_clone)
                         })
                     }
                 },
@@ -478,4 +485,286 @@ async fn test_replaceable_event_returns_latest_only() {
     // 最新1件のみ返る
     assert_eq!(events.len(), 1, "Replaceableイベントは最新1件のみ返るべき");
     assert_eq!(events[0][2]["content"], "new profile");
+}
+
+// ===========================================
+// 制限値 (limitation) E2Eテスト
+// ===========================================
+
+/// タグ付きテストイベントを作成
+fn make_test_event_with_tags(content: &str, kind: u64, tags: Vec<Vec<&str>>) -> Value {
+    let secret_key_bytes =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
+    let secp = secp256k1::Secp256k1::new();
+    let secret_key =
+        secp256k1::SecretKey::from_byte_array(secret_key_bytes.try_into().unwrap()).unwrap();
+    let public_key = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+    let (xonly, _parity) = public_key.x_only_public_key();
+    let pubkey_hex = hex::encode(xonly.serialize());
+
+    let created_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let serialized = json!([0, pubkey_hex, created_at, kind, tags, content]);
+    let id_hash = Sha256::digest(serialized.to_string().as_bytes());
+    let id_hex = hex::encode(id_hash);
+
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+    let sig = secp.sign_schnorr_no_aux_rand(&id_hash, &keypair);
+    let sig_hex = hex::encode(sig.to_byte_array());
+
+    json!({
+        "id": id_hex,
+        "pubkey": pubkey_hex,
+        "created_at": created_at,
+        "kind": kind,
+        "tags": tags,
+        "content": content,
+        "sig": sig_hex,
+    })
+}
+
+/// カスタムcreated_atのテストイベント作成
+fn make_test_event_with_timestamp(content: &str, kind: u64, created_at: u64) -> Value {
+    let secret_key_bytes =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
+    let secp = secp256k1::Secp256k1::new();
+    let secret_key =
+        secp256k1::SecretKey::from_byte_array(secret_key_bytes.try_into().unwrap()).unwrap();
+    let public_key = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+    let (xonly, _parity) = public_key.x_only_public_key();
+    let pubkey_hex = hex::encode(xonly.serialize());
+
+    let tags: Vec<Vec<String>> = vec![];
+
+    let serialized = json!([0, pubkey_hex, created_at, kind, tags, content]);
+    let id_hash = Sha256::digest(serialized.to_string().as_bytes());
+    let id_hex = hex::encode(id_hash);
+
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+    let sig = secp.sign_schnorr_no_aux_rand(&id_hash, &keypair);
+    let sig_hex = hex::encode(sig.to_byte_array());
+
+    json!({
+        "id": id_hex,
+        "pubkey": pubkey_hex,
+        "created_at": created_at,
+        "kind": kind,
+        "tags": tags,
+        "content": content,
+        "sig": sig_hex,
+    })
+}
+
+/// max_message_length 制限テスト
+#[tokio::test]
+async fn test_limitation_max_message_length() {
+    let config = relay::config::LimitationConfig {
+        max_message_length: 100, // 非常に小さい制限
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 制限を超えるメッセージを送信
+    let long_msg = "a".repeat(200);
+    tx.send(Message::Text(long_msg.into())).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("NOTICEが返るべき");
+    assert_eq!(resp[0], "NOTICE");
+    assert!(resp[1].as_str().unwrap().contains("長すぎます"));
+}
+
+/// max_event_tags 制限テスト
+#[tokio::test]
+async fn test_limitation_max_event_tags() {
+    let config = relay::config::LimitationConfig {
+        max_event_tags: 2, // タグ最大2個
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 3個のタグを持つイベント → 拒否されるべき
+    let tags = vec![vec!["e", "a"], vec!["e", "b"], vec!["e", "c"]];
+    let event = make_test_event_with_tags("test", 1, tags);
+    let msg = json!(["EVENT", event]);
+    tx.send(text_msg(&msg)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("OK(false)が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[2], false);
+    assert!(resp[3].as_str().unwrap().contains("too many tags"));
+}
+
+/// max_content_length 制限テスト
+#[tokio::test]
+async fn test_limitation_max_content_length() {
+    let config = relay::config::LimitationConfig {
+        max_content_length: 10, // コンテンツ最大10文字
+        max_message_length: 1048576, // メッセージ長は十分大きく
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 11文字のコンテンツ → 拒否
+    let event = make_test_event("12345678901", 1);
+    let msg = json!(["EVENT", event]);
+    tx.send(text_msg(&msg)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("OK(false)が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[2], false);
+    assert!(resp[3].as_str().unwrap().contains("content too long"));
+}
+
+/// max_subscriptions 制限テスト
+#[tokio::test]
+async fn test_limitation_max_subscriptions() {
+    let config = relay::config::LimitationConfig {
+        max_subscriptions: 2, // 最大2サブスクリプション
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // サブスクリプション1
+    let req1 = json!(["REQ", "sub1", {"kinds": [1]}]);
+    tx.send(text_msg(&req1)).await.unwrap();
+    let resp1 = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp1[0], "EOSE"); // 成功
+
+    // サブスクリプション2
+    let req2 = json!(["REQ", "sub2", {"kinds": [1]}]);
+    tx.send(text_msg(&req2)).await.unwrap();
+    let resp2 = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp2[0], "EOSE"); // 成功
+
+    // サブスクリプション3 → 拒否
+    let req3 = json!(["REQ", "sub3", {"kinds": [1]}]);
+    tx.send(text_msg(&req3)).await.unwrap();
+    let resp3 = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp3[0], "CLOSED");
+    assert!(resp3[2].as_str().unwrap().contains("too many subscriptions"));
+}
+
+/// max_filters 制限テスト
+#[tokio::test]
+async fn test_limitation_max_filters() {
+    let config = relay::config::LimitationConfig {
+        max_filters: 2, // フィルタ最大2個
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 3個のフィルタ → 拒否
+    let req = json!(["REQ", "sub1", {"kinds": [1]}, {"kinds": [2]}, {"kinds": [3]}]);
+    tx.send(text_msg(&req)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp[0], "CLOSED");
+    assert!(resp[2].as_str().unwrap().contains("too many filters"));
+}
+
+/// created_at_lower_limit 制限テスト
+#[tokio::test]
+async fn test_limitation_created_at_too_old() {
+    let config = relay::config::LimitationConfig {
+        created_at_lower_limit: 3600, // 1時間前まで
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 2時間前のイベント → 拒否
+    let two_hours_ago = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() - 7200;
+    let event = make_test_event_with_timestamp("old event", 1, two_hours_ago);
+    let msg = json!(["EVENT", event]);
+    tx.send(text_msg(&msg)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("OK(false)が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[2], false);
+    assert!(resp[3].as_str().unwrap().contains("too old"));
+}
+
+/// created_at_upper_limit 制限テスト
+#[tokio::test]
+async fn test_limitation_created_at_too_future() {
+    let config = relay::config::LimitationConfig {
+        created_at_upper_limit: 60, // 1分先まで
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 5分後のイベント → 拒否
+    let five_min_future = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() + 300;
+    let event = make_test_event_with_timestamp("future event", 1, five_min_future);
+    let msg = json!(["EVENT", event]);
+    tx.send(text_msg(&msg)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("OK(false)が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[2], false);
+    assert!(resp[3].as_str().unwrap().contains("too far in the future"));
+}
+
+/// max_subscriptions: 既存IDの上書きはカウントしないテスト
+#[tokio::test]
+async fn test_limitation_subscription_overwrite_not_counted() {
+    let config = relay::config::LimitationConfig {
+        max_subscriptions: 1, // 最大1サブスクリプション
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // サブスクリプション1
+    let req1 = json!(["REQ", "sub1", {"kinds": [1]}]);
+    tx.send(text_msg(&req1)).await.unwrap();
+    let resp1 = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp1[0], "EOSE");
+
+    // 同じIDで上書き → 成功するべき
+    let req2 = json!(["REQ", "sub1", {"kinds": [2]}]);
+    tx.send(text_msg(&req2)).await.unwrap();
+    let resp2 = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp2[0], "EOSE");
 }

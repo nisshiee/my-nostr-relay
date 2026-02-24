@@ -8,6 +8,7 @@ use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, error, info, instrument, trace, warn};
 
+use crate::config::LimitationConfig;
 use crate::models::{ClientMessage, Filter, RelayMessage, SubscriptionId};
 use crate::relay::Relay;
 use crate::store::SaveResult;
@@ -35,8 +36,8 @@ impl ConnectionState {
 }
 
 /// WebSocket 接続を処理
-#[instrument(skip(socket, relay), fields(connection_id = %conn_id))]
-pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String) {
+#[instrument(skip(socket, relay, limitation), fields(connection_id = %conn_id))]
+pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String, limitation: Arc<LimitationConfig>) {
     info!("WebSocket接続を確立");
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -82,6 +83,23 @@ pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String
 
                 trace!(raw_message = %text, "生メッセージ受信");
 
+                // max_message_length チェック
+                let msg_len = text.len();
+                if msg_len > limitation.max_message_length as usize {
+                    warn!(
+                        message_length = msg_len,
+                        max = limitation.max_message_length,
+                        "メッセージ長が制限を超過"
+                    );
+                    let notice = RelayMessage::Notice(
+                        format!("メッセージが長すぎます: {}バイト（上限: {}バイト）", msg_len, limitation.max_message_length)
+                    );
+                    if send_message(&mut ws_tx, &notice).await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+
                 // ClientMessage をパース
                 let client_msg: ClientMessage = match serde_json::from_str(&text) {
                     Ok(msg) => msg,
@@ -111,6 +129,106 @@ pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String
                             content = %content_preview,
                             "EVENTメッセージ受信"
                         );
+
+                        // 制限値チェック: タグ数
+                        if event.tags.len() > limitation.max_event_tags as usize {
+                            warn!(
+                                event_id = %event_id,
+                                tag_count = event.tags.len(),
+                                max = limitation.max_event_tags,
+                                "タグ数が制限を超過"
+                            );
+                            let ok_msg = RelayMessage::Ok {
+                                event_id,
+                                success: false,
+                                message: format!(
+                                    "invalid: too many tags ({}, max {})",
+                                    event.tags.len(), limitation.max_event_tags
+                                ),
+                            };
+                            if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+
+                        // 制限値チェック: コンテンツ長
+                        let content_chars = event.content.chars().count();
+                        if content_chars > limitation.max_content_length as usize {
+                            warn!(
+                                event_id = %event_id,
+                                content_length = content_chars,
+                                max = limitation.max_content_length,
+                                "コンテンツ長が制限を超過"
+                            );
+                            let ok_msg = RelayMessage::Ok {
+                                event_id,
+                                success: false,
+                                message: format!(
+                                    "invalid: content too long ({} chars, max {})",
+                                    content_chars, limitation.max_content_length
+                                ),
+                            };
+                            if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+
+                        // 制限値チェック: created_at（過去・未来）
+                        {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs();
+                            let event_ts = event.created_at.as_i64();
+
+                            // 過去制限
+                            let lower_bound = now.saturating_sub(limitation.created_at_lower_limit);
+                            if event_ts < lower_bound as i64 {
+                                warn!(
+                                    event_id = %event_id,
+                                    created_at = event_ts,
+                                    lower_bound = lower_bound,
+                                    "created_atが古すぎる"
+                                );
+                                let ok_msg = RelayMessage::Ok {
+                                    event_id,
+                                    success: false,
+                                    message: format!(
+                                        "invalid: event is too old (created_at_lower_limit: {}s)",
+                                        limitation.created_at_lower_limit
+                                    ),
+                                };
+                                if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                                    return;
+                                }
+                                continue;
+                            }
+
+                            // 未来制限
+                            let upper_bound = now.saturating_add(limitation.created_at_upper_limit);
+                            if event_ts > upper_bound as i64 {
+                                warn!(
+                                    event_id = %event_id,
+                                    created_at = event_ts,
+                                    upper_bound = upper_bound,
+                                    "created_atが未来すぎる"
+                                );
+                                let ok_msg = RelayMessage::Ok {
+                                    event_id,
+                                    success: false,
+                                    message: format!(
+                                        "invalid: event is too far in the future (created_at_upper_limit: {}s)",
+                                        limitation.created_at_upper_limit
+                                    ),
+                                };
+                                if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                                    return;
+                                }
+                                continue;
+                            }
+                        }
 
                         // 署名検証
                         let verified = match event.verify() {
@@ -233,6 +351,51 @@ pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String
                             filter_count = filters.len(),
                             "REQメッセージ受信"
                         );
+
+                        // 制限値チェック: フィルタ数
+                        if filters.len() > limitation.max_filters as usize {
+                            warn!(
+                                subscription_id = %subscription_id,
+                                filter_count = filters.len(),
+                                max = limitation.max_filters,
+                                "フィルタ数が制限を超過"
+                            );
+                            let closed = RelayMessage::Closed {
+                                subscription_id,
+                                message: format!(
+                                    "error: too many filters ({}, max {})",
+                                    filters.len(), limitation.max_filters
+                                ),
+                            };
+                            if send_message(&mut ws_tx, &closed).await.is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+
+                        // 制限値チェック: サブスクリプション数
+                        // 同じIDの上書きは数に含めない
+                        if !state.subscriptions.contains_key(&subscription_id)
+                            && state.subscriptions.len() >= limitation.max_subscriptions as usize
+                        {
+                            warn!(
+                                subscription_id = %subscription_id,
+                                current = state.subscriptions.len(),
+                                max = limitation.max_subscriptions,
+                                "サブスクリプション数が制限を超過"
+                            );
+                            let closed = RelayMessage::Closed {
+                                subscription_id,
+                                message: format!(
+                                    "error: too many subscriptions ({}, max {})",
+                                    state.subscriptions.len(), limitation.max_subscriptions
+                                ),
+                            };
+                            if send_message(&mut ws_tx, &closed).await.is_err() {
+                                return;
+                            }
+                            continue;
+                        }
 
                         // サブスクリプション登録（既存は上書き）
                         state.subscriptions.insert(subscription_id.clone(), filters.clone());
