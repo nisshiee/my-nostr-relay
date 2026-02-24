@@ -79,6 +79,33 @@ impl Event {
             .unwrap_or("")
     }
 
+    /// "e" タグの値（イベントID）を抽出
+    pub fn e_tag_values(&self) -> Vec<&str> {
+        self.tags
+            .iter()
+            .filter(|t| t.name() == "e")
+            .filter_map(|t| t.value())
+            .collect()
+    }
+
+    /// "a" タグの値を (kind, pubkey, d-identifier) として抽出
+    /// フォーマット: "<kind>:<pubkey>:<d-identifier>"
+    pub fn a_tag_values(&self) -> Vec<(&str, &str, &str)> {
+        self.tags
+            .iter()
+            .filter(|t| t.name() == "a")
+            .filter_map(|t| t.value())
+            .filter_map(|v| {
+                let parts: Vec<&str> = v.splitn(3, ':').collect();
+                if parts.len() == 3 {
+                    Some((parts[0], parts[1], parts[2]))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// NIP-01準拠でイベントIDを計算（プライベート）
     fn compute_id(&self) -> [u8; 32] {
         // [0, pubkey, created_at, kind, tags, content] をシリアライズ

@@ -54,3 +54,42 @@ pub fn create_custom_event(
 
     serde_json::from_value(event_json).unwrap()
 }
+
+/// 異なるキーペアでテストイベントを作成（pubkeyが異なるイベントが必要なテスト用）
+pub fn create_custom_event_with_keypair(
+    kind: u16,
+    created_at: i64,
+    content: &str,
+    tags: Vec<Vec<&str>>,
+    secret_bytes: [u8; 32],
+) -> Event {
+    use secp256k1::{Keypair, Secp256k1, SecretKey};
+    use sha2::{Digest, Sha256};
+
+    let secret_key = SecretKey::from_byte_array(secret_bytes).unwrap();
+    let secp = Secp256k1::new();
+    let keypair = Keypair::from_secret_key(&secp, &secret_key);
+    let (x_only_pubkey, _parity) = keypair.x_only_public_key();
+
+    let pubkey_hex = hex::encode(x_only_pubkey.serialize());
+
+    let serializable = serde_json::json!([0, pubkey_hex, created_at, kind, tags, content,]);
+    let json_str = serde_json::to_string(&serializable).unwrap();
+    let mut hasher = Sha256::new();
+    hasher.update(json_str.as_bytes());
+    let id_bytes: [u8; 32] = hasher.finalize().into();
+
+    let sig = secp.sign_schnorr_no_aux_rand(&id_bytes, &keypair);
+
+    let event_json = serde_json::json!({
+        "id": hex::encode(id_bytes),
+        "pubkey": pubkey_hex,
+        "created_at": created_at,
+        "kind": kind,
+        "tags": tags,
+        "content": content,
+        "sig": hex::encode(sig.to_byte_array())
+    });
+
+    serde_json::from_value(event_json).unwrap()
+}

@@ -61,6 +61,10 @@ impl<S: EventStore> Relay<S> {
 
         // Saved または Replaced の場合のみ配信
         if result == SaveResult::Saved || result == SaveResult::Replaced {
+            // NIP-09: kind 5 (deletion request) の場合、参照イベントを削除
+            if event.kind.is_deletion_request() {
+                let _ = self.store.delete(&event).await;
+            }
             let _ = self.event_tx.send(event.into_inner());
         }
 
@@ -91,7 +95,7 @@ impl<S: EventStore> Relay<S> {
 mod tests {
     use super::*;
     use crate::store::InMemoryEventStore;
-    use crate::test_helpers::{create_custom_event, create_test_event, create_test_event_with_content};
+    use crate::test_helpers::{create_custom_event, create_custom_event_with_keypair, create_test_event, create_test_event_with_content};
 
     #[tokio::test]
     async fn test_publish_new_event() {
@@ -259,5 +263,73 @@ mod tests {
         let result =
             tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
         assert!(result.is_err()); // タイムアウト
+    }
+
+    // ========== NIP-09 削除リクエストテスト ==========
+
+    #[tokio::test]
+    async fn test_publish_deletion_request_deletes_referenced_event() {
+        let store = InMemoryEventStore::new();
+        let relay = Relay::new(store);
+
+        // 通常イベントを保存
+        let event = create_custom_event(1, 1000, "to be deleted", vec![]);
+        let event_id = event.id.to_string();
+        relay.publish(event.verify().unwrap()).await.unwrap();
+
+        // 削除リクエストを publish
+        let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &event_id], vec!["k", "1"]]);
+        let result = relay.publish(delete_event.verify().unwrap()).await.unwrap();
+        assert_eq!(result, SaveResult::Saved);
+
+        // 元のイベントは削除され、削除リクエスト自体は残る
+        let results = relay.query(&[Filter::default()]).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind.as_u16(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_deletion_request_is_broadcast() {
+        let store = InMemoryEventStore::new();
+        let relay = Relay::new(store);
+
+        let event = create_custom_event(1, 1000, "to be deleted", vec![]);
+        let event_id = event.id.to_string();
+        relay.publish(event.verify().unwrap()).await.unwrap();
+
+        let mut rx = relay.subscribe();
+
+        let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &event_id]]);
+        let delete_id = delete_event.id;
+        relay.publish(delete_event.verify().unwrap()).await.unwrap();
+
+        // 削除リクエスト自体が broadcast される
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received.id, delete_id);
+        assert_eq!(received.kind.as_u16(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_deletion_different_pubkey_no_effect() {
+        let store = InMemoryEventStore::new();
+        let relay = Relay::new(store);
+
+        // デフォルトキーペアでイベント保存
+        let event = create_custom_event(1, 1000, "protected", vec![]);
+        let event_id = event.id.to_string();
+        relay.publish(event.verify().unwrap()).await.unwrap();
+
+        // 異なるキーペアで削除リクエスト
+        let other_secret = [
+            0x02, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+        let delete_event = create_custom_event_with_keypair(5, 2000, "", vec![vec!["e", &event_id]], other_secret);
+        relay.publish(delete_event.verify().unwrap()).await.unwrap();
+
+        // 元のイベントは残っている（+ 削除リクエスト）
+        let results = relay.query(&[Filter::default()]).await.unwrap();
+        assert_eq!(results.len(), 2);
     }
 }
