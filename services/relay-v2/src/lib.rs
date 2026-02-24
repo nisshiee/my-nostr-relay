@@ -1,5 +1,6 @@
 pub mod logging;
 pub mod models;
+pub mod nip11;
 pub mod relay;
 pub mod store;
 #[cfg(test)]

@@ -53,3 +53,4 @@ uuid = { version = "1", features = ["v7"] }
 
 [dev-dependencies]
 tokio-tungstenite = "0.28"
+reqwest = { version = "0.12", features = ["json"] }
