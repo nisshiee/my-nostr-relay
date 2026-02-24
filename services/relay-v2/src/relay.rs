@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use tokio::sync::broadcast;
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 
 use crate::models::{Event, Filter, VerifiedEvent};
 use crate::store::{EventStore, InMemoryEventStore, SaveResult, StoreError};
@@ -62,8 +62,12 @@ impl<S: EventStore> Relay<S> {
         // Saved または Replaced の場合のみ配信
         if result == SaveResult::Saved || result == SaveResult::Replaced {
             // NIP-09: kind 5 (deletion request) の場合、参照イベントを削除
+            // TODO: 削除済みイベントの再投稿防止（NIP-09 SHOULD級）は未実装。
+            // 削除リクエストを記録し、以降の同イベントEVENTをrejectする仕組みが望ましい。
             if event.kind.is_deletion_request() {
-                let _ = self.store.delete(&event).await;
+                if let Err(e) = self.store.delete(&event).await {
+                    warn!(error = %e, event_id = %event.inner().id, "削除リクエストの処理に失敗");
+                }
             }
             let _ = self.event_tx.send(event.into_inner());
         }
