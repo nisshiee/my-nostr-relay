@@ -743,6 +743,119 @@ async fn test_limitation_created_at_too_future() {
     assert!(resp[3].as_str().unwrap().contains("too far in the future"));
 }
 
+/// max_subid_length: 65文字のsubscription_idがNOTICEで拒否されるテスト
+#[tokio::test]
+async fn test_limitation_max_subid_length() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 65文字のsubscription_id → パースエラーでNOTICE
+    let long_sub_id = "a".repeat(65);
+    let req = json!(["REQ", long_sub_id, {"kinds": [1]}]);
+    tx.send(text_msg(&req)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("NOTICEが返るべき");
+    assert_eq!(resp[0], "NOTICE");
+    assert!(resp[1].as_str().unwrap().contains("パースエラー"));
+}
+
+/// max_event_tags 境界値テスト: ちょうどmax → 成功
+#[tokio::test]
+async fn test_limitation_max_event_tags_boundary_exact() {
+    let config = relay::config::LimitationConfig {
+        max_event_tags: 2,
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // ちょうど2個のタグ → 成功
+    let tags = vec![vec!["e", "a"], vec!["e", "b"]];
+    let event = make_test_event_with_tags("test", 1, tags);
+    let msg = json!(["EVENT", event]);
+    tx.send(text_msg(&msg)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("OK応答が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[2], true);
+}
+
+/// max_content_length 境界値テスト: ちょうどmax → 成功
+#[tokio::test]
+async fn test_limitation_max_content_length_boundary_exact() {
+    let config = relay::config::LimitationConfig {
+        max_content_length: 10,
+        max_message_length: 1048576,
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // ちょうど10文字 → 成功
+    let event = make_test_event("1234567890", 1);
+    let msg = json!(["EVENT", event]);
+    tx.send(text_msg(&msg)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.expect("OK応答が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[2], true);
+}
+
+/// max_subscriptions 境界値テスト: ちょうどmax → 成功
+#[tokio::test]
+async fn test_limitation_max_subscriptions_boundary_exact() {
+    let config = relay::config::LimitationConfig {
+        max_subscriptions: 2,
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // 2個のサブスクリプション → どちらも成功
+    let req1 = json!(["REQ", "sub1", {"kinds": [1]}]);
+    tx.send(text_msg(&req1)).await.unwrap();
+    let resp1 = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp1[0], "EOSE");
+
+    let req2 = json!(["REQ", "sub2", {"kinds": [1]}]);
+    tx.send(text_msg(&req2)).await.unwrap();
+    let resp2 = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp2[0], "EOSE");
+}
+
+/// max_filters 境界値テスト: ちょうどmax → 成功
+#[tokio::test]
+async fn test_limitation_max_filters_boundary_exact() {
+    let config = relay::config::LimitationConfig {
+        max_filters: 2,
+        ..Default::default()
+    };
+    let addr = start_relay_with_config(config).await;
+    let url = format!("ws://127.0.0.1:{}/", addr.port());
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    // ちょうど2個のフィルタ → 成功
+    let req = json!(["REQ", "sub1", {"kinds": [1]}, {"kinds": [2]}]);
+    tx.send(text_msg(&req)).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 2000).await.unwrap();
+    assert_eq!(resp[0], "EOSE");
+}
+
 /// max_subscriptions: 既存IDの上書きはカウントしないテスト
 #[tokio::test]
 async fn test_limitation_subscription_overwrite_not_counted() {

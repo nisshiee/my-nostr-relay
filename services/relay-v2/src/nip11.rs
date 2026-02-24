@@ -73,12 +73,6 @@ impl RelayInformation {
     /// `RELAY_PUBKEY` が設定されていない場合はエラーを返します
     /// LimitationConfigを指定してRelayInformationを構築
     pub fn from_env_with_config(limitation_config: &LimitationConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut info = Self::from_env()?;
-        info.limitation = Limitation::from(limitation_config);
-        Ok(info)
-    }
-
-    pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
         let name = env::var("RELAY_NAME")
             .unwrap_or_else(|_| "Nostr Relay".to_string());
         
@@ -101,8 +95,7 @@ impl RelayInformation {
         let version = env::var("RELAY_VERSION")
             .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
-        let limitation_config = LimitationConfig::from_env();
-        let limitation = Limitation::from(&limitation_config);
+        let limitation = Limitation::from(limitation_config);
 
         Ok(Self {
             name,
@@ -115,6 +108,10 @@ impl RelayInformation {
             limitation,
         })
     }
+
+    pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_env_with_config(&LimitationConfig::from_env())
+    }
 }
 
 /// カンマ区切りのNIP番号文字列をu16のVecに変換
@@ -124,7 +121,7 @@ impl RelayInformation {
 /// # use relay::nip11::parse_nip_list;
 /// assert_eq!(parse_nip_list("1,9,11").unwrap(), vec![1, 9, 11]);
 /// assert_eq!(parse_nip_list("1").unwrap(), vec![1]);
-/// assert_eq!(parse_nip_list("").unwrap(), vec![]);
+/// assert_eq!(parse_nip_list("").unwrap(), Vec::<u16>::new());
 /// ```
 pub fn parse_nip_list(input: &str) -> Result<Vec<u16>, Box<dyn std::error::Error>> {
     if input.trim().is_empty() {

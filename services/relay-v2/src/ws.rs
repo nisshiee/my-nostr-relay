@@ -9,7 +9,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::config::LimitationConfig;
-use crate::models::{ClientMessage, Filter, RelayMessage, SubscriptionId};
+use crate::models::{ClientMessage, Event, Filter, RelayMessage, SubscriptionId};
 use crate::relay::Relay;
 use crate::store::SaveResult;
 
@@ -20,6 +20,100 @@ fn truncate_content(content: &str) -> String {
     } else {
         format!("{}...", content.chars().take(50).collect::<String>())
     }
+}
+
+/// イベントのタグ数を検証する。制限超過時は拒否メッセージを返す。
+fn check_event_tags(event: &Event, limitation: &LimitationConfig) -> Option<RelayMessage> {
+    if event.tags.len() > limitation.max_event_tags as usize {
+        warn!(
+            event_id = %event.id,
+            tag_count = event.tags.len(),
+            max = limitation.max_event_tags,
+            "タグ数が制限を超過"
+        );
+        Some(RelayMessage::Ok {
+            event_id: event.id,
+            success: false,
+            message: format!(
+                "invalid: too many tags ({}, max {})",
+                event.tags.len(), limitation.max_event_tags
+            ),
+        })
+    } else {
+        None
+    }
+}
+
+/// イベントのコンテンツ長を検証する。制限超過時は拒否メッセージを返す。
+fn check_content_length(event: &Event, limitation: &LimitationConfig) -> Option<RelayMessage> {
+    let content_chars = event.content.chars().count();
+    if content_chars > limitation.max_content_length as usize {
+        warn!(
+            event_id = %event.id,
+            content_length = content_chars,
+            max = limitation.max_content_length,
+            "コンテンツ長が制限を超過"
+        );
+        Some(RelayMessage::Ok {
+            event_id: event.id,
+            success: false,
+            message: format!(
+                "invalid: content too long ({} chars, max {})",
+                content_chars, limitation.max_content_length
+            ),
+        })
+    } else {
+        None
+    }
+}
+
+/// イベントのcreated_atを検証する。範囲外の場合は拒否メッセージを返す。
+fn check_created_at(event: &Event, limitation: &LimitationConfig) -> Option<RelayMessage> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let event_ts = event.created_at.as_i64();
+
+    // 過去制限
+    let lower_bound = now.saturating_sub(limitation.created_at_lower_limit);
+    if event_ts < lower_bound as i64 {
+        warn!(
+            event_id = %event.id,
+            created_at = event_ts,
+            lower_bound = lower_bound,
+            "created_atが古すぎる"
+        );
+        return Some(RelayMessage::Ok {
+            event_id: event.id,
+            success: false,
+            message: format!(
+                "invalid: event is too old (created_at_lower_limit: {}s)",
+                limitation.created_at_lower_limit
+            ),
+        });
+    }
+
+    // 未来制限
+    let upper_bound = now.saturating_add(limitation.created_at_upper_limit);
+    if event_ts > upper_bound as i64 {
+        warn!(
+            event_id = %event.id,
+            created_at = event_ts,
+            upper_bound = upper_bound,
+            "created_atが未来すぎる"
+        );
+        return Some(RelayMessage::Ok {
+            event_id: event.id,
+            success: false,
+            message: format!(
+                "invalid: event is too far in the future (created_at_upper_limit: {}s)",
+                limitation.created_at_upper_limit
+            ),
+        });
+    }
+
+    None
 }
 
 /// 各接続が保持するサブスクリプション状態
@@ -131,103 +225,27 @@ pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String
                         );
 
                         // 制限値チェック: タグ数
-                        if event.tags.len() > limitation.max_event_tags as usize {
-                            warn!(
-                                event_id = %event_id,
-                                tag_count = event.tags.len(),
-                                max = limitation.max_event_tags,
-                                "タグ数が制限を超過"
-                            );
-                            let ok_msg = RelayMessage::Ok {
-                                event_id,
-                                success: false,
-                                message: format!(
-                                    "invalid: too many tags ({}, max {})",
-                                    event.tags.len(), limitation.max_event_tags
-                                ),
-                            };
-                            if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                        if let Some(reject) = check_event_tags(&event, &limitation) {
+                            if send_message(&mut ws_tx, &reject).await.is_err() {
                                 return;
                             }
                             continue;
                         }
 
                         // 制限値チェック: コンテンツ長
-                        let content_chars = event.content.chars().count();
-                        if content_chars > limitation.max_content_length as usize {
-                            warn!(
-                                event_id = %event_id,
-                                content_length = content_chars,
-                                max = limitation.max_content_length,
-                                "コンテンツ長が制限を超過"
-                            );
-                            let ok_msg = RelayMessage::Ok {
-                                event_id,
-                                success: false,
-                                message: format!(
-                                    "invalid: content too long ({} chars, max {})",
-                                    content_chars, limitation.max_content_length
-                                ),
-                            };
-                            if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                        if let Some(reject) = check_content_length(&event, &limitation) {
+                            if send_message(&mut ws_tx, &reject).await.is_err() {
                                 return;
                             }
                             continue;
                         }
 
                         // 制限値チェック: created_at（過去・未来）
-                        {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap()
-                                .as_secs();
-                            let event_ts = event.created_at.as_i64();
-
-                            // 過去制限
-                            let lower_bound = now.saturating_sub(limitation.created_at_lower_limit);
-                            if event_ts < lower_bound as i64 {
-                                warn!(
-                                    event_id = %event_id,
-                                    created_at = event_ts,
-                                    lower_bound = lower_bound,
-                                    "created_atが古すぎる"
-                                );
-                                let ok_msg = RelayMessage::Ok {
-                                    event_id,
-                                    success: false,
-                                    message: format!(
-                                        "invalid: event is too old (created_at_lower_limit: {}s)",
-                                        limitation.created_at_lower_limit
-                                    ),
-                                };
-                                if send_message(&mut ws_tx, &ok_msg).await.is_err() {
-                                    return;
-                                }
-                                continue;
+                        if let Some(reject) = check_created_at(&event, &limitation) {
+                            if send_message(&mut ws_tx, &reject).await.is_err() {
+                                return;
                             }
-
-                            // 未来制限
-                            let upper_bound = now.saturating_add(limitation.created_at_upper_limit);
-                            if event_ts > upper_bound as i64 {
-                                warn!(
-                                    event_id = %event_id,
-                                    created_at = event_ts,
-                                    upper_bound = upper_bound,
-                                    "created_atが未来すぎる"
-                                );
-                                let ok_msg = RelayMessage::Ok {
-                                    event_id,
-                                    success: false,
-                                    message: format!(
-                                        "invalid: event is too far in the future (created_at_upper_limit: {}s)",
-                                        limitation.created_at_upper_limit
-                                    ),
-                                };
-                                if send_message(&mut ws_tx, &ok_msg).await.is_err() {
-                                    return;
-                                }
-                                continue;
-                            }
+                            continue;
                         }
 
                         // 署名検証

@@ -4,7 +4,7 @@
 
 use std::env;
 
-use tracing::info;
+use tracing::{info, warn};
 
 // デフォルト値
 /// WebSocketメッセージの最大バイト数（128KB）
@@ -103,18 +103,30 @@ impl LimitationConfig {
 
 /// 環境変数から u32 を読み込む（パース失敗時はデフォルト値）
 fn parse_env_u32(key: &str, default: u32) -> u32 {
-    env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    match env::var(key) {
+        Ok(v) => match v.parse() {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                warn!(key = key, value = %v, default = default, "環境変数の値が不正です。デフォルト値を使用します");
+                default
+            }
+        },
+        Err(_) => default,
+    }
 }
 
 /// 環境変数から u64 を読み込む（パース失敗時はデフォルト値）
 fn parse_env_u64(key: &str, default: u64) -> u64 {
-    env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    match env::var(key) {
+        Ok(v) => match v.parse() {
+            Ok(parsed) => parsed,
+            Err(_) => {
+                warn!(key = key, value = %v, default = default, "環境変数の値が不正です。デフォルト値を使用します");
+                default
+            }
+        },
+        Err(_) => default,
+    }
 }
 
 #[cfg(test)]
