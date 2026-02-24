@@ -13,7 +13,7 @@ use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 /// テスト用リレーサーバーを起動し、アドレスを返す
 async fn start_relay() -> SocketAddr {
-    let store = Arc::new(relay::store::InMemoryEventStore::new());
+    let store = relay::store::InMemoryEventStore::new();
     let relay_instance = Arc::new(relay::relay::Relay::new(store));
 
     let app = axum::Router::new()
@@ -432,4 +432,50 @@ async fn test_realtime_broadcast_between_clients() {
     assert_eq!(broadcast[1], "live");
     assert_eq!(broadcast[2]["id"], event["id"]);
     assert_eq!(broadcast[2]["content"], "realtime test");
+}
+
+/// Replaceable イベント（kind=0）を2回送信し、REQで最新1件のみ返ることを確認
+#[tokio::test]
+async fn test_replaceable_event_returns_latest_only() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    let (ws, _) = connect_async(&url).await.expect("接続失敗");
+    let (mut tx, mut rx) = ws.split();
+
+    // 1回目: kind=0 (replaceable) イベント送信
+    let event1 = make_test_event("old profile", 0);
+    tx.send(text_msg(&json!(["EVENT", event1]))).await.unwrap();
+    let ok1 = recv_msg(&mut rx, 3000).await.unwrap();
+    assert_eq!(ok1[0], "OK");
+    assert_eq!(ok1[2], true);
+
+    // 少し待って created_at が変わるようにする
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    // 2回目: kind=0 イベント送信（新しい created_at で置換されるはず）
+    let event2 = make_test_event("new profile", 0);
+    tx.send(text_msg(&json!(["EVENT", event2]))).await.unwrap();
+    let ok2 = recv_msg(&mut rx, 3000).await.unwrap();
+    assert_eq!(ok2[0], "OK");
+    assert_eq!(ok2[2], true);
+
+    // REQ: kind=0 で検索
+    tx.send(text_msg(&json!(["REQ", "profile", {"kinds": [0]}])))
+        .await
+        .unwrap();
+
+    let mut events = vec![];
+    loop {
+        let msg = recv_msg(&mut rx, 3000).await.expect("応答が来ない");
+        if msg[0] == "EOSE" {
+            break;
+        }
+        assert_eq!(msg[0], "EVENT");
+        events.push(msg);
+    }
+
+    // 最新1件のみ返る
+    assert_eq!(events.len(), 1, "Replaceableイベントは最新1件のみ返るべき");
+    assert_eq!(events[0][2]["content"], "new profile");
 }

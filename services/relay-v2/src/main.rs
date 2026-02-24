@@ -30,8 +30,8 @@ async fn handler(
         }
         Err(_) => {
             // NIP-11 Request 判定
-            if let Some(value) = headers.get("X-Special-Mode")
-                && value == "debug"
+            if let Some(value) = headers.get("Accept")
+                && value == "application/nostr+json"
             {
                 handle_nip11().await
             } else {
@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // EventStore の実装を選択（将来は DynamoDB 等に差し替え可能）
-    let store = Arc::new(InMemoryEventStore::new());
+    let store = InMemoryEventStore::new();
     let relay = Arc::new(Relay::new(store));
 
     let app = Router::new()

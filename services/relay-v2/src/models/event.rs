@@ -1,9 +1,10 @@
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
+
 use secp256k1::Secp256k1;
 use sha2::{Digest, Sha256};
 
 /// 署名検証用のSecp256k1コンテキスト（モジュール内で共有）
-static SECP: Lazy<Secp256k1<secp256k1::VerifyOnly>> = Lazy::new(Secp256k1::verification_only);
+static SECP: LazyLock<Secp256k1<secp256k1::VerifyOnly>> = LazyLock::new(Secp256k1::verification_only);
 
 /// Nostrイベント（NIP-01準拠）
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

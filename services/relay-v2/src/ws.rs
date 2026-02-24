@@ -180,6 +180,21 @@ pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String
                                     return;
                                 }
                             }
+                            Ok(SaveResult::Ephemeral) => {
+                                debug!(
+                                    event_id = %event_id,
+                                    kind = kind,
+                                    "ephemeralイベント配信完了"
+                                );
+                                let ok_msg = RelayMessage::Ok {
+                                    event_id,
+                                    success: true,
+                                    message: String::new(),
+                                };
+                                if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                                    return;
+                                }
+                            }
                             Ok(SaveResult::Ignored) => {
                                 debug!(
                                     event_id = %event_id,
