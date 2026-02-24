@@ -388,6 +388,45 @@ mod tests {
     }
 
     #[test]
+    fn test_is_protected_with_dash_tag_and_additional_value() {
+        use secp256k1::{Keypair, Secp256k1, SecretKey};
+
+        let secret_bytes = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+        let secret_key = SecretKey::from_byte_array(secret_bytes).unwrap();
+        let secp = Secp256k1::new();
+        let keypair = Keypair::from_secret_key(&secp, &secret_key);
+        let (x_only_pubkey, _parity) = keypair.x_only_public_key();
+        let pubkey_hex = hex::encode(x_only_pubkey.serialize());
+        let created_at: i64 = 1234567890;
+        let kind: u16 = 1;
+        let tags = vec![vec!["-", "wss://example.com"]];
+        let content = "protected event with relay hint";
+
+        let serializable = serde_json::json!([0, pubkey_hex, created_at, kind, tags, content]);
+        let json_str = serde_json::to_string(&serializable).unwrap();
+        let mut hasher = Sha256::new();
+        hasher.update(json_str.as_bytes());
+        let id_bytes: [u8; 32] = hasher.finalize().into();
+        let sig = secp.sign_schnorr_no_aux_rand(&id_bytes, &keypair);
+
+        let event_json = serde_json::json!({
+            "id": hex::encode(id_bytes),
+            "pubkey": pubkey_hex,
+            "created_at": created_at,
+            "kind": kind,
+            "tags": tags,
+            "content": content,
+            "sig": hex::encode(sig.to_byte_array())
+        });
+        let event: Event = serde_json::from_value(event_json).unwrap();
+        assert!(event.is_protected());
+    }
+
+    #[test]
     fn test_is_protected_without_dash_tag() {
         let event = create_actually_valid_event();
         assert!(!event.is_protected());
