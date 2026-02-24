@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use axum::{Router, routing::get, extract::ws::WebSocketUpgrade, extract::State, http::HeaderMap, response::Response};
 use serde_json::{json, Value};
+use serial_test::serial;
 use tokio::net::TcpListener;
 
 /// テスト用リレーサーバーを起動し、アドレスを返す
@@ -110,6 +111,7 @@ async fn handle_nip11() -> Response {
 
 /// NIP-11エンドポイントの正常なレスポンステスト
 #[tokio::test]
+#[serial]
 async fn test_nip11_valid_response() {
     // テスト用の環境変数設定
     unsafe {
@@ -181,6 +183,7 @@ async fn test_nip11_valid_response() {
 
 /// デフォルト値での NIP-11 レスポンステスト
 #[tokio::test]
+#[serial]
 async fn test_nip11_default_values() {
     // 必須のPUBKEYのみ設定、他はデフォルト値を使用
     unsafe {
@@ -226,6 +229,7 @@ async fn test_nip11_default_values() {
 
 /// RELAY_PUBKEYが設定されていない場合のエラーレスポンステスト
 #[tokio::test]
+#[serial]
 async fn test_nip11_missing_pubkey_error() {
     // すべての環境変数をクリア
     unsafe {
@@ -290,6 +294,7 @@ async fn test_non_nip11_request() {
 
 /// 不正なRELAY_SUPPORTED_NIPS値でのエラーテスト
 #[tokio::test]
+#[serial]
 async fn test_nip11_invalid_supported_nips() {
     unsafe {
         std::env::set_var("RELAY_PUBKEY", "validpubkey123456789012345678901234567890123456789012345678901234");
