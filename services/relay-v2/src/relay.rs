@@ -61,9 +61,9 @@ impl<S: EventStore> Relay<S> {
 
         // Saved または Replaced の場合のみ配信
         if result == SaveResult::Saved || result == SaveResult::Replaced {
-            // NIP-09: kind 5 (deletion request) の場合、参照イベントを削除
+            // NIP-09: kind 5（削除リクエスト）の場合、参照されたイベントを削除
             // TODO: 削除済みイベントの再投稿防止（NIP-09 SHOULD級）は未実装。
-            // 削除リクエストを記録し、以降の同イベントEVENTをrejectする仕組みが望ましい。
+            // 削除リクエストを記録し、以降の同一イベントのEVENTメッセージをrejectする仕組みが望ましい。
             if event.kind.is_deletion_request() {
                 if let Err(e) = self.store.delete(&event).await {
                     warn!(error = %e, event_id = %event.inner().id, "削除リクエストの処理に失敗");

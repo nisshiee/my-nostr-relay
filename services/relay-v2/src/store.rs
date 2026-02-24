@@ -198,7 +198,7 @@ impl EventStore for InMemoryEventStore {
         let requester_pubkey = inner.pubkey.to_hex();
         let mut deleted_count = 0;
 
-        // Collect tag values before acquiring locks
+        // ロック取得前にタグ値を収集
         let e_tag_ids: Vec<String> = inner.e_tag_values().iter().map(|s| s.to_string()).collect();
         let a_tag_values: Vec<(String, String, String)> = inner
             .a_tag_values()
@@ -206,24 +206,24 @@ impl EventStore for InMemoryEventStore {
             .map(|(k, p, d)| (k.to_string(), p.to_string(), d.to_string()))
             .collect();
 
-        // Acquire all locks at once to avoid race conditions between e-tag and a-tag processing
+        // e-tag処理とa-tag処理間のrace conditionを防ぐため、全ロックを一括取得
         let mut events = self.events.write().await;
         let mut replaceable_index = self.replaceable_index.write().await;
         let mut addressable_index = self.addressable_index.write().await;
 
-        // Process e-tags: delete events by ID
+        // e-tag処理: イベントIDで削除
         for id_hex in &e_tag_ids {
             if let Ok(event_id) = id_hex.parse::<EventId>() {
                 if let Some(target) = events.get(&event_id) {
-                    // Same pubkey check
+                    // 同一pubkeyチェック
                     if target.pubkey.to_hex() != requester_pubkey {
                         continue;
                     }
-                    // Don't delete kind-5 events
+                    // kind-5イベントは削除しない
                     if target.kind.is_deletion_request() {
                         continue;
                     }
-                    // Remove from indexes
+                    // インデックスから削除
                     if target.kind.is_replaceable() {
                         let key = (target.pubkey.to_hex(), target.kind.as_u16());
                         replaceable_index.remove(&key);
@@ -239,24 +239,23 @@ impl EventStore for InMemoryEventStore {
             }
         }
 
-        // Process a-tags: delete addressable events by kind:pubkey:d-identifier
-        // NOTE: Currently only checks addressable_index (latest version). This is correct for
-        // InMemoryStore which only holds the latest version, but a future DB-backed implementation
-        // should delete all versions of the replaceable event per NIP-09 spec.
+        // a-tag処理: kind:pubkey:d-identifier でaddressableイベントを削除
+        // NOTE: 現在はaddressable_index（最新版のみ）を参照している。InMemoryStoreでは最新版のみ
+        // 保持しているため問題ないが、将来DB実装する際はNIP-09仕様に従い全バージョンを削除する必要がある。
         for (kind_str, pubkey, d_id) in &a_tag_values {
-            // Pubkey must match the deletion requester
+            // 削除リクエスト送信者のpubkeyと一致する必要がある
             if pubkey != &requester_pubkey {
                 continue;
             }
             if let Ok(kind_num) = kind_str.parse::<u16>() {
-                // Don't delete kind-5
+                // kind-5は削除しない
                 if kind_num == 5 {
                     continue;
                 }
                 let key = (pubkey.clone(), kind_num, d_id.clone());
                 if let Some(existing_id) = addressable_index.get(&key).copied() {
                     if let Some(existing) = events.get(&existing_id) {
-                        // Only delete if created_at <= deletion request's created_at
+                        // 削除リクエストのcreated_at以前のイベントのみ削除
                         if existing.created_at.as_i64() <= inner.created_at.as_i64() {
                             events.remove(&existing_id);
                             addressable_index.remove(&key);
@@ -812,17 +811,17 @@ mod tests {
     async fn test_delete_with_both_e_and_a_tags() {
         let store = InMemoryEventStore::new();
 
-        // Regular event
+        // 通常イベント
         let event1 = create_custom_event(1, 1000, "regular event", vec![]);
         let event1_id = event1.id.to_string();
         store.save(&event1.verify().unwrap()).await.unwrap();
 
-        // Addressable event
+        // Addressableイベント
         let event2 = create_custom_event(30000, 1000, "article", vec![vec!["d", "my-article"]]);
         let pubkey = event2.pubkey.to_hex();
         store.save(&event2.verify().unwrap()).await.unwrap();
 
-        // Deletion request with both e-tag and a-tag
+        // e-tagとa-tagを同時に含む削除リクエスト
         let a_tag_value = format!("30000:{}:my-article", pubkey);
         let delete_event = create_custom_event(
             5, 2000, "",
@@ -841,18 +840,18 @@ mod tests {
     async fn test_delete_replaceable_event_cleans_replaceable_index() {
         let store = InMemoryEventStore::new();
 
-        // Replaceable event (kind 0)
+        // Replaceableイベント (kind 0)
         let event = create_custom_event(0, 1000, "profile", vec![]);
         let event_id = event.id.to_string();
         store.save(&event.verify().unwrap()).await.unwrap();
 
-        // Delete by e-tag
+        // e-tagで削除
         let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &event_id]]);
         let verified_delete = delete_event.verify().unwrap();
         store.delete(&verified_delete).await.unwrap();
 
-        // Now save a new replaceable event — it should be Saved (not Replaced),
-        // confirming the replaceable_index was cleaned up
+        // 新しいreplaceableイベントを保存 → Saved（Replacedではない）になることで
+        // replaceable_indexが正しくクリーンアップされたことを確認
         let new_event = create_custom_event(0, 3000, "new profile", vec![]);
         let result = store.save(&new_event.verify().unwrap()).await.unwrap();
         assert_eq!(result, SaveResult::Saved);
