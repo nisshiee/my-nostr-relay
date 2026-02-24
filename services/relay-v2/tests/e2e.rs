@@ -881,3 +881,122 @@ async fn test_limitation_subscription_overwrite_not_counted() {
     let resp2 = recv_msg(&mut rx, 2000).await.unwrap();
     assert_eq!(resp2[0], "EOSE");
 }
+
+// ===========================================
+// NIP-09 削除リクエスト E2Eテスト
+// ===========================================
+
+/// タグ付き・カスタムcreated_atのテストイベント作成
+fn make_test_event_full(content: &str, kind: u64, created_at: u64, tags: Vec<Vec<&str>>) -> Value {
+    let secret_key_bytes =
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
+            .unwrap();
+    let secp = secp256k1::Secp256k1::new();
+    let secret_key =
+        secp256k1::SecretKey::from_byte_array(secret_key_bytes.try_into().unwrap()).unwrap();
+    let public_key = secp256k1::PublicKey::from_secret_key(&secp, &secret_key);
+    let (xonly, _parity) = public_key.x_only_public_key();
+    let pubkey_hex = hex::encode(xonly.serialize());
+
+    let serialized = json!([0, pubkey_hex, created_at, kind, tags, content]);
+    let id_hash = Sha256::digest(serialized.to_string().as_bytes());
+    let id_hex = hex::encode(id_hash);
+
+    let keypair = secp256k1::Keypair::from_secret_key(&secp, &secret_key);
+    let sig = secp.sign_schnorr_no_aux_rand(&id_hash, &keypair);
+    let sig_hex = hex::encode(sig.to_byte_array());
+
+    json!({
+        "id": id_hex,
+        "pubkey": pubkey_hex,
+        "created_at": created_at,
+        "kind": kind,
+        "tags": tags,
+        "content": content,
+        "sig": sig_hex,
+    })
+}
+
+/// NIP-09: kind 5 削除リクエストで参照イベントが削除されるテスト
+#[tokio::test]
+async fn test_nip09_deletion_by_e_tag() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // イベントを投稿
+    let event = make_test_event_full("to be deleted", 1, now, vec![]);
+    let event_id = event["id"].as_str().unwrap().to_string();
+    tx.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
+    let ok = recv_msg(&mut rx, 3000).await.unwrap();
+    assert_eq!(ok[2], true);
+
+    // kind 5 削除リクエストを投稿
+    let delete_event = make_test_event_full("", 5, now + 1, vec![vec!["e", &event_id], vec!["k", "1"]]);
+    tx.send(text_msg(&json!(["EVENT", delete_event]))).await.unwrap();
+    let ok2 = recv_msg(&mut rx, 3000).await.unwrap();
+    assert_eq!(ok2[0], "OK");
+    assert_eq!(ok2[2], true);
+
+    // REQ で確認 — 元のイベントは削除され、削除リクエストのみ残る
+    tx.send(text_msg(&json!(["REQ", "check", {}]))).await.unwrap();
+    let mut events = vec![];
+    loop {
+        let msg = recv_msg(&mut rx, 3000).await.unwrap();
+        if msg[0] == "EOSE" { break; }
+        events.push(msg);
+    }
+    assert_eq!(events.len(), 1, "削除後は削除リクエストのみ残るべき");
+    assert_eq!(events[0][2]["kind"], 5);
+}
+
+/// NIP-09: 削除リクエストが broadcast される & 削除されたイベントは REQ で返らないテスト
+#[tokio::test]
+async fn test_nip09_deletion_broadcast_and_query() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    // クライアントA: サブスクライバー
+    let (ws_a, _) = connect_async(&url).await.unwrap();
+    let (mut tx_a, mut rx_a) = ws_a.split();
+
+    // クライアントB: 投稿者
+    let (ws_b, _) = connect_async(&url).await.unwrap();
+    let (mut tx_b, mut rx_b) = ws_b.split();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // B: イベント投稿
+    let event = make_test_event_full("will be deleted", 1, now, vec![]);
+    let event_id = event["id"].as_str().unwrap().to_string();
+    tx_b.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
+    let _ = recv_msg(&mut rx_b, 3000).await;
+
+    // A: サブスクリプション登録
+    tx_a.send(text_msg(&json!(["REQ", "live", {}]))).await.unwrap();
+    // 既存イベント + EOSE を消費
+    loop {
+        let msg = recv_msg(&mut rx_a, 3000).await.unwrap();
+        if msg[0] == "EOSE" { break; }
+    }
+
+    // B: 削除リクエスト
+    let delete_event = make_test_event_full("", 5, now + 1, vec![vec!["e", &event_id]]);
+    tx_b.send(text_msg(&json!(["EVENT", delete_event]))).await.unwrap();
+    let _ = recv_msg(&mut rx_b, 3000).await;
+
+    // A: 削除リクエストが broadcast で届く
+    let broadcast = recv_msg(&mut rx_a, 5000).await.expect("削除リクエストのbroadcastが届かない");
+    assert_eq!(broadcast[0], "EVENT");
+    assert_eq!(broadcast[2]["kind"], 5);
+}

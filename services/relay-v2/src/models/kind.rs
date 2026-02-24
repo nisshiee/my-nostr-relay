@@ -23,6 +23,11 @@ impl Kind {
         k == 0 || k == 3 || (10000..20000).contains(&k)
     }
 
+    /// Deletion request (kind 5, NIP-09)
+    pub fn is_deletion_request(&self) -> bool {
+        self.0 == 5
+    }
+
     /// Ephemeral event (kind 20000-29999)
     /// 保存せず配信のみ
     pub fn is_ephemeral(&self) -> bool {

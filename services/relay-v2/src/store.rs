@@ -23,6 +23,13 @@ pub enum SaveResult {
     Replaced,
 }
 
+/// 削除処理の結果
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteResult {
+    /// 削除されたイベント数
+    pub deleted_count: usize,
+}
+
 /// ストレージエラー
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
@@ -42,6 +49,9 @@ pub trait EventStore: Send + Sync {
 
     /// フィルターにマッチするイベントを検索
     async fn query(&self, filters: &[Filter]) -> Result<Vec<Event>, StoreError>;
+
+    /// 削除リクエスト(kind 5)を処理し、参照されたイベントを削除
+    async fn delete(&self, event: &VerifiedEvent) -> Result<DeleteResult, StoreError>;
 }
 
 /// インメモリイベントストア（開発・テスト用）
@@ -181,6 +191,84 @@ impl EventStore for InMemoryEventStore {
         );
         Ok(merged)
     }
+
+    #[instrument(skip(self, event), fields(event_id = %event.inner().id))]
+    async fn delete(&self, event: &VerifiedEvent) -> Result<DeleteResult, StoreError> {
+        let inner = event.inner();
+        let requester_pubkey = inner.pubkey.to_hex();
+        let mut deleted_count = 0;
+
+        // ロック取得前にタグ値を収集
+        let e_tag_ids: Vec<String> = inner.e_tag_values().iter().map(|s| s.to_string()).collect();
+        let a_tag_values: Vec<(String, String, String)> = inner
+            .a_tag_values()
+            .iter()
+            .map(|(k, p, d)| (k.to_string(), p.to_string(), d.to_string()))
+            .collect();
+
+        // e-tag処理とa-tag処理間のrace conditionを防ぐため、全ロックを一括取得
+        let mut events = self.events.write().await;
+        let mut replaceable_index = self.replaceable_index.write().await;
+        let mut addressable_index = self.addressable_index.write().await;
+
+        // e-tag処理: イベントIDで削除
+        for id_hex in &e_tag_ids {
+            if let Ok(event_id) = id_hex.parse::<EventId>() {
+                if let Some(target) = events.get(&event_id) {
+                    // 同一pubkeyチェック
+                    if target.pubkey.to_hex() != requester_pubkey {
+                        continue;
+                    }
+                    // kind-5イベントは削除しない
+                    if target.kind.is_deletion_request() {
+                        continue;
+                    }
+                    // インデックスから削除
+                    if target.kind.is_replaceable() {
+                        let key = (target.pubkey.to_hex(), target.kind.as_u16());
+                        replaceable_index.remove(&key);
+                    }
+                    if target.kind.is_addressable() {
+                        let d_tag = target.d_tag_value().to_string();
+                        let key = (target.pubkey.to_hex(), target.kind.as_u16(), d_tag);
+                        addressable_index.remove(&key);
+                    }
+                    events.remove(&event_id);
+                    deleted_count += 1;
+                }
+            }
+        }
+
+        // a-tag処理: kind:pubkey:d-identifier でaddressableイベントを削除
+        // NOTE: 現在はaddressable_index（最新版のみ）を参照している。InMemoryStoreでは最新版のみ
+        // 保持しているため問題ないが、将来DB実装する際はNIP-09仕様に従い全バージョンを削除する必要がある。
+        for (kind_str, pubkey, d_id) in &a_tag_values {
+            // 削除リクエスト送信者のpubkeyと一致する必要がある
+            if pubkey != &requester_pubkey {
+                continue;
+            }
+            if let Ok(kind_num) = kind_str.parse::<u16>() {
+                // kind-5は削除しない
+                if kind_num == 5 {
+                    continue;
+                }
+                let key = (pubkey.clone(), kind_num, d_id.clone());
+                if let Some(existing_id) = addressable_index.get(&key).copied() {
+                    if let Some(existing) = events.get(&existing_id) {
+                        // 削除リクエストのcreated_at以前のイベントのみ削除
+                        if existing.created_at.as_i64() <= inner.created_at.as_i64() {
+                            events.remove(&existing_id);
+                            addressable_index.remove(&key);
+                            deleted_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        debug!(deleted_count, "削除処理完了");
+        Ok(DeleteResult { deleted_count })
+    }
 }
 
 impl InMemoryEventStore {
@@ -251,7 +339,7 @@ impl InMemoryEventStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{create_custom_event, create_test_event, create_test_event_with_content};
+    use crate::test_helpers::{create_custom_event, create_custom_event_with_keypair, create_test_event, create_test_event_with_content};
 
     #[tokio::test]
     async fn test_save_and_query() {
@@ -582,5 +670,202 @@ mod tests {
         let results = store.query(&[filter1, filter2]).await.unwrap();
         // filter1 → kind=1の最新1件、filter2 → kind=2の最新2件 = 合計3件
         assert_eq!(results.len(), 3);
+    }
+
+    // ========== NIP-09 削除リクエストテスト ==========
+
+    #[tokio::test]
+    async fn test_delete_by_e_tag() {
+        let store = InMemoryEventStore::new();
+
+        // 通常イベントを保存
+        let event = create_custom_event(1, 1000, "to be deleted", vec![]);
+        let event_id = event.id.to_string();
+        store.save(&event.verify().unwrap()).await.unwrap();
+
+        // 削除リクエスト (kind 5) を作成
+        let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &event_id], vec!["k", "1"]]);
+        let verified_delete = delete_event.verify().unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 1);
+
+        // イベントが削除されている
+        let results = store.query(&[Filter::default()]).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_different_pubkey_ignored() {
+        let store = InMemoryEventStore::new();
+
+        // 通常イベントを保存（デフォルトキーペア）
+        let event = create_custom_event(1, 1000, "protected", vec![]);
+        let event_id = event.id.to_string();
+        store.save(&event.verify().unwrap()).await.unwrap();
+
+        // 異なるキーペアで削除リクエスト
+        let other_secret = [
+            0x02, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
+        ];
+        let delete_event = create_custom_event_with_keypair(5, 2000, "", vec![vec!["e", &event_id]], other_secret);
+        let verified_delete = delete_event.verify().unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 0);
+
+        // イベントは残っている
+        let results = store.query(&[Filter::default()]).await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_kind5_has_no_effect() {
+        let store = InMemoryEventStore::new();
+
+        // kind 5 イベントを保存
+        let kind5_event = create_custom_event(5, 1000, "deletion request", vec![]);
+        let kind5_id = kind5_event.id.to_string();
+        store.save(&kind5_event.verify().unwrap()).await.unwrap();
+
+        // kind 5 を削除しようとする
+        let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &kind5_id]]);
+        let verified_delete = delete_event.verify().unwrap();
+        store.save(&verified_delete).await.unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 0);
+
+        // kind 5 イベントは残っている（+ 新しい削除リクエスト自体も）
+        let results = store.query(&[Filter::default()]).await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_delete_by_a_tag() {
+        let store = InMemoryEventStore::new();
+
+        // addressable イベントを保存
+        let event = create_custom_event(30000, 1000, "article", vec![vec!["d", "my-article"]]);
+        let pubkey = event.pubkey.to_hex();
+        store.save(&event.verify().unwrap()).await.unwrap();
+
+        // a タグで削除
+        let a_tag_value = format!("30000:{}:my-article", pubkey);
+        let delete_event = create_custom_event(5, 2000, "", vec![vec!["a", &a_tag_value], vec!["k", "30000"]]);
+        let verified_delete = delete_event.verify().unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 1);
+
+        let results = store.query(&[Filter::default()]).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_a_tag_respects_created_at() {
+        let store = InMemoryEventStore::new();
+
+        // addressable イベント (created_at = 3000)
+        let event = create_custom_event(30000, 3000, "newer article", vec![vec!["d", "my-article"]]);
+        let pubkey = event.pubkey.to_hex();
+        store.save(&event.verify().unwrap()).await.unwrap();
+
+        // 削除リクエスト (created_at = 2000) → イベントの方が新しいので削除されない
+        let a_tag_value = format!("30000:{}:my-article", pubkey);
+        let delete_event = create_custom_event(5, 2000, "", vec![vec!["a", &a_tag_value]]);
+        let verified_delete = delete_event.verify().unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 0);
+
+        let results = store.query(&[Filter::default()]).await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_delete_multiple_events() {
+        let store = InMemoryEventStore::new();
+
+        let event1 = create_custom_event(1, 1000, "event 1", vec![]);
+        let event2 = create_custom_event(1, 2000, "event 2", vec![]);
+        let id1 = event1.id.to_string();
+        let id2 = event2.id.to_string();
+        store.save(&event1.verify().unwrap()).await.unwrap();
+        store.save(&event2.verify().unwrap()).await.unwrap();
+
+        // 両方を削除
+        let delete_event = create_custom_event(5, 3000, "", vec![vec!["e", &id1], vec!["e", &id2]]);
+        let verified_delete = delete_event.verify().unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 2);
+
+        let results = store.query(&[Filter::default()]).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_with_both_e_and_a_tags() {
+        let store = InMemoryEventStore::new();
+
+        // 通常イベント
+        let event1 = create_custom_event(1, 1000, "regular event", vec![]);
+        let event1_id = event1.id.to_string();
+        store.save(&event1.verify().unwrap()).await.unwrap();
+
+        // Addressableイベント
+        let event2 = create_custom_event(30000, 1000, "article", vec![vec!["d", "my-article"]]);
+        let pubkey = event2.pubkey.to_hex();
+        store.save(&event2.verify().unwrap()).await.unwrap();
+
+        // e-tagとa-tagを同時に含む削除リクエスト
+        let a_tag_value = format!("30000:{}:my-article", pubkey);
+        let delete_event = create_custom_event(
+            5, 2000, "",
+            vec![vec!["e", &event1_id], vec!["a", &a_tag_value]],
+        );
+        let verified_delete = delete_event.verify().unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 2);
+
+        let results = store.query(&[Filter::default()]).await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_delete_replaceable_event_cleans_replaceable_index() {
+        let store = InMemoryEventStore::new();
+
+        // Replaceableイベント (kind 0)
+        let event = create_custom_event(0, 1000, "profile", vec![]);
+        let event_id = event.id.to_string();
+        store.save(&event.verify().unwrap()).await.unwrap();
+
+        // e-tagで削除
+        let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &event_id]]);
+        let verified_delete = delete_event.verify().unwrap();
+        store.delete(&verified_delete).await.unwrap();
+
+        // 新しいreplaceableイベントを保存 → Saved（Replacedではない）になることで
+        // replaceable_indexが正しくクリーンアップされたことを確認
+        let new_event = create_custom_event(0, 3000, "new profile", vec![]);
+        let result = store.save(&new_event.verify().unwrap()).await.unwrap();
+        assert_eq!(result, SaveResult::Saved);
+    }
+
+    #[tokio::test]
+    async fn test_delete_nonexistent_event() {
+        let store = InMemoryEventStore::new();
+
+        let fake_id = "0000000000000000000000000000000000000000000000000000000000000000";
+        let delete_event = create_custom_event(5, 1000, "", vec![vec!["e", fake_id]]);
+        let verified_delete = delete_event.verify().unwrap();
+
+        let result = store.delete(&verified_delete).await.unwrap();
+        assert_eq!(result.deleted_count, 0);
     }
 }
