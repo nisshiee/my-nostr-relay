@@ -5,6 +5,16 @@ use std::env;
 
 use crate::config::LimitationConfig;
 
+/// 現在の実装でサポートしているNIP一覧
+///
+/// この値は実装状況に基づいて固定されている。
+/// 新しいNIPを実装したらここに追加すること。
+/// - NIP-01: 基本プロトコル（EVENT, REQ, CLOSE, OK, EOSE, CLOSED, Replaceable/Addressable/Ephemeral）
+/// - NIP-09: イベント削除リクエスト（kind:5）
+/// - NIP-11: Relay Information Document
+/// - NIP-70: Protected Events（"-"タグ）
+pub const SUPPORTED_NIPS: &[u16] = &[1, 9, 11, 70];
+
 /// NIP-11 Relay Information Document
 ///
 /// リレー情報を表すJSON構造体
@@ -64,9 +74,10 @@ impl RelayInformation {
     /// - `RELAY_DESCRIPTION`: リレー説明（デフォルト: "A Nostr relay server"）
     /// - `RELAY_PUBKEY`: 管理者pubkey（必須）
     /// - `RELAY_CONTACT`: 連絡先（デフォルト: ""）
-    /// - `RELAY_SUPPORTED_NIPS`: サポートNIP番号（カンマ区切り、デフォルト: "1"）
     /// - `RELAY_SOFTWARE`: ソフトウェアURL（デフォルト: "https://github.com/nisshiee/my-nostr-relay"）
     /// - `RELAY_VERSION`: バージョン（デフォルト: Cargo.tomlのversion）
+    ///
+    /// `supported_nips` は実装状況に基づいて固定値（SUPPORTED_NIPS）を使用します。
     ///
     /// # Errors
     ///
@@ -85,9 +96,7 @@ impl RelayInformation {
         let contact = env::var("RELAY_CONTACT")
             .unwrap_or_default();
         
-        let supported_nips_str = env::var("RELAY_SUPPORTED_NIPS")
-            .unwrap_or_else(|_| "1".to_string());
-        let supported_nips = parse_nip_list(&supported_nips_str)?;
+        let supported_nips = SUPPORTED_NIPS.to_vec();
         
         let software = env::var("RELAY_SOFTWARE")
             .unwrap_or_else(|_| "https://github.com/nisshiee/my-nostr-relay".to_string());
@@ -114,66 +123,34 @@ impl RelayInformation {
     }
 }
 
-/// カンマ区切りのNIP番号文字列をu16のVecに変換
-///
-/// # Examples
-/// ```
-/// # use relay::nip11::parse_nip_list;
-/// assert_eq!(parse_nip_list("1,9,11").unwrap(), vec![1, 9, 11]);
-/// assert_eq!(parse_nip_list("1").unwrap(), vec![1]);
-/// assert_eq!(parse_nip_list("").unwrap(), Vec::<u16>::new());
-/// ```
-pub fn parse_nip_list(input: &str) -> Result<Vec<u16>, Box<dyn std::error::Error>> {
-    if input.trim().is_empty() {
-        return Ok(vec![]);
-    }
-    
-    input
-        .split(',')
-        .map(|s| s.trim().parse::<u16>().map_err(|e| format!("NIP番号パースエラー: {}", e).into()))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_nip_list_single() {
-        assert_eq!(parse_nip_list("1").unwrap(), vec![1]);
+    fn test_supported_nips_contains_expected() {
+        // 実装済みNIPが含まれていることを確認
+        assert!(SUPPORTED_NIPS.contains(&1), "NIP-01は必須");
+        assert!(SUPPORTED_NIPS.contains(&9), "NIP-09は実装済み");
+        assert!(SUPPORTED_NIPS.contains(&11), "NIP-11は実装済み");
+        assert!(SUPPORTED_NIPS.contains(&70), "NIP-70は実装済み");
     }
 
     #[test]
-    fn test_parse_nip_list_multiple() {
-        assert_eq!(parse_nip_list("1,9,11").unwrap(), vec![1, 9, 11]);
-    }
-
-    #[test]
-    fn test_parse_nip_list_with_spaces() {
-        assert_eq!(parse_nip_list("1, 9 , 11").unwrap(), vec![1, 9, 11]);
-    }
-
-    #[test]
-    fn test_parse_nip_list_empty() {
-        assert_eq!(parse_nip_list("").unwrap(), Vec::<u16>::new());
-        assert_eq!(parse_nip_list("   ").unwrap(), Vec::<u16>::new());
-    }
-
-    #[test]
-    fn test_parse_nip_list_invalid() {
-        assert!(parse_nip_list("1,abc,11").is_err());
-        assert!(parse_nip_list("1,999999").is_err()); // u16の範囲外
+    fn test_supported_nips_is_sorted() {
+        // ソート済みであることを確認
+        let mut sorted = SUPPORTED_NIPS.to_vec();
+        sorted.sort();
+        assert_eq!(SUPPORTED_NIPS, sorted.as_slice());
     }
 
     #[test]
     fn test_relay_information_from_env_missing_pubkey() {
-        // RELAY_PUBKEY を削除
         unsafe {
             env::remove_var("RELAY_PUBKEY");
             env::remove_var("RELAY_NAME");
             env::remove_var("RELAY_DESCRIPTION");
             env::remove_var("RELAY_CONTACT");
-            env::remove_var("RELAY_SUPPORTED_NIPS");
             env::remove_var("RELAY_SOFTWARE");
             env::remove_var("RELAY_VERSION");
         }
@@ -189,7 +166,6 @@ mod tests {
             env::set_var("RELAY_NAME", "Test Relay");
             env::set_var("RELAY_DESCRIPTION", "Test Description");
             env::set_var("RELAY_CONTACT", "test@example.com");
-            env::set_var("RELAY_SUPPORTED_NIPS", "1,9,11");
             env::set_var("RELAY_SOFTWARE", "https://example.com/repo");
             env::set_var("RELAY_VERSION", "1.0.0");
         }
@@ -199,17 +175,16 @@ mod tests {
         assert_eq!(info.description, "Test Description");
         assert_eq!(info.pubkey, "deadbeef");
         assert_eq!(info.contact, "test@example.com");
-        assert_eq!(info.supported_nips, vec![1, 9, 11]);
+        // supported_nipsは環境変数ではなく定数から取得される
+        assert_eq!(info.supported_nips, SUPPORTED_NIPS.to_vec());
         assert_eq!(info.software, "https://example.com/repo");
         assert_eq!(info.version, "1.0.0");
 
-        // クリーンアップ
         unsafe {
             env::remove_var("RELAY_PUBKEY");
             env::remove_var("RELAY_NAME");
             env::remove_var("RELAY_DESCRIPTION");
             env::remove_var("RELAY_CONTACT");
-            env::remove_var("RELAY_SUPPORTED_NIPS");
             env::remove_var("RELAY_SOFTWARE");
             env::remove_var("RELAY_VERSION");
         }
@@ -222,7 +197,6 @@ mod tests {
             env::remove_var("RELAY_NAME");
             env::remove_var("RELAY_DESCRIPTION");
             env::remove_var("RELAY_CONTACT");
-            env::remove_var("RELAY_SUPPORTED_NIPS");
             env::remove_var("RELAY_SOFTWARE");
             env::remove_var("RELAY_VERSION");
         }
@@ -232,11 +206,10 @@ mod tests {
         assert_eq!(info.description, "A Nostr relay server");
         assert_eq!(info.pubkey, "abcdef123456");
         assert_eq!(info.contact, "");
-        assert_eq!(info.supported_nips, vec![1]);
+        assert_eq!(info.supported_nips, SUPPORTED_NIPS.to_vec());
         assert_eq!(info.software, "https://github.com/nisshiee/my-nostr-relay");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
 
-        // クリーンアップ
         unsafe {
             env::remove_var("RELAY_PUBKEY");
         }

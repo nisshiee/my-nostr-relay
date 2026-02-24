@@ -134,7 +134,6 @@ async fn test_nip11_valid_response() {
         std::env::set_var("RELAY_NAME", "Test Relay");
         std::env::set_var("RELAY_DESCRIPTION", "A test Nostr relay");
         std::env::set_var("RELAY_CONTACT", "admin@example.com");
-        std::env::set_var("RELAY_SUPPORTED_NIPS", "1,11");
         std::env::set_var("RELAY_SOFTWARE", "https://github.com/nisshiee/my-nostr-relay");
         std::env::set_var("RELAY_VERSION", "2.0.0-test");
     }
@@ -180,7 +179,8 @@ async fn test_nip11_valid_response() {
     assert_eq!(json["description"], "A test Nostr relay");
     assert_eq!(json["pubkey"], "deadbeefcafebabe1234567890abcdef1234567890abcdef1234567890abcdef");
     assert_eq!(json["contact"], "admin@example.com");
-    assert_eq!(json["supported_nips"], json!([1, 11]));
+    // supported_nipsは実装状況に基づく固定値（環境変数ではなくSUPPORTED_NIPS定数）
+    assert_eq!(json["supported_nips"], json!([1, 9, 11, 70]));
     assert_eq!(json["software"], "https://github.com/nisshiee/my-nostr-relay");
     assert_eq!(json["version"], "2.0.0-test");
 
@@ -202,7 +202,6 @@ async fn test_nip11_valid_response() {
         std::env::remove_var("RELAY_NAME");
         std::env::remove_var("RELAY_DESCRIPTION");
         std::env::remove_var("RELAY_CONTACT");
-        std::env::remove_var("RELAY_SUPPORTED_NIPS");
         std::env::remove_var("RELAY_SOFTWARE");
         std::env::remove_var("RELAY_VERSION");
     }
@@ -220,7 +219,6 @@ async fn test_nip11_default_values() {
         std::env::remove_var("RELAY_NAME");
         std::env::remove_var("RELAY_DESCRIPTION");
         std::env::remove_var("RELAY_CONTACT");
-        std::env::remove_var("RELAY_SUPPORTED_NIPS");
         std::env::remove_var("RELAY_SOFTWARE");
         std::env::remove_var("RELAY_VERSION");
     }
@@ -244,7 +242,8 @@ async fn test_nip11_default_values() {
     assert_eq!(json["description"], "A Nostr relay server");
     assert_eq!(json["pubkey"], "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
     assert_eq!(json["contact"], "");
-    assert_eq!(json["supported_nips"], json!([1]));
+    // supported_nipsは実装状況に基づく固定値
+    assert_eq!(json["supported_nips"], json!([1, 9, 11, 70]));
     assert_eq!(json["software"], "https://github.com/nisshiee/my-nostr-relay");
     assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
 
@@ -264,7 +263,6 @@ async fn test_nip11_missing_pubkey_error() {
         std::env::remove_var("RELAY_NAME");
         std::env::remove_var("RELAY_DESCRIPTION");
         std::env::remove_var("RELAY_CONTACT");
-        std::env::remove_var("RELAY_SUPPORTED_NIPS");
         std::env::remove_var("RELAY_SOFTWARE");
         std::env::remove_var("RELAY_VERSION");
     }
@@ -319,34 +317,4 @@ async fn test_non_nip11_request() {
     assert_eq!(text2, "Hello, this is a regular HTTP response.");
 }
 
-/// 不正なRELAY_SUPPORTED_NIPS値でのエラーテスト
-#[tokio::test]
-#[serial]
-async fn test_nip11_invalid_supported_nips() {
-    unsafe {
-        std::env::set_var("RELAY_PUBKEY", "validpubkey123456789012345678901234567890123456789012345678901234");
-        std::env::set_var("RELAY_SUPPORTED_NIPS", "1,invalid,11"); // 不正な値を含む
-    }
-
-    let addr = start_relay().await;
-    let url = format!("http://{addr}/");
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .header("Accept", "application/nostr+json")
-        .send()
-        .await
-        .expect("リクエストに失敗");
-
-    assert_eq!(response.status(), 500);
-    
-    let json: Value = response.json().await.expect("JSONパースに失敗");
-    assert_eq!(json["error"], "Relay information not configured");
-
-    // クリーンアップ
-    unsafe {
-        std::env::remove_var("RELAY_PUBKEY");
-        std::env::remove_var("RELAY_SUPPORTED_NIPS");
-    }
-}
+// RELAY_SUPPORTED_NIPS環境変数は廃止（supported_nipsは実装状況に基づく固定値）
