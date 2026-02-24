@@ -273,6 +273,7 @@ pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String
                         // NIP-70: 保護イベントチェック
                         // `["-"]` タグ付きイベントはNIP-42認証済みの著者のみが投稿可能。
                         // NIP-42未実装のため、保護イベントはすべて拒否する。
+                        // TODO(NIP-42): 認証実装時、ここを認証済み+pubkey一致チェックに変更する
                         if verified.is_protected() {
                             warn!(
                                 event_id = %event_id,
