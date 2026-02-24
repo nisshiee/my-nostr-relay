@@ -11,14 +11,22 @@ use axum::{
 };
 use tracing::info;
 
+use relay::config::LimitationConfig;
 use relay::logging;
 use relay::nip11::RelayInformation;
 use relay::relay::Relay;
 use relay::store::InMemoryEventStore;
 use relay::ws;
 
+/// アプリケーション共有状態
+#[derive(Clone)]
+struct AppState {
+    relay: Arc<Relay>,
+    limitation: Arc<LimitationConfig>,
+}
+
 async fn handler(
-    State(relay): State<Arc<Relay>>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
@@ -27,14 +35,16 @@ async fn handler(
         Ok(ws) => {
             // 接続IDを生成（UUID v7 - タイムスタンプベースで時系列ソート可能）
             let conn_id = uuid::Uuid::now_v7().to_string();
-            ws.on_upgrade(move |socket| ws::handle_socket(socket, relay, conn_id))
+            let relay = state.relay.clone();
+            let limitation = state.limitation.clone();
+            ws.on_upgrade(move |socket| ws::handle_socket(socket, relay, conn_id, limitation))
         }
         Err(_) => {
             // NIP-11 Request 判定
             if let Some(value) = headers.get("Accept")
                 && value == "application/nostr+json"
             {
-                handle_nip11().await
+                handle_nip11(&state.limitation).await
             } else {
                 "Hello, this is a regular HTTP response.".into_response()
             }
@@ -42,7 +52,7 @@ async fn handler(
     }
 }
 
-async fn handle_nip11() -> Response {
+async fn handle_nip11(limitation: &LimitationConfig) -> Response {
     use axum::http::{StatusCode, HeaderMap, HeaderValue};
     
     let mut headers = HeaderMap::new();
@@ -67,8 +77,8 @@ async fn handle_nip11() -> Response {
         HeaderValue::from_static("application/json")
     );
 
-    // 環境変数からリレー情報を取得
-    match RelayInformation::from_env() {
+    // 環境変数からリレー情報を取得（制限値設定を反映）
+    match RelayInformation::from_env_with_config(limitation) {
         Ok(info) => {
             match serde_json::to_string(&info) {
                 Ok(json) => (StatusCode::OK, headers, json).into_response(),
@@ -103,13 +113,18 @@ async fn main() -> anyhow::Result<()> {
         "Nostr Relay v2 を起動中"
     );
 
+    // 制限値設定を読み込み
+    let limitation = Arc::new(LimitationConfig::from_env());
+
     // EventStore の実装を選択（将来は DynamoDB 等に差し替え可能）
     let store = InMemoryEventStore::new();
     let relay = Arc::new(Relay::new(store));
 
+    let state = AppState { relay, limitation };
+
     let app = Router::new()
         .route("/", get(handler))
-        .with_state(relay);
+        .with_state(state);
 
     let bind_addr = "0.0.0.0:3000";
     info!(bind_address = bind_addr, "サーバーがリスニングを開始しました");

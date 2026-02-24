@@ -3,6 +3,8 @@
 use serde::Serialize;
 use std::env;
 
+use crate::config::LimitationConfig;
+
 /// NIP-11 Relay Information Document
 ///
 /// リレー情報を表すJSON構造体
@@ -22,6 +24,36 @@ pub struct RelayInformation {
     pub software: String,
     /// ソフトウェアバージョン
     pub version: String,
+    /// NIP-11 制限値
+    pub limitation: Limitation,
+}
+
+/// NIP-11 limitation オブジェクト
+#[derive(Debug, Clone, Serialize)]
+pub struct Limitation {
+    pub max_message_length: u32,
+    pub max_subscriptions: u32,
+    pub max_filters: u32,
+    pub max_subid_length: u32,
+    pub max_event_tags: u32,
+    pub max_content_length: u32,
+    pub created_at_lower_limit: u64,
+    pub created_at_upper_limit: u64,
+}
+
+impl From<&LimitationConfig> for Limitation {
+    fn from(config: &LimitationConfig) -> Self {
+        Self {
+            max_message_length: config.max_message_length,
+            max_subscriptions: config.max_subscriptions,
+            max_filters: config.max_filters,
+            max_subid_length: config.max_subid_length,
+            max_event_tags: config.max_event_tags,
+            max_content_length: config.max_content_length,
+            created_at_lower_limit: config.created_at_lower_limit,
+            created_at_upper_limit: config.created_at_upper_limit,
+        }
+    }
 }
 
 impl RelayInformation {
@@ -39,7 +71,8 @@ impl RelayInformation {
     /// # Errors
     ///
     /// `RELAY_PUBKEY` が設定されていない場合はエラーを返します
-    pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+    /// LimitationConfigを指定してRelayInformationを構築
+    pub fn from_env_with_config(limitation_config: &LimitationConfig) -> Result<Self, Box<dyn std::error::Error>> {
         let name = env::var("RELAY_NAME")
             .unwrap_or_else(|_| "Nostr Relay".to_string());
         
@@ -62,6 +95,8 @@ impl RelayInformation {
         let version = env::var("RELAY_VERSION")
             .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
+        let limitation = Limitation::from(limitation_config);
+
         Ok(Self {
             name,
             description,
@@ -70,7 +105,12 @@ impl RelayInformation {
             supported_nips,
             software,
             version,
+            limitation,
         })
+    }
+
+    pub fn from_env() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::from_env_with_config(&LimitationConfig::from_env())
     }
 }
 
@@ -81,7 +121,7 @@ impl RelayInformation {
 /// # use relay::nip11::parse_nip_list;
 /// assert_eq!(parse_nip_list("1,9,11").unwrap(), vec![1, 9, 11]);
 /// assert_eq!(parse_nip_list("1").unwrap(), vec![1]);
-/// assert_eq!(parse_nip_list("").unwrap(), vec![]);
+/// assert_eq!(parse_nip_list("").unwrap(), Vec::<u16>::new());
 /// ```
 pub fn parse_nip_list(input: &str) -> Result<Vec<u16>, Box<dyn std::error::Error>> {
     if input.trim().is_empty() {

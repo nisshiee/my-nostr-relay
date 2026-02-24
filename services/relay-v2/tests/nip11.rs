@@ -8,15 +8,28 @@ use serde_json::{json, Value};
 use serial_test::serial;
 use tokio::net::TcpListener;
 
+/// テスト用の共有状態
+#[derive(Clone)]
+struct TestState {
+    relay: Arc<relay::relay::Relay>,
+    limitation: Arc<relay::config::LimitationConfig>,
+}
+
 /// テスト用リレーサーバーを起動し、アドレスを返す
 /// （NIP-11とWebSocket両方に対応）
 async fn start_relay() -> SocketAddr {
     let store = relay::store::InMemoryEventStore::new();
     let relay_instance = Arc::new(relay::relay::Relay::new(store));
+    let limitation = Arc::new(relay::config::LimitationConfig::default());
+
+    let state = TestState {
+        relay: relay_instance,
+        limitation,
+    };
 
     let app = Router::new()
         .route("/", get(handler))
-        .with_state(relay_instance);
+        .with_state(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -30,7 +43,7 @@ async fn start_relay() -> SocketAddr {
 
 /// メインハンドラー（main.rs のhandlerと同等）
 async fn handler(
-    State(relay): State<Arc<relay::relay::Relay>>,
+    State(state): State<TestState>,
     headers: HeaderMap,
     ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
 ) -> Response {
@@ -41,14 +54,16 @@ async fn handler(
         Ok(ws) => {
             // WebSocket接続
             let conn_id = uuid::Uuid::now_v7().to_string();
-            ws.on_upgrade(move |socket| relay::ws::handle_socket(socket, relay, conn_id))
+            let relay = state.relay.clone();
+            let limitation = state.limitation.clone();
+            ws.on_upgrade(move |socket| relay::ws::handle_socket(socket, relay, conn_id, limitation))
         }
         Err(_) => {
             // NIP-11 Request 判定
             if let Some(value) = headers.get("Accept")
                 && value == "application/nostr+json"
             {
-                handle_nip11().await
+                handle_nip11(&state.limitation).await
             } else {
                 "Hello, this is a regular HTTP response.".into_response()
             }
@@ -57,7 +72,7 @@ async fn handler(
 }
 
 /// NIP-11ハンドラー（main.rs と同等）
-async fn handle_nip11() -> Response {
+async fn handle_nip11(limitation: &relay::config::LimitationConfig) -> Response {
     use axum::http::{StatusCode, HeaderMap, HeaderValue};
     use axum::response::IntoResponse;
     
@@ -83,8 +98,8 @@ async fn handle_nip11() -> Response {
         HeaderValue::from_static("application/json")
     );
 
-    // 環境変数からリレー情報を取得
-    match relay::nip11::RelayInformation::from_env() {
+    // 環境変数からリレー情報を取得（制限値設定を反映）
+    match relay::nip11::RelayInformation::from_env_with_config(limitation) {
         Ok(info) => {
             match serde_json::to_string(&info) {
                 Ok(json) => (StatusCode::OK, headers, json).into_response(),
@@ -168,6 +183,18 @@ async fn test_nip11_valid_response() {
     assert_eq!(json["supported_nips"], json!([1, 11]));
     assert_eq!(json["software"], "https://github.com/nisshiee/my-nostr-relay");
     assert_eq!(json["version"], "2.0.0-test");
+
+    // limitation フィールドの検証
+    let limitation = &json["limitation"];
+    assert!(limitation.is_object(), "limitationフィールドが存在すること");
+    assert_eq!(limitation["max_message_length"], relay::config::DEFAULT_MAX_MESSAGE_LENGTH);
+    assert_eq!(limitation["max_subscriptions"], relay::config::DEFAULT_MAX_SUBSCRIPTIONS);
+    assert_eq!(limitation["max_filters"], relay::config::DEFAULT_MAX_FILTERS);
+    assert_eq!(limitation["max_subid_length"], relay::config::DEFAULT_MAX_SUBID_LENGTH);
+    assert_eq!(limitation["max_event_tags"], relay::config::DEFAULT_MAX_EVENT_TAGS);
+    assert_eq!(limitation["max_content_length"], relay::config::DEFAULT_MAX_CONTENT_LENGTH);
+    assert_eq!(limitation["created_at_lower_limit"], relay::config::DEFAULT_CREATED_AT_LOWER_LIMIT);
+    assert_eq!(limitation["created_at_upper_limit"], relay::config::DEFAULT_CREATED_AT_UPPER_LIMIT);
 
     // 環境変数クリーンアップ
     unsafe {
