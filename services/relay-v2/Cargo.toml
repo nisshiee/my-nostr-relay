@@ -1,0 +1,61 @@
+[package]
+name = "relay"
+version = "2.0.0-dev.1"
+edition = "2024"
+
+# ARM64向けバイナリ設定
+[[bin]]
+name = "relay"
+path = "src/main.rs"
+
+[lib]
+name = "relay"
+path = "src/lib.rs"
+
+# リリースビルドでもbacktraceを有効にする
+[profile.release]
+debug = 1 # シンボル情報を含める（backtrace用）
+
+[dependencies]
+# 非同期ランタイム
+tokio = { version = "1", features = ["full"] }
+
+# HTTPサーバーフレームワーク (tower互換、async-trait不要)
+axum = { version = "0.8", features = ["ws", "macros"] }
+
+# シリアライズ/デシリアライズ
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_with = "3"
+
+# エラーハンドリング
+thiserror = "2"
+anyhow = "1"
+
+# crypto
+secp256k1 = { version = "0.31", features = ["serde"] }
+
+# hex encoding
+hex = "0.4"
+
+# hash
+sha2 = "0.10"
+
+# lazy initialization
+once_cell = "1"
+
+# async trait
+async-trait = "0.1"
+
+# futures (for WebSocket split)
+futures = "0.3"
+
+# 構造化ログ
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# UUID生成（接続ID用）- v7はタイムスタンプベースで時系列ソート可能
+uuid = { version = "1", features = ["v7"] }
+
+[dev-dependencies]
+tokio-tungstenite = "0.28"
