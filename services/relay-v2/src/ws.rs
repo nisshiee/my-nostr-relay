@@ -270,6 +270,26 @@ pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String
                             }
                         };
 
+                        // NIP-70: 保護イベントチェック
+                        // `["-"]` タグ付きイベントはNIP-42認証済みの著者のみが投稿可能。
+                        // NIP-42未実装のため、保護イベントはすべて拒否する。
+                        // TODO(NIP-42): 認証実装時、ここを認証済み+pubkey一致チェックに変更する
+                        if verified.is_protected() {
+                            warn!(
+                                event_id = %event_id,
+                                "保護イベントを拒否（NIP-42未実装）"
+                            );
+                            let ok_msg = RelayMessage::Ok {
+                                event_id,
+                                success: false,
+                                message: "blocked: this relay does not accept protected events. NIP-42 authentication is not supported.".to_string(),
+                            };
+                            if send_message(&mut ws_tx, &ok_msg).await.is_err() {
+                                return;
+                            }
+                            continue;
+                        }
+
                         // 保存 & broadcast
                         match relay.publish(verified).await {
                             Ok(SaveResult::Saved) => {

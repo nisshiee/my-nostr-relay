@@ -917,6 +917,120 @@ fn make_test_event_full(content: &str, kind: u64, created_at: u64, tags: Vec<Vec
     })
 }
 
+// ===========================================
+// NIP-70 保護イベント E2Eテスト
+// ===========================================
+
+/// NIP-70: `["-"]` タグ付きイベントが拒否されるテスト
+#[tokio::test]
+async fn test_nip70_protected_event_rejected() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // 保護イベント（`["-"]` タグ付き）
+    let event = make_test_event_full("protected content", 1, now, vec![vec!["-"]]);
+    let event_id = event["id"].as_str().unwrap().to_string();
+    tx.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 3000).await.expect("OK応答が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[1].as_str().unwrap(), event_id);
+    assert_eq!(resp[2], false, "保護イベントは拒否されるべき");
+    let msg = resp[3].as_str().unwrap();
+    assert!(msg.starts_with("blocked:"), "blocked: プレフィックスが必要: {msg}");
+}
+
+/// NIP-70: `["-"]` タグなしのイベントは通常通り受け入れられるテスト
+#[tokio::test]
+async fn test_nip70_non_protected_event_accepted() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // 通常イベント（保護タグなし）
+    let event = make_test_event_full("normal content", 1, now, vec![vec!["e", "someid"]]);
+    tx.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
+
+    let resp = recv_msg(&mut rx, 3000).await.expect("OK応答が返るべき");
+    assert_eq!(resp[0], "OK");
+    assert_eq!(resp[2], true, "通常イベントは受け入れられるべき");
+}
+
+/// NIP-70: 保護イベントが拒否され、ストアに保存されないテスト
+#[tokio::test]
+async fn test_nip70_protected_event_not_stored() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    let (ws, _) = connect_async(&url).await.unwrap();
+    let (mut tx, mut rx) = ws.split();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // 保護イベントを投稿（拒否される）
+    let event = make_test_event_full("protected", 1, now, vec![vec!["-"]]);
+    tx.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
+    let _ = recv_msg(&mut rx, 3000).await;
+
+    // REQ で確認 — イベントは保存されていないはず
+    tx.send(text_msg(&json!(["REQ", "check", {}]))).await.unwrap();
+    let msg = recv_msg(&mut rx, 3000).await.unwrap();
+    assert_eq!(msg[0], "EOSE", "保護イベントは保存されていないのでEOSEのみ返るべき");
+}
+
+/// NIP-70: 保護イベントが拒否されてもbroadcastされないテスト
+#[tokio::test]
+async fn test_nip70_protected_event_not_broadcast() {
+    let addr = start_relay().await;
+    let url = format!("ws://{addr}/");
+
+    // クライアントA: サブスクライバー
+    let (ws_a, _) = connect_async(&url).await.unwrap();
+    let (mut tx_a, mut rx_a) = ws_a.split();
+
+    // クライアントB: 投稿者
+    let (ws_b, _) = connect_async(&url).await.unwrap();
+    let (mut tx_b, mut rx_b) = ws_b.split();
+
+    // A: サブスクリプション登録
+    tx_a.send(text_msg(&json!(["REQ", "live", {}]))).await.unwrap();
+    let eose = recv_msg(&mut rx_a, 3000).await.unwrap();
+    assert_eq!(eose[0], "EOSE");
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    // B: 保護イベントを投稿
+    let event = make_test_event_full("protected broadcast test", 1, now, vec![vec!["-"]]);
+    tx_b.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
+    let ok = recv_msg(&mut rx_b, 3000).await.unwrap();
+    assert_eq!(ok[2], false); // 拒否
+
+    // A: broadcastが届かないことを確認
+    let maybe = recv_msg(&mut rx_a, 1000).await;
+    assert!(maybe.is_none(), "保護イベントのbroadcastが届いてしまった");
+}
+
 /// NIP-09: kind 5 削除リクエストで参照イベントが削除されるテスト
 #[tokio::test]
 async fn test_nip09_deletion_by_e_tag() {
