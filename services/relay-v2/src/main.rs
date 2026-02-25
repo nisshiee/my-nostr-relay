@@ -15,7 +15,7 @@ use relay::config::LimitationConfig;
 use relay::logging;
 use relay::nip11::RelayInformation;
 use relay::relay::Relay;
-use relay::store::InMemoryEventStore;
+use relay::store::create_event_store;
 use relay::ws;
 
 /// アプリケーション共有状態
@@ -116,8 +116,8 @@ async fn main() -> anyhow::Result<()> {
     // 制限値設定を読み込み
     let limitation = Arc::new(LimitationConfig::from_env());
 
-    // EventStore の実装を選択（将来は DynamoDB 等に差し替え可能）
-    let store = InMemoryEventStore::new();
+    // EventStore の実装を選択（feature flagに基づいてDynamoDB/InMemory切り替え）
+    let store = create_event_store().await?;
     let relay = Arc::new(Relay::new(store));
 
     let state = AppState { relay, limitation };

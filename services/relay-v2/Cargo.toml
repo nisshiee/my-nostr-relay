@@ -12,6 +12,11 @@ path = "src/main.rs"
 name = "relay"
 path = "src/lib.rs"
 
+# feature flags
+[features]
+default = []
+dynamo = ["aws-sdk-dynamodb", "aws-config"]
+
 # リリースビルドでもbacktraceを有効にする
 [profile.release]
 debug = 1 # シンボル情報を含める（backtrace用）
@@ -51,7 +56,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # UUID生成（接続ID用）- v7はタイムスタンプベースで時系列ソート可能
 uuid = { version = "1", features = ["v7"] }
 
+# AWS SDK (dynamo feature有効時のみ)
+aws-sdk-dynamodb = { version = "1.67.0", optional = true }
+aws-config = { version = "1.5.5", optional = true }
+
+# async trait object対応
+async-trait = "0.1"
+
 [dev-dependencies]
 tokio-tungstenite = "0.28"
 reqwest = { version = "0.12", features = ["json"] }
 serial_test = "3"
+# モックテスト用
+mockall = "0.13"
+# DynamoDB Local用のTCP待機ヘルパー
+tokio-test = "0.4"
