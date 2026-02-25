@@ -11,6 +11,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 use crate::config::LimitationConfig;
 use crate::models::{ClientMessage, Event, Filter, RelayMessage, SubscriptionId};
 use crate::relay::Relay;
+use crate::store::EventStore;
 use crate::store::SaveResult;
 
 /// contentを50文字に切り詰め
@@ -131,7 +132,7 @@ impl ConnectionState {
 
 /// WebSocket 接続を処理
 #[instrument(skip(socket, relay, limitation), fields(connection_id = %conn_id))]
-pub async fn handle_socket(socket: WebSocket, relay: Arc<Relay>, conn_id: String, limitation: Arc<LimitationConfig>) {
+pub async fn handle_socket<S: EventStore + 'static>(socket: WebSocket, relay: Arc<Relay<S>>, conn_id: String, limitation: Arc<LimitationConfig>) {
     info!("WebSocket接続を確立");
 
     let (mut ws_tx, mut ws_rx) = socket.split();

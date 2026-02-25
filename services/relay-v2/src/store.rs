@@ -9,7 +9,7 @@ use tracing::{debug, instrument, trace, warn, error};
 
 #[cfg(not(feature = "dynamo"))]
 use tracing::{debug, instrument, trace};
-use async_trait::async_trait;
+
 
 use crate::models::{Event, EventId, Filter, VerifiedEvent};
 
@@ -55,16 +55,15 @@ pub enum StoreError {
 /// イベントストレージの抽象インターフェース
 ///
 /// in-memory から DynamoDB 等への移行を可能にする
-#[async_trait]
 pub trait EventStore: Send + Sync {
     /// イベントを保存
-    async fn save(&self, event: &VerifiedEvent) -> Result<SaveResult, StoreError>;
+    fn save(&self, event: &VerifiedEvent) -> impl std::future::Future<Output = Result<SaveResult, StoreError>> + Send;
 
     /// フィルターにマッチするイベントを検索
-    async fn query(&self, filters: &[Filter]) -> Result<Vec<Event>, StoreError>;
+    fn query(&self, filters: &[Filter]) -> impl std::future::Future<Output = Result<Vec<Event>, StoreError>> + Send;
 
     /// 削除リクエスト(kind 5)を処理し、参照されたイベントを削除
-    async fn delete(&self, event: &VerifiedEvent) -> Result<DeleteResult, StoreError>;
+    fn delete(&self, event: &VerifiedEvent) -> impl std::future::Future<Output = Result<DeleteResult, StoreError>> + Send;
 }
 
 /// インメモリイベントストア（開発・テスト用）
@@ -110,7 +109,6 @@ impl Default for InMemoryEventStore {
     }
 }
 
-#[async_trait]
 impl EventStore for InMemoryEventStore {
     #[instrument(skip(self, event), fields(event_id = %event.inner().id, kind = event.inner().kind.as_u16()))]
     async fn save(&self, event: &VerifiedEvent) -> Result<SaveResult, StoreError> {
@@ -590,34 +588,31 @@ impl DynamoEventStore {
     }
 }
 
+/// feature flagによるEventStore型の切り替え（静的ディスパッチ）
+#[cfg(feature = "dynamo")]
+pub type AppEventStore = DynamoEventStore;
+#[cfg(not(feature = "dynamo"))]
+pub type AppEventStore = InMemoryEventStore;
+
 /// EventStoreのファクトリ関数（feature flagによる切り替え）
-pub async fn create_event_store() -> Result<Box<dyn EventStore>, StoreError> {
+pub async fn create_event_store() -> Result<AppEventStore, StoreError> {
     #[cfg(feature = "dynamo")]
     {
         let table_name = std::env::var("DYNAMODB_TABLE_NAME")
             .unwrap_or_else(|_| "nostr_relay_events".to_string());
         
         debug!("DynamoEventStoreを初期化中 (table: {})", table_name);
-        match DynamoEventStore::new(table_name).await {
-            Ok(dynamo_store) => Ok(Box::new(dynamo_store)),
-            Err(e) => {
-                error!("DynamoEventStore初期化に失敗: {}", e);
-                // フォールバックとしてInMemoryEventStoreを使用
-                warn!("InMemoryEventStoreにフォールバック");
-                Ok(Box::new(InMemoryEventStore::new()))
-            }
-        }
+        DynamoEventStore::new(table_name).await
     }
     
     #[cfg(not(feature = "dynamo"))]
     {
         debug!("InMemoryEventStoreを初期化中");
-        Ok(Box::new(InMemoryEventStore::new()))
+        Ok(InMemoryEventStore::new())
     }
 }
 
 #[cfg(feature = "dynamo")]
-#[async_trait]
 impl EventStore for DynamoEventStore {
     #[instrument(skip(self, event), fields(event_id = %event.inner().id, kind = event.inner().kind.as_u16()))]
     async fn save(&self, event: &VerifiedEvent) -> Result<SaveResult, StoreError> {

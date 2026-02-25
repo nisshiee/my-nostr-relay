@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 /// テスト用の共有状態
 #[derive(Clone)]
 struct TestState {
-    relay: Arc<relay::relay::Relay>,
+    relay: Arc<relay::relay::Relay<relay::store::InMemoryEventStore>>,
     limitation: Arc<relay::config::LimitationConfig>,
 }
 
@@ -19,7 +19,7 @@ struct TestState {
 /// （NIP-11とWebSocket両方に対応）
 async fn start_relay() -> SocketAddr {
     let store = relay::store::InMemoryEventStore::new();
-    let relay_instance = Arc::new(relay::relay::Relay::new(Box::new(store)));
+    let relay_instance = Arc::new(relay::relay::Relay::new(store));
     let limitation = Arc::new(relay::config::LimitationConfig::default());
 
     let state = TestState {

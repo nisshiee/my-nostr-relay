@@ -14,20 +14,20 @@ const BROADCAST_CAPACITY: usize = 1024;
 /// Nostr Relay のコア構造体
 ///
 /// イベントの永続化と配信を担う
-pub struct Relay {
-    /// イベントストレージ（抽象化）
-    store: Box<dyn EventStore>,
+pub struct Relay<S: EventStore> {
+    /// イベントストレージ（静的ディスパッチ）
+    store: S,
     /// イベント配信用 broadcast sender
     event_tx: broadcast::Sender<Event>,
 }
 
-impl Relay {
+impl<S: EventStore> Relay<S> {
     /// 新しい Relay を作成
     ///
     /// # 引数
     ///
     /// * `store` - イベントストレージの実装
-    pub fn new(store: Box<dyn EventStore>) -> Self {
+    pub fn new(store: S) -> Self {
         let (event_tx, _) = broadcast::channel(BROADCAST_CAPACITY);
         Self { store, event_tx }
     }
@@ -103,7 +103,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_publish_new_event() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         let event = create_test_event();
@@ -115,7 +115,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_publish_duplicate_event() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         let event = create_test_event();
@@ -133,7 +133,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_on_publish() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         // subscriber を作成
@@ -153,7 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_no_broadcast_on_duplicate() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         let event = create_test_event();
@@ -176,7 +176,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         let event1 = create_test_event_with_content("Event 1");
@@ -195,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ephemeral_event_broadcast_but_not_stored() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         // subscriber を作成
@@ -221,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_replaced_event_broadcast() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         // 最初の replaceable イベント
@@ -246,7 +246,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ignored_event_no_broadcast() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         // 新しい replaceable イベントを先に保存
@@ -273,7 +273,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_publish_deletion_request_deletes_referenced_event() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         // 通常イベントを保存
@@ -294,7 +294,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deletion_request_is_broadcast() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         let event = create_custom_event(1, 1000, "to be deleted", vec![]);
@@ -315,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_deletion_different_pubkey_no_effect() {
-        let store = Box::new(InMemoryEventStore::new());
+        let store = InMemoryEventStore::new();
         let relay = Relay::new(store);
 
         // デフォルトキーペアでイベント保存

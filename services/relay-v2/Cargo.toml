@@ -60,8 +60,7 @@ uuid = { version = "1", features = ["v7"] }
 aws-sdk-dynamodb = { version = "1.67.0", optional = true }
 aws-config = { version = "1.5.5", optional = true }
 
-# async trait object対応
-async-trait = "0.1"
+
 
 [dev-dependencies]
 tokio-tungstenite = "0.28"

@@ -15,13 +15,13 @@ use relay::config::LimitationConfig;
 use relay::logging;
 use relay::nip11::RelayInformation;
 use relay::relay::Relay;
-use relay::store::create_event_store;
+use relay::store::{create_event_store, AppEventStore};
 use relay::ws;
 
 /// アプリケーション共有状態
 #[derive(Clone)]
 struct AppState {
-    relay: Arc<Relay>,
+    relay: Arc<Relay<AppEventStore>>,
     limitation: Arc<LimitationConfig>,
 }
 

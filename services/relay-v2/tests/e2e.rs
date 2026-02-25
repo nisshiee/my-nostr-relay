@@ -19,7 +19,7 @@ async fn start_relay() -> SocketAddr {
 /// カスタム制限値設定でテスト用リレーサーバーを起動し、アドレスを返す
 async fn start_relay_with_config(limitation: relay::config::LimitationConfig) -> SocketAddr {
     let store = relay::store::InMemoryEventStore::new();
-    let relay_instance = Arc::new(relay::relay::Relay::new(Box::new(store)));
+    let relay_instance = Arc::new(relay::relay::Relay::new(store));
     let limitation = Arc::new(limitation);
 
     let app = axum::Router::new()
