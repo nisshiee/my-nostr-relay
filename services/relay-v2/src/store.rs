@@ -359,20 +359,34 @@ pub struct DynamoEventStore {
     client: DynamoClient,
     /// テーブル名
     table_name: String,
+    /// GSI名: pk_kind (Replaceable用)
+    gsi_pk_kind_name: String,
+    /// GSI名: pk_kind_d (Addressable用)
+    gsi_pk_kind_d_name: String,
 }
 
 #[cfg(feature = "dynamo")]
 impl DynamoEventStore {
     /// 新しいDynamoEventStoreを作成
+    ///
+    /// GSI名は環境変数 `DYNAMODB_GSI_PK_KIND` / `DYNAMODB_GSI_PK_KIND_D` で設定可能。
+    /// デフォルト: "GSI-PkKind" / "GSI-PkKindD"
     pub async fn new(table_name: String) -> Result<Self, StoreError> {
         let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
         let client = DynamoClient::new(&config);
         let inner = InMemoryEventStore::new();
         
+        let gsi_pk_kind_name = std::env::var("DYNAMODB_GSI_PK_KIND")
+            .unwrap_or_else(|_| "GSI-PkKind".to_string());
+        let gsi_pk_kind_d_name = std::env::var("DYNAMODB_GSI_PK_KIND_D")
+            .unwrap_or_else(|_| "GSI-PkKindD".to_string());
+        
         let store = Self {
             inner,
             client,
             table_name,
+            gsi_pk_kind_name,
+            gsi_pk_kind_d_name,
         };
         
         // 起動時にDynamoDBから最新のイベントをロード
@@ -388,17 +402,31 @@ impl DynamoEventStore {
             inner: InMemoryEventStore::new(),
             client,
             table_name,
+            gsi_pk_kind_name: "GSI-PkKind".to_string(),
+            gsi_pk_kind_d_name: "GSI-PkKindD".to_string(),
         }
     }
 
     /// DynamoDBから直近のイベントをInMemoryStoreにロード
-    /// 起動時実行用の単純な戦略：全件ロード（16,000件程度なので許容範囲内）
+    /// created_atフィルターで直近のイベントのみロード（デフォルト: 30日）
     async fn load_recent_events(&self) -> Result<(), StoreError> {
-        debug!("DynamoDBからイベントをロード中...");
+        let retention_days: u64 = std::env::var("DYNAMODB_LOAD_RETENTION_DAYS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let cutoff_ts = now_ts.saturating_sub(retention_days * 86400);
+        
+        debug!("DynamoDBから直近{}日のイベントをロード中 (cutoff: {})...", retention_days, cutoff_ts);
         
         let mut scan_input = self.client
             .scan()
             .table_name(&self.table_name)
+            .filter_expression("created_at >= :cutoff")
+            .expression_attribute_values(":cutoff", AttributeValue::N(cutoff_ts.to_string()))
             .select(aws_sdk_dynamodb::types::Select::AllAttributes);
 
         let mut loaded_count = 0;
@@ -460,16 +488,16 @@ impl DynamoEventStore {
         // Primary Key: イベントID
         item.insert("id".to_string(), AttributeValue::S(event.id.to_string()));
         
-        // GSI用キー: pk_kind（replaceable用）
-        item.insert("pk_kind".to_string(), AttributeValue::S(format!("{}:{}", event.pubkey.to_hex(), event.kind.as_u16())));
+        // GSI用キー: pk_kind（replaceable用）- 区切り文字は # (issue #19 仕様準拠)
+        item.insert("pk_kind".to_string(), AttributeValue::S(format!("{}#{}", event.pubkey.to_hex(), event.kind.as_u16())));
         
-        // GSI用キー: pk_kind_d（addressable用）
+        // GSI用キー: pk_kind_d（addressable用）- 区切り文字は # (issue #19 仕様準拠)
         let d_tag = if event.kind.is_addressable() {
             event.d_tag_value().to_string()
         } else {
             "".to_string()
         };
-        item.insert("pk_kind_d".to_string(), AttributeValue::S(format!("{}:{}:{}", event.pubkey.to_hex(), event.kind.as_u16(), d_tag)));
+        item.insert("pk_kind_d".to_string(), AttributeValue::S(format!("{}#{}#{}", event.pubkey.to_hex(), event.kind.as_u16(), d_tag)));
         
         // タイムスタンプ
         item.insert("created_at".to_string(), AttributeValue::N(event.created_at.as_i64().to_string()));
@@ -511,16 +539,18 @@ impl DynamoEventStore {
         Ok(())
     }
 
-    /// GSIを使ってReplaceable/Addressableイベントをクエリ
+    /// GSIを使ってReplaceable/Addressableイベントをクエリ（最新を取得）
     async fn query_existing_replaceable(&self, pubkey: &str, kind: u16) -> Result<Option<Event>, StoreError> {
-        let pk_kind = format!("{}:{}", pubkey, kind);
+        let pk_kind = format!("{}#{}", pubkey, kind);
         
         let result = self.client
             .query()
             .table_name(&self.table_name)
-            .index_name("GSI-PkKind") // GSI名は既存テーブルの構成に依存
+            .index_name(&self.gsi_pk_kind_name)
             .key_condition_expression("pk_kind = :pk_kind")
             .expression_attribute_values(":pk_kind", AttributeValue::S(pk_kind))
+            .scan_index_forward(false) // created_at降順で最新を取得
+            .limit(1)
             .send()
             .await
             .map_err(|e| StoreError::Internal(format!("DynamoDB query failed: {}", e)))?;
@@ -534,16 +564,18 @@ impl DynamoEventStore {
         Ok(None)
     }
 
-    /// GSIを使ってAddressableイベントをクエリ
+    /// GSIを使ってAddressableイベントをクエリ（最新を取得）
     async fn query_existing_addressable(&self, pubkey: &str, kind: u16, d_tag: &str) -> Result<Option<Event>, StoreError> {
-        let pk_kind_d = format!("{}:{}:{}", pubkey, kind, d_tag);
+        let pk_kind_d = format!("{}#{}#{}", pubkey, kind, d_tag);
         
         let result = self.client
             .query()
             .table_name(&self.table_name)
-            .index_name("GSI-PkKindD") // GSI名は既存テーブルの構成に依存
+            .index_name(&self.gsi_pk_kind_d_name)
             .key_condition_expression("pk_kind_d = :pk_kind_d")
             .expression_attribute_values(":pk_kind_d", AttributeValue::S(pk_kind_d))
+            .scan_index_forward(false) // created_at降順で最新を取得
+            .limit(1)
             .send()
             .await
             .map_err(|e| StoreError::Internal(format!("DynamoDB query failed: {}", e)))?;
@@ -614,10 +646,17 @@ impl EventStore for DynamoEventStore {
             // InMemoryに保存
             let result = self.inner.save(event).await?;
             
-            // 結果の調整（DynamoDB保存が成功していればSaved）
             match result {
                 SaveResult::Saved => Ok(SaveResult::Saved),
-                SaveResult::Duplicate => Ok(SaveResult::Duplicate),
+                SaveResult::Duplicate => {
+                    // 並行保存によりInMemoryでは重複だが、DynamoDBには既に保存済み
+                    // DynamoDBからロールバック（冪等なのでDuplicate扱いで問題ない）
+                    warn!("Regular event duplicate detected after DynamoDB write, rolling back: {}", inner.id);
+                    if let Err(e) = self.delete_item_from_dynamo(&inner.id).await {
+                        error!("Failed to rollback DynamoDB write for duplicate event {}: {}", inner.id, e);
+                    }
+                    Ok(SaveResult::Duplicate)
+                },
                 _ => Ok(SaveResult::Saved), // 通常はここに来ない
             }
         }
@@ -627,9 +666,15 @@ impl EventStore for DynamoEventStore {
             let kind = inner.kind.as_u16();
             
             // DynamoDBから既存イベントをクエリ
-            if let Some(existing) = self.query_existing_replaceable(&pubkey, kind).await? {
-                if !InMemoryEventStore::is_newer(inner, &existing) {
+            let existing_event = self.query_existing_replaceable(&pubkey, kind).await?;
+            
+            if let Some(ref existing) = existing_event {
+                if !InMemoryEventStore::is_newer(inner, existing) {
                     trace!("既存イベントの方が新しいため無視");
+                    // 既存イベントをInMemoryに復元（パージ済みの場合の復元）
+                    if let Ok(verified_existing) = existing.clone().verify() {
+                        let _ = self.inner.save(&verified_existing).await;
+                    }
                     return Ok(SaveResult::Ignored);
                 }
                 
@@ -644,15 +689,14 @@ impl EventStore for DynamoEventStore {
             // InMemoryに保存（ここで実際のreplacementが処理される）
             let result = self.inner.save(event).await?;
             
-            // もし既存がなかった場合でもDynamoDBに保存したのでSaved/Replacedとして扱う
             match result {
                 SaveResult::Ignored => {
-                    // InMemoryでは古いと判定されたが、DynamoDBでは既に削除している
-                    // この場合は既存をInMemoryに復元する必要がある
-                    if let Some(existing) = self.query_existing_replaceable(&pubkey, kind).await? {
-                        if let Ok(verified_existing) = existing.verify() {
-                            let _ = self.inner.save(&verified_existing).await;
-                        }
+                    // InMemoryでは古いと判定された（InMemoryにはDynamoDBより新しいイベントがある）
+                    // DynamoDBをロールバック: 新イベントを削除し、既存イベントを復元
+                    warn!("Replaceable event ignored by InMemory after DynamoDB write, rolling back: {}", inner.id);
+                    self.delete_item_from_dynamo(&inner.id).await?;
+                    if let Some(ref existing) = existing_event {
+                        self.put_item_to_dynamo(existing).await?;
                     }
                     Ok(SaveResult::Ignored)
                 },
@@ -666,9 +710,15 @@ impl EventStore for DynamoEventStore {
             let d_tag = inner.d_tag_value().to_string();
             
             // DynamoDBから既存イベントをクエリ
-            if let Some(existing) = self.query_existing_addressable(&pubkey, kind, &d_tag).await? {
-                if !InMemoryEventStore::is_newer(inner, &existing) {
+            let existing_event = self.query_existing_addressable(&pubkey, kind, &d_tag).await?;
+            
+            if let Some(ref existing) = existing_event {
+                if !InMemoryEventStore::is_newer(inner, existing) {
                     trace!("既存イベントの方が新しいため無視");
+                    // 既存イベントをInMemoryに復元（パージ済みの場合の復元）
+                    if let Ok(verified_existing) = existing.clone().verify() {
+                        let _ = self.inner.save(&verified_existing).await;
+                    }
                     return Ok(SaveResult::Ignored);
                 }
                 
@@ -683,13 +733,13 @@ impl EventStore for DynamoEventStore {
             // InMemoryに保存
             let result = self.inner.save(event).await?;
             
-            // Replaceable同様の後処理
             match result {
                 SaveResult::Ignored => {
-                    if let Some(existing) = self.query_existing_addressable(&pubkey, kind, &d_tag).await? {
-                        if let Ok(verified_existing) = existing.verify() {
-                            let _ = self.inner.save(&verified_existing).await;
-                        }
+                    // InMemoryでは古いと判定された → DynamoDBをロールバック
+                    warn!("Addressable event ignored by InMemory after DynamoDB write, rolling back: {}", inner.id);
+                    self.delete_item_from_dynamo(&inner.id).await?;
+                    if let Some(ref existing) = existing_event {
+                        self.put_item_to_dynamo(existing).await?;
                     }
                     Ok(SaveResult::Ignored)
                 },
