@@ -55,15 +55,17 @@ pub enum StoreError {
 /// イベントストレージの抽象インターフェース
 ///
 /// in-memory から DynamoDB 等への移行を可能にする
+// static dispatch のみで使用するため、dyn 互換性は不要
+#[allow(async_fn_in_trait)]
 pub trait EventStore: Send + Sync {
     /// イベントを保存
-    fn save(&self, event: &VerifiedEvent) -> impl std::future::Future<Output = Result<SaveResult, StoreError>> + Send;
+    async fn save(&self, event: &VerifiedEvent) -> Result<SaveResult, StoreError>;
 
     /// フィルターにマッチするイベントを検索
-    fn query(&self, filters: &[Filter]) -> impl std::future::Future<Output = Result<Vec<Event>, StoreError>> + Send;
+    async fn query(&self, filters: &[Filter]) -> Result<Vec<Event>, StoreError>;
 
     /// 削除リクエスト(kind 5)を処理し、参照されたイベントを削除
-    fn delete(&self, event: &VerifiedEvent) -> impl std::future::Future<Output = Result<DeleteResult, StoreError>> + Send;
+    async fn delete(&self, event: &VerifiedEvent) -> Result<DeleteResult, StoreError>;
 }
 
 /// インメモリイベントストア（開発・テスト用）
