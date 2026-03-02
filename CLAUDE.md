@@ -46,6 +46,13 @@ Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life
 - Lambda関数は必ずARM64アーキテクチャでビルド (`cargo lambda build --release --arm64`)
 - Terraformで新規Lambda関数を作成する際は必ず `architectures = ["arm64"]` を指定すること
 
+## Rust コーディング規約
+
+### モジュール構成
+- モジュール分割時は `store/mod.rs` 方式ではなく `store.rs` + `store/` ディレクトリ方式を使うこと（Rust 2018+ スタイル）
+  - ✅ `src/store.rs` + `src/store/in_memory.rs` + `src/store/dynamo.rs`
+  - ❌ `src/store/mod.rs` + `src/store/in_memory.rs` + `src/store/dynamo.rs`
+
 ## Steering Configuration
 - Load entire `.kiro/steering/` as project memory
 - Default files: `product.md`, `tech.md`, `structure.md`
