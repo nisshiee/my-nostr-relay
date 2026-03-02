@@ -9,6 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use relay::config::LimitationConfig;
@@ -23,6 +24,7 @@ use relay::ws;
 struct AppState {
     relay: Arc<Relay<AppEventStore>>,
     limitation: Arc<LimitationConfig>,
+    shutdown: CancellationToken,
 }
 
 async fn handler(
@@ -37,7 +39,8 @@ async fn handler(
             let conn_id = uuid::Uuid::now_v7().to_string();
             let relay = state.relay.clone();
             let limitation = state.limitation.clone();
-            ws.on_upgrade(move |socket| ws::handle_socket(socket, relay, conn_id, limitation))
+            let shutdown = state.shutdown.clone();
+            ws.on_upgrade(move |socket| ws::handle_socket(socket, relay, conn_id, limitation, shutdown))
         }
         Err(_) => {
             // NIP-11 Request 判定
@@ -120,7 +123,8 @@ async fn main() -> anyhow::Result<()> {
     let store = create_event_store().await?;
     let relay = Arc::new(Relay::new(store));
 
-    let state = AppState { relay, limitation };
+    let shutdown = CancellationToken::new();
+    let state = AppState { relay, limitation, shutdown: shutdown.clone() };
 
     let app = Router::new()
         .route("/", get(handler))
@@ -133,10 +137,12 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("TcpListener bindに失敗")?;
 
-    // Graceful shutdown: SIGTERM/SIGINTを受けたら新規接続の受付を停止し、
-    // 既存接続の処理完了を待ってからシャットダウンする（systemd連携用）
+    // Graceful shutdown:
+    // 1. SIGTERM/SIGINTを受信
+    // 2. CancellationTokenをキャンセル → 各WebSocket接続にCloseフレーム送信を通知
+    // 3. 新規接続の受付を停止し、既存接続のクローズ完了を待機
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(shutdown_signal(shutdown))
         .await
         .context("サーバー起動に失敗")?;
 
@@ -144,8 +150,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// SIGTERM または SIGINT を待機するシャットダウンシグナルハンドラ
-async fn shutdown_signal() {
+/// SIGTERM/SIGINTを待機し、受信したらCancellationTokenをキャンセルする
+async fn shutdown_signal(token: CancellationToken) {
     use tokio::signal::unix::{signal, SignalKind};
 
     let mut sigterm = signal(SignalKind::terminate())
@@ -161,4 +167,7 @@ async fn shutdown_signal() {
             info!("SIGINTを受信、graceful shutdownを開始");
         }
     }
+
+    // 全WebSocket接続にシャットダウンを通知
+    token.cancel();
 }

@@ -32,7 +32,7 @@ async fn start_relay_with_config(limitation: relay::config::LimitationConfig) ->
                     async move {
                         let conn_id = uuid::Uuid::now_v7().to_string();
                         ws.on_upgrade(move |socket| {
-                            relay::ws::handle_socket(socket, relay_clone, conn_id, lim_clone)
+                            relay::ws::handle_socket(socket, relay_clone, conn_id, lim_clone, tokio_util::sync::CancellationToken::new())
                         })
                     }
                 },

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use axum::extract::ws::{Message, WebSocket};
 use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast::error::RecvError;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::config::LimitationConfig;
@@ -143,8 +144,8 @@ fn ping_interval() -> std::time::Duration {
 }
 
 /// WebSocket 接続を処理
-#[instrument(skip(socket, relay, limitation), fields(connection_id = %conn_id))]
-pub async fn handle_socket<S: EventStore + 'static>(socket: WebSocket, relay: Arc<Relay<S>>, conn_id: String, limitation: Arc<LimitationConfig>) {
+#[instrument(skip(socket, relay, limitation, shutdown), fields(connection_id = %conn_id))]
+pub async fn handle_socket<S: EventStore + 'static>(socket: WebSocket, relay: Arc<Relay<S>>, conn_id: String, limitation: Arc<LimitationConfig>, shutdown: CancellationToken) {
     info!("WebSocket接続を確立");
 
     let (mut ws_tx, mut ws_rx) = socket.split();
@@ -156,6 +157,13 @@ pub async fn handle_socket<S: EventStore + 'static>(socket: WebSocket, relay: Ar
 
     loop {
         tokio::select! {
+            // シャットダウン通知: Closeフレームを送信して接続を終了
+            _ = shutdown.cancelled() => {
+                info!("シャットダウン通知受信、Closeフレームを送信");
+                let _ = ws_tx.send(Message::Close(None)).await;
+                return;
+            }
+
             // サーバーサイドPing送信（CloudFront idle timeout対策）
             _ = ping_timer.tick() => {
                 trace!("サーバーサイドPing送信");

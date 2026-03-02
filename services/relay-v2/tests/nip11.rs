@@ -56,7 +56,7 @@ async fn handler(
             let conn_id = uuid::Uuid::now_v7().to_string();
             let relay = state.relay.clone();
             let limitation = state.limitation.clone();
-            ws.on_upgrade(move |socket| relay::ws::handle_socket(socket, relay, conn_id, limitation))
+            ws.on_upgrade(move |socket| relay::ws::handle_socket(socket, relay, conn_id, limitation, tokio_util::sync::CancellationToken::new()))
         }
         Err(_) => {
             // NIP-11 Request 判定
