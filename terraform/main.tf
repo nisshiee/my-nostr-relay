@@ -114,6 +114,7 @@ module "api" {
   zone_id                    = module.domain.zone_id
   certificate_arn            = module.domain.certificate_arn
   cloudfront_certificate_arn = aws_acm_certificate_validation.cloudfront.certificate_arn
+  relay_origin_domain        = module.ec2_relay.origin_domain_name
 
   # NIP-11 リレー情報設定
   relay_name             = "nisshieeのリレー"
@@ -146,6 +147,8 @@ module "api" {
 module "ec2_relay" {
   source = "./modules/ec2-relay"
 
+  domain_name       = local.domain_name
+  zone_id           = module.domain.zone_id
   events_table_arn  = module.api.events_table_arn
   events_table_name = module.api.events_table_name
   binary_bucket     = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
@@ -160,8 +163,6 @@ module "ec2_relay" {
   relay_privacy_policy   = "https://nostr.nisshiee.org/relay/privacy"
   relay_terms_of_service = "https://nostr.nisshiee.org/relay/terms"
   relay_posting_policy   = "https://nostr.nisshiee.org/relay/posting-policy"
-
-  depends_on = [module.api]
 }
 
 module "web" {
