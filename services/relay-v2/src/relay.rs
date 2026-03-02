@@ -6,7 +6,7 @@ use tokio::sync::broadcast;
 use tracing::{debug, instrument, warn};
 
 use crate::models::{Event, Filter, VerifiedEvent};
-use crate::store::{EventStore, InMemoryEventStore, SaveResult, StoreError};
+use crate::store::{EventStore, SaveResult, StoreError};
 
 /// broadcast チャネルのキャパシティ
 const BROADCAST_CAPACITY: usize = 1024;
@@ -14,8 +14,8 @@ const BROADCAST_CAPACITY: usize = 1024;
 /// Nostr Relay のコア構造体
 ///
 /// イベントの永続化と配信を担う
-pub struct Relay<S: EventStore = InMemoryEventStore> {
-    /// イベントストレージ（抽象化）
+pub struct Relay<S: EventStore> {
+    /// イベントストレージ（静的ディスパッチ）
     store: S,
     /// イベント配信用 broadcast sender
     event_tx: broadcast::Sender<Event>,

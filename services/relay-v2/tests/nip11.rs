@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 /// テスト用の共有状態
 #[derive(Clone)]
 struct TestState {
-    relay: Arc<relay::relay::Relay>,
+    relay: Arc<relay::relay::Relay<relay::store::InMemoryEventStore>>,
     limitation: Arc<relay::config::LimitationConfig>,
 }
 
