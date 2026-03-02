@@ -10,7 +10,7 @@ use axum::{
     routing::get,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::info;
+use tracing::{error, info};
 
 use relay::config::LimitationConfig;
 use relay::logging;
@@ -122,6 +122,20 @@ async fn main() -> anyhow::Result<()> {
     // EventStore の実装を選択（feature flagに基づいてDynamoDB/InMemory切り替え）
     let store = create_event_store().await?;
     let relay = Arc::new(Relay::new(store));
+
+    // DynamoDB使用時: バックグラウンドで既存イベントをロード
+    // ロード完了前のREQは不完全な結果を返すが、サーバーはすぐにリッスン開始する
+    #[cfg(feature = "dynamo")]
+    {
+        let relay_clone = Arc::clone(&relay);
+        tokio::spawn(async move {
+            info!("DynamoDBからのイベントロードをバックグラウンドで開始");
+            match relay_clone.store().load_recent_events().await {
+                Ok(()) => info!("DynamoDBからのイベントロードが完了"),
+                Err(e) => error!(error = %e, "DynamoDBからのイベントロードに失敗"),
+            }
+        });
+    }
 
     let shutdown = CancellationToken::new();
     let state = AppState { relay, limitation, shutdown: shutdown.clone() };
