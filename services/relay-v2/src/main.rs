@@ -132,9 +132,33 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
         .context("TcpListener bindに失敗")?;
+
+    // Graceful shutdown: SIGTERM/SIGINTを受けたら新規接続の受付を停止し、
+    // 既存接続の処理完了を待ってからシャットダウンする（systemd連携用）
     axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .context("サーバー起動に失敗")?;
 
+    info!("サーバーをシャットダウンしました");
     Ok(())
+}
+
+/// SIGTERM または SIGINT を待機するシャットダウンシグナルハンドラ
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    let mut sigterm = signal(SignalKind::terminate())
+        .expect("SIGTERMハンドラの登録に失敗");
+    let mut sigint = signal(SignalKind::interrupt())
+        .expect("SIGINTハンドラの登録に失敗");
+
+    tokio::select! {
+        _ = sigterm.recv() => {
+            info!("SIGTERMを受信、graceful shutdownを開始");
+        }
+        _ = sigint.recv() => {
+            info!("SIGINTを受信、graceful shutdownを開始");
+        }
+    }
 }
