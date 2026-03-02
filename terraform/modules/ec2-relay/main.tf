@@ -11,6 +11,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -329,11 +333,20 @@ resource "aws_eip_association" "relay" {
 # ------------------------------------------------------------------------------
 # Route 53 Aレコード
 # CloudFrontオリジンにはドメイン名が必要（IPアドレス直指定不可）
+# ランダムサブドメインでオリジンエンドポイントの推測を困難にする
 # ------------------------------------------------------------------------------
+
+resource "random_string" "origin_subdomain" {
+  length  = 8
+  special = false
+  upper   = false
+  numeric = true
+  lower   = true
+}
 
 resource "aws_route53_record" "relay" {
   zone_id = var.zone_id
-  name    = "origin-relay.${var.domain_name}"
+  name    = "${random_string.origin_subdomain.result}.relay.${var.domain_name}"
   type    = "A"
   ttl     = 300
 
