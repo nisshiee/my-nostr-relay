@@ -146,3 +146,12 @@ resource "aws_iam_role_policy_attachment" "lambda_dynamodb" {
   role       = aws_iam_role.lambda_exec.name
   policy_arn = aws_iam_policy.lambda_dynamodb.arn
 }
+
+# Events table outputs for ec2-relay module
+output "events_table_arn" {
+  value = aws_dynamodb_table.events.arn
+}
+
+output "events_table_name" {
+  value = aws_dynamodb_table.events.name
+}
