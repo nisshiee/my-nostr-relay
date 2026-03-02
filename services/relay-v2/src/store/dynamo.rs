@@ -3,8 +3,8 @@
 use std::collections::HashMap as AwsHashMap;
 
 use aws_sdk_dynamodb::Client as DynamoClient;
-use aws_sdk_dynamodb::types::AttributeValue;
-use tracing::{debug, error, instrument, trace, warn};
+use aws_sdk_dynamodb::types::{AttributeValue, ReturnConsumedCapacity};
+use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::models::{Event, EventId, Filter, VerifiedEvent};
 use super::{DeleteResult, EventStore, InMemoryEventStore, SaveResult, StoreError};
@@ -64,8 +64,26 @@ impl DynamoEventStore {
         }
     }
 
+    /// テーブルのプロビジョンドRCUを取得
+    async fn get_provisioned_rcu(&self) -> Result<i64, StoreError> {
+        let desc = self.client
+            .describe_table()
+            .table_name(&self.table_name)
+            .send()
+            .await
+            .map_err(|e| StoreError::Internal(format!("DynamoDB describe_table failed: {}", e)))?;
+
+        let rcu = desc.table()
+            .and_then(|t| t.provisioned_throughput())
+            .map(|pt| pt.read_capacity_units().unwrap_or(5))
+            .unwrap_or(5);
+
+        Ok(rcu)
+    }
+
     /// DynamoDBから直近のイベントをInMemoryStoreにロード
     /// created_atフィルターで直近のイベントのみロード（デフォルト: 30日）
+    /// プロビジョンドRCUに基づいてページ間ディレイを自動調整し、スロットリングを回避する
     async fn load_recent_events(&self) -> Result<(), StoreError> {
         let retention_days: u64 = std::env::var("DYNAMODB_LOAD_RETENTION_DAYS")
             .ok()
@@ -77,36 +95,51 @@ impl DynamoEventStore {
             .as_secs();
         let cutoff_ts = now_ts.saturating_sub(retention_days * 86400);
         
-        debug!("DynamoDBから直近{}日のイベントをロード中 (cutoff: {})...", retention_days, cutoff_ts);
+        // プロビジョンドRCUを取得してディレイ計算に使用
+        let provisioned_rcu = self.get_provisioned_rcu().await?;
+        info!(
+            "DynamoDBから直近{}日のイベントをロード中 (cutoff: {}, provisioned_rcu: {})",
+            retention_days, cutoff_ts, provisioned_rcu
+        );
         
-        let mut scan_input = self.client
+        let scan_input = self.client
             .scan()
             .table_name(&self.table_name)
             .filter_expression("created_at >= :cutoff")
             .expression_attribute_values(":cutoff", AttributeValue::N(cutoff_ts.to_string()))
-            .select(aws_sdk_dynamodb::types::Select::AllAttributes);
+            .select(aws_sdk_dynamodb::types::Select::AllAttributes)
+            .return_consumed_capacity(ReturnConsumedCapacity::Total);
 
         let mut loaded_count = 0;
+        let mut page_count = 0u32;
+        let mut total_consumed_rcu = 0.0f64;
         let mut continuation_token: Option<std::collections::HashMap<String, AttributeValue>> = None;
 
         loop {
+            let mut page_scan = scan_input.clone();
             if let Some(ref token) = continuation_token {
                 for (key, value) in token {
-                    scan_input = scan_input.exclusive_start_key(key.clone(), value.clone());
+                    page_scan = page_scan.exclusive_start_key(key.clone(), value.clone());
                 }
             }
 
-            let result = scan_input
-                .clone()
+            let result = page_scan
                 .send()
                 .await
                 .map_err(|e| StoreError::Internal(format!("DynamoDB scan failed: {}", e)))?;
+
+            page_count += 1;
+
+            // ConsumedCapacityからディレイを計算
+            let consumed_rcu = result.consumed_capacity()
+                .and_then(|cc| cc.capacity_units())
+                .unwrap_or(128.0); // フォールバック: 1MB分（128 RCU）を想定
+            total_consumed_rcu += consumed_rcu;
 
             if let Some(items) = result.items {
                 for item in items {
                     if let Ok(event) = self.parse_dynamo_item(item) {
                         if let Ok(verified) = event.verify() {
-                            // InMemoryStoreに直接保存（DynamoDBには重複書き込みしない）
                             if let Ok(save_result) = self.inner.save(&verified).await {
                                 if matches!(save_result, SaveResult::Saved | SaveResult::Replaced) {
                                     loaded_count += 1;
@@ -121,9 +154,26 @@ impl DynamoEventStore {
             if continuation_token.is_none() {
                 break;
             }
+
+            // プロビジョンドRCUに基づくディレイ（マージン1秒追加）
+            // ディレイ = (消費RCU / プロビジョンドRCU) + 1秒
+            let delay_secs = (consumed_rcu / provisioned_rcu as f64) + 1.0;
+            debug!(
+                page_count,
+                consumed_rcu,
+                delay_secs,
+                loaded_count,
+                "ページロード完了、次のページまで待機"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs_f64(delay_secs)).await;
         }
 
-        debug!(loaded_count, "DynamoDBからのイベントロード完了");
+        info!(
+            loaded_count,
+            page_count,
+            total_consumed_rcu,
+            "DynamoDBからのイベントロード完了"
+        );
         Ok(())
     }
 
