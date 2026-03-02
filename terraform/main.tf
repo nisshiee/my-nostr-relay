@@ -368,10 +368,10 @@ output "ec2_relay_elastic_ip" {
 
 output "ec2_relay_binary_bucket" {
   description = "relay-v2バイナリ配布用S3バケット名"
-  value       = module.ec2_relay.binary_bucket
+  value       = module.ec2_relay.binary_bucket  # from s3.tf
 }
 
 output "ec2_relay_ssm_document_name" {
   description = "relay-v2バイナリ更新用SSMドキュメント名"
-  value       = module.ec2_relay.ssm_document_name
+  value       = module.ec2_relay.ssm_document_name  # from ssm.tf
 }
