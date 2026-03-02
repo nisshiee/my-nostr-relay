@@ -114,6 +114,7 @@ module "api" {
   zone_id                    = module.domain.zone_id
   certificate_arn            = module.domain.certificate_arn
   cloudfront_certificate_arn = aws_acm_certificate_validation.cloudfront.certificate_arn
+  relay_origin_ip            = module.ec2_relay.elastic_ip
 
   # NIP-11 リレー情報設定
   relay_name             = "nisshieeのリレー"
