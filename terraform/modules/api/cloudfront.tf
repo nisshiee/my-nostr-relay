@@ -22,7 +22,7 @@ resource "aws_cloudfront_distribution" "relay" {
   # --------------------------------------
   origin {
     origin_id   = "relay-v2"
-    domain_name = var.relay_origin_ip
+    domain_name = var.relay_origin_domain
 
     custom_origin_config {
       http_port                = 3000
@@ -92,9 +92,9 @@ variable "cloudfront_certificate_arn" {
   description = "CloudFront用ACM証明書ARN（us-east-1リージョン）"
 }
 
-variable "relay_origin_ip" {
+variable "relay_origin_domain" {
   type        = string
-  description = "relay-v2 EC2のElastic IP"
+  description = "relay-v2 EC2のオリジンドメイン名"
 }
 
 # ------------------------------------------------------------------------------

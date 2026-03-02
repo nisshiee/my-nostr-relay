@@ -18,6 +18,16 @@ terraform {
 # 変数定義
 # ------------------------------------------------------------------------------
 
+variable "domain_name" {
+  description = "ベースドメイン名（例: nostr.nisshiee.org）"
+  type        = string
+}
+
+variable "zone_id" {
+  description = "Route 53ホストゾーンID"
+  type        = string
+}
+
 variable "events_table_arn" {
   description = "DynamoDB eventsテーブルのARN"
   type        = string
@@ -317,6 +327,20 @@ resource "aws_eip_association" "relay" {
 }
 
 # ------------------------------------------------------------------------------
+# Route 53 Aレコード
+# CloudFrontオリジンにはドメイン名が必要（IPアドレス直指定不可）
+# ------------------------------------------------------------------------------
+
+resource "aws_route53_record" "relay" {
+  zone_id = var.zone_id
+  name    = "origin-relay.${var.domain_name}"
+  type    = "A"
+  ttl     = 300
+
+  records = [aws_eip.relay.public_ip]
+}
+
+# ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------
 
@@ -334,4 +358,9 @@ output "security_group_id" {
 
 output "iam_role_arn" {
   value = aws_iam_role.relay.arn
+}
+
+output "origin_domain_name" {
+  description = "CloudFrontオリジン用ドメイン名"
+  value       = aws_route53_record.relay.fqdn
 }

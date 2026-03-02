@@ -114,7 +114,7 @@ module "api" {
   zone_id                    = module.domain.zone_id
   certificate_arn            = module.domain.certificate_arn
   cloudfront_certificate_arn = aws_acm_certificate_validation.cloudfront.certificate_arn
-  relay_origin_ip            = module.ec2_relay.elastic_ip
+  relay_origin_domain        = module.ec2_relay.origin_domain_name
 
   # NIP-11 リレー情報設定
   relay_name             = "nisshieeのリレー"
@@ -147,6 +147,8 @@ module "api" {
 module "ec2_relay" {
   source = "./modules/ec2-relay"
 
+  domain_name       = local.domain_name
+  zone_id           = module.domain.zone_id
   events_table_arn  = module.api.events_table_arn
   events_table_name = module.api.events_table_name
   binary_bucket     = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
