@@ -93,6 +93,11 @@ impl<S: EventStore> Relay<S> {
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.event_tx.subscribe()
     }
+
+    /// 内部のEventStoreへの参照を返す
+    pub fn store(&self) -> &S {
+        &self.store
+    }
 }
 
 #[cfg(test)]

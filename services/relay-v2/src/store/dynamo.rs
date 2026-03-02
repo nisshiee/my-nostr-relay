@@ -46,9 +46,6 @@ impl DynamoEventStore {
             gsi_pk_kind_d_name,
         };
         
-        // 起動時にDynamoDBから最新のイベントをロード
-        store.load_recent_events().await?;
-        
         Ok(store)
     }
 
@@ -81,10 +78,14 @@ impl DynamoEventStore {
         Ok(rcu)
     }
 
-    /// DynamoDBから直近のイベントをInMemoryStoreにロード
-    /// created_atフィルターで直近のイベントのみロード（デフォルト: 30日）
-    /// プロビジョンドRCUに基づいてページ間ディレイを自動調整し、スロットリングを回避する
-    async fn load_recent_events(&self) -> Result<(), StoreError> {
+        /// DynamoDBから直近のイベントをInMemoryストアにロードする
+    ///
+    /// バックグラウンドで呼び出すことを想定。ロード完了前のREQは
+    /// InMemoryストアの内容のみで応答するため、結果が不完全になる場合がある。
+    ///
+    /// - created_atフィルターで直近のイベントのみロード（デフォルト: 30日）
+    /// - プロビジョンドRCUに基づいてページ間ディレイを自動調整し、スロットリングを回避する
+    pub async fn load_recent_events(&self) -> Result<(), StoreError> {
         let retention_days: u64 = std::env::var("DYNAMODB_LOAD_RETENTION_DAYS")
             .ok()
             .and_then(|v| v.parse().ok())
