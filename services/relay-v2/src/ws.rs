@@ -130,6 +130,18 @@ impl ConnectionState {
     }
 }
 
+/// サーバーサイドPingの送信間隔（デフォルト: 5分）
+/// CloudFrontのWebSocketアイドルタイムアウト（10分固定）を回避するため、
+/// 定期的にPingフレームを送信してアイドル状態をリセットする。
+/// 環境変数 `WS_PING_INTERVAL_SECS` で変更可能。
+fn ping_interval() -> std::time::Duration {
+    let secs: u64 = std::env::var("WS_PING_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    std::time::Duration::from_secs(secs)
+}
+
 /// WebSocket 接続を処理
 #[instrument(skip(socket, relay, limitation), fields(connection_id = %conn_id))]
 pub async fn handle_socket<S: EventStore + 'static>(socket: WebSocket, relay: Arc<Relay<S>>, conn_id: String, limitation: Arc<LimitationConfig>) {
@@ -138,9 +150,21 @@ pub async fn handle_socket<S: EventStore + 'static>(socket: WebSocket, relay: Ar
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut event_rx = relay.subscribe();
     let mut state = ConnectionState::new();
+    let mut ping_timer = tokio::time::interval(ping_interval());
+    // 最初のtickは即座に発火するのでスキップ
+    ping_timer.tick().await;
 
     loop {
         tokio::select! {
+            // サーバーサイドPing送信（CloudFront idle timeout対策）
+            _ = ping_timer.tick() => {
+                trace!("サーバーサイドPing送信");
+                if ws_tx.send(Message::Ping(vec![].into())).await.is_err() {
+                    info!("Ping送信失敗、接続を切断");
+                    return;
+                }
+            }
+
             // WebSocket からのメッセージ受信
             msg = ws_rx.next() => {
                 let msg = match msg {
