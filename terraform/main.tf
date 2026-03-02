@@ -161,8 +161,6 @@ module "ec2_relay" {
   relay_privacy_policy   = "https://nostr.nisshiee.org/relay/privacy"
   relay_terms_of_service = "https://nostr.nisshiee.org/relay/terms"
   relay_posting_policy   = "https://nostr.nisshiee.org/relay/posting-policy"
-
-  depends_on = [module.api]
 }
 
 module "web" {
