@@ -209,6 +209,10 @@ impl DynamoEventStore {
         // タイムスタンプ
         item.insert("created_at".to_string(), AttributeValue::N(event.created_at.as_i64().to_string()));
         
+        // 運用用属性（コンソールでの視認性向上）
+        item.insert("kind".to_string(), AttributeValue::N(event.kind.as_u16().to_string()));
+        item.insert("pubkey".to_string(), AttributeValue::S(event.pubkey.to_hex()));
+        
         // イベントデータ（JSON）
         item.insert("event_json".to_string(), AttributeValue::S(serde_json::to_string(event).unwrap_or_default()));
         
