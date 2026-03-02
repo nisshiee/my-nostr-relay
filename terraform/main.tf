@@ -148,7 +148,7 @@ module "ec2_relay" {
 
   events_table_arn  = module.api.events_table_arn
   events_table_name = module.api.events_table_name
-  binary_bucket     = "nostr-relay-v2-binary-${data.aws_caller_identity.current.account_id}"
+  binary_bucket     = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
 
   # NIP-11 リレー情報設定
   relay_name             = "nisshieeのリレー"
@@ -367,8 +367,8 @@ output "ec2_relay_elastic_ip" {
 }
 
 output "ec2_relay_binary_bucket" {
-  description = "relay-v2バイナリ配布用S3バケット名"
-  value       = module.ec2_relay.binary_bucket  # from s3.tf
+  description = "relay-v2バイナリ配布用S3バケット名（ec2-searchと共用）"
+  value       = module.ec2_relay.binary_bucket
 }
 
 output "ec2_relay_ssm_document_name" {

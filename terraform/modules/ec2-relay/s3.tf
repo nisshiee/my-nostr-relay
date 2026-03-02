@@ -1,70 +1,13 @@
 # ------------------------------------------------------------------------------
-# S3バケット（バイナリ配布用）
+# S3バケット参照（バイナリ配布用）
 #
-# relay-v2のRustバイナリを格納する
-# バージョニング有効化によりロールバックが可能
+# ec2-searchモジュールで作成済みのS3バケットを共用する
+# relay-v2バイナリは別のキー（relay-v2/relay）で格納
 # ------------------------------------------------------------------------------
 
-resource "aws_s3_bucket" "binary" {
+# バケットポリシーにrelay-v2のIAMロールを追加するため、バケット情報を参照
+data "aws_s3_bucket" "binary" {
   bucket = var.binary_bucket
-
-  tags = {
-    Name = "nostr-relay-ec2-relay-v2-binary"
-  }
-}
-
-resource "aws_s3_bucket_versioning" "binary" {
-  bucket = aws_s3_bucket.binary.id
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_s3_bucket_public_access_block" "binary" {
-  bucket                  = aws_s3_bucket.binary.id
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "binary" {
-  bucket = aws_s3_bucket.binary.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm = "AES256"
-    }
-  }
-}
-
-resource "aws_s3_bucket_policy" "binary" {
-  bucket = aws_s3_bucket.binary.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "AllowEC2GetObject"
-        Effect = "Allow"
-        Principal = {
-          AWS = aws_iam_role.relay.arn
-        }
-        Action   = ["s3:GetObject", "s3:GetObjectVersion"]
-        Resource = "${aws_s3_bucket.binary.arn}/*"
-      },
-      {
-        Sid    = "AllowEC2ListBucket"
-        Effect = "Allow"
-        Principal = {
-          AWS = aws_iam_role.relay.arn
-        }
-        Action   = "s3:ListBucket"
-        Resource = aws_s3_bucket.binary.arn
-      }
-    ]
-  })
-
-  depends_on = [aws_s3_bucket_public_access_block.binary]
 }
 
 # ------------------------------------------------------------------------------
@@ -72,9 +15,9 @@ resource "aws_s3_bucket_policy" "binary" {
 # ------------------------------------------------------------------------------
 
 output "binary_bucket" {
-  value = aws_s3_bucket.binary.bucket
+  value = data.aws_s3_bucket.binary.bucket
 }
 
 output "binary_bucket_arn" {
-  value = aws_s3_bucket.binary.arn
+  value = data.aws_s3_bucket.binary.arn
 }
