@@ -6,7 +6,7 @@ on:
     paths:
       - 'services/relay/**'
       - 'deploy/**'
-  workflow_dispatch: # 手動デプロイ
+  workflow_dispatch: # 手動デプロイ（任意のブランチから実行可能）
 
 permissions:
   id-token: write

@@ -41,7 +41,7 @@ resource "aws_iam_role" "github_actions_deploy" {
           }
           StringLike = {
             "token.actions.githubusercontent.com:sub" = [
-              "repo:nisshiee/my-nostr-relay:ref:refs/heads/main",
+              "repo:nisshiee/my-nostr-relay:ref:refs/heads/*",
               "repo:nisshiee/my-nostr-relay:environment:*"
             ]
           }
