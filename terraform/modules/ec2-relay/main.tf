@@ -236,7 +236,7 @@ resource "aws_instance" "relay" {
 
   user_data = base64encode(file("${path.module}/user_data.sh.tpl"))
 
-  user_data_replace_on_change = true
+  user_data_replace_on_change = false
 
   tags = {
     Name = "nostr-relay-ec2-relay-v2"
