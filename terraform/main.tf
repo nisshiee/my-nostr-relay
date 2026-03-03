@@ -107,22 +107,10 @@ module "api" {
 module "ec2_relay" {
   source = "./modules/ec2-relay"
 
-  domain_name       = local.domain_name
-  zone_id           = module.domain.zone_id
-  events_table_arn  = module.api.events_table_arn
-  events_table_name = module.api.events_table_name
-  binary_bucket     = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
-
-  # NIP-11 リレー情報設定
-  relay_name             = "nisshieeのリレー"
-  relay_description      = "試験運用中のため、無断でイベント削除・サービス停止する可能性があります。また、正常な動作を保証していません。"
-  relay_pubkey           = "73491509b8e2d80840873b5a13ba98a5d1ac3a16c9292e106b1f2eda31152c52"
-  relay_contact          = "mailto:nostr-relay-admin@nisshiee.org"
-  relay_icon             = "https://www.gravatar.com/avatar/c48758d8162582b770092002effb7dff"
-  relay_banner           = "https://nisshiee.org/ogimage.png"
-  relay_privacy_policy   = "https://nostr.nisshiee.org/relay/privacy"
-  relay_terms_of_service = "https://nostr.nisshiee.org/relay/terms"
-  relay_posting_policy   = "https://nostr.nisshiee.org/relay/posting-policy"
+  domain_name      = local.domain_name
+  zone_id          = module.domain.zone_id
+  events_table_arn = module.api.events_table_arn
+  binary_bucket    = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
 }
 
 module "web" {
@@ -163,6 +151,6 @@ output "ec2_relay_binary_bucket" {
 }
 
 output "ec2_relay_ssm_document_name" {
-  description = "relay-v2バイナリ更新用SSMドキュメント名"
+  description = "relay-v2デプロイ用SSMドキュメント名"
   value       = module.ec2_relay.ssm_document_name
 }
