@@ -31,7 +31,7 @@ Client --> CloudFront (SSL) --> EC2 (t4g.micro, port 3000)
 - **Domain**: `relay.nostr.nisshiee.org`
 - **DynamoDB**: `nostr_relay_events` (provisioned RCU=5, WCU=5)
 - **S3**: `nostr-relay-binary-426192960050` (バイナリ配布)
-- **SSM Document**: `nostr-relay-ec2-relay-v2-update-binary`
+- **SSM Document**: `nostr-relay-ec2-relay-v2-deploy`
 - **Frontend**: `nostr.nisshiee.org` (Vercel)
 
 ## コーディング規約
@@ -59,14 +59,23 @@ ulimit -n 10240  # macOSのFD制限回避
 cargo zigbuild --release --target aarch64-unknown-linux-gnu --features dynamo -j 1
 
 # デプロイ（S3経由 + SSM Document）
+# バイナリのアップロード
 aws-vault exec nostr-relay -- aws s3 cp \
   target/aarch64-unknown-linux-gnu/release/relay \
   s3://nostr-relay-binary-426192960050/relay-v2/relay
 
+# envファイルのアップロード（deploy/relay-v2.env をgitで管理）
+aws-vault exec nostr-relay -- aws s3 cp \
+  deploy/relay-v2.env \
+  s3://nostr-relay-binary-426192960050/relay-v2/env
+
+# SSM Documentでデプロイ（envとバイナリの差分チェック付き、冪等）
 aws-vault exec nostr-relay -- aws ssm send-command \
-  --document-name nostr-relay-ec2-relay-v2-update-binary \
+  --document-name nostr-relay-ec2-relay-v2-deploy \
   --targets "Key=tag:Name,Values=nostr-relay-ec2-relay-v2"
 ```
+
+> **Note:** 環境変数は `deploy/relay-v2.env` でgit管理されています。変更はこのファイルを編集し、S3にアップロード後、SSM Documentを実行してください。
 
 ### Webフロントエンド
 

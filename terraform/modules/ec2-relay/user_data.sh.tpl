@@ -4,12 +4,12 @@
 #
 # 1. nostr-relay専用ユーザーの作成
 # 2. バイナリ格納ディレクトリの作成
-# 3. 環境変数ファイルの作成
+# 3. プレースホルダー環境変数ファイルの作成
 # 4. systemdサービスファイルの配置と有効化
 #
-# バイナリのダウンロードはSSM Documentで行う:
+# envファイルとバイナリのデプロイはSSM Documentで行う:
 #   aws ssm send-command \
-#     --document-name nostr-relay-ec2-relay-v2-update-binary \
+#     --document-name nostr-relay-ec2-relay-v2-deploy \
 #     --targets "Key=tag:Name,Values=nostr-relay-ec2-relay-v2"
 # ------------------------------------------------------------------------------
 
@@ -37,23 +37,13 @@ chown nostr-relay:nostr-relay /etc/nostr-relay-v2
 chmod 700 /etc/nostr-relay-v2
 
 # ------------------------------------------------------------------------------
-# 環境変数ファイル
+# 環境変数ファイル（プレースホルダー）
+# 実際の値はSSM Documentでデプロイされる
 # ------------------------------------------------------------------------------
-echo "Creating environment file..."
+echo "Creating placeholder environment file..."
 cat > /etc/nostr-relay-v2/env <<'EOF'
-# relay-v2 環境変数
-DYNAMODB_TABLE_NAME=${events_table_name}
-RELAY_NAME=${relay_name}
-RELAY_DESCRIPTION=${relay_description}
-RELAY_PUBKEY=${relay_pubkey}
-RELAY_CONTACT=${relay_contact}
-RELAY_ICON=${relay_icon}
-RELAY_BANNER=${relay_banner}
-RELAY_PRIVACY_POLICY=${relay_privacy_policy}
-RELAY_TERMS_OF_SERVICE=${relay_terms_of_service}
-RELAY_POSTING_POLICY=${relay_posting_policy}
+# placeholder - SSM Documentで上書きされます
 RUST_LOG=info
-RUST_BACKTRACE=1
 EOF
 
 chown nostr-relay:nostr-relay /etc/nostr-relay-v2/env
@@ -104,7 +94,7 @@ echo "========================================"
 echo "User Data script completed at $(date)"
 echo "========================================"
 echo ""
-echo "バイナリをデプロイするにはSSM Documentを実行してください:"
+echo "envファイルとバイナリをデプロイするにはSSM Documentを実行してください:"
 echo "  aws ssm send-command \\"
-echo "    --document-name nostr-relay-ec2-relay-v2-update-binary \\"
+echo "    --document-name nostr-relay-ec2-relay-v2-deploy \\"
 echo "    --targets \"Key=tag:Name,Values=nostr-relay-ec2-relay-v2\""

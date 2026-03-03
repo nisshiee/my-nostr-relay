@@ -37,11 +37,6 @@ variable "events_table_arn" {
   type        = string
 }
 
-variable "events_table_name" {
-  description = "DynamoDB eventsテーブル名"
-  type        = string
-}
-
 variable "binary_bucket" {
   description = "relay-v2バイナリを格納するS3バケット名"
   type        = string
@@ -51,56 +46,6 @@ variable "binary_key" {
   description = "S3バケット内のバイナリのキー（パス）"
   type        = string
   default     = "relay-v2/relay"
-}
-
-variable "relay_name" {
-  description = "NIP-11 リレー名"
-  type        = string
-}
-
-variable "relay_description" {
-  description = "NIP-11 リレー説明"
-  type        = string
-}
-
-variable "relay_pubkey" {
-  description = "NIP-11 リレー管理者公開鍵"
-  type        = string
-}
-
-variable "relay_contact" {
-  description = "NIP-11 リレー連絡先"
-  type        = string
-}
-
-variable "relay_icon" {
-  description = "NIP-11 リレーアイコンURL"
-  type        = string
-  default     = ""
-}
-
-variable "relay_banner" {
-  description = "NIP-11 リレーバナーURL"
-  type        = string
-  default     = ""
-}
-
-variable "relay_privacy_policy" {
-  description = "NIP-11 プライバシーポリシーURL"
-  type        = string
-  default     = ""
-}
-
-variable "relay_terms_of_service" {
-  description = "NIP-11 利用規約URL"
-  type        = string
-  default     = ""
-}
-
-variable "relay_posting_policy" {
-  description = "NIP-11 投稿ポリシーURL"
-  type        = string
-  default     = ""
 }
 
 # ------------------------------------------------------------------------------
@@ -289,20 +234,9 @@ resource "aws_instance" "relay" {
     http_put_response_hop_limit = 1
   }
 
-  user_data = base64encode(templatefile("${path.module}/user_data.sh.tpl", {
-    events_table_name    = var.events_table_name
-    relay_name           = var.relay_name
-    relay_description    = var.relay_description
-    relay_pubkey         = var.relay_pubkey
-    relay_contact        = var.relay_contact
-    relay_icon           = var.relay_icon
-    relay_banner         = var.relay_banner
-    relay_privacy_policy = var.relay_privacy_policy
-    relay_terms_of_service = var.relay_terms_of_service
-    relay_posting_policy = var.relay_posting_policy
-  }))
+  user_data = base64encode(file("${path.module}/user_data.sh.tpl"))
 
-  user_data_replace_on_change = true
+  user_data_replace_on_change = false
 
   tags = {
     Name = "nostr-relay-ec2-relay-v2"
