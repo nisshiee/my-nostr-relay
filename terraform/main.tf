@@ -119,6 +119,11 @@ module "web" {
   zone_id     = module.domain.zone_id
 }
 
+module "github_actions" {
+  source            = "./modules/github-actions"
+  binary_bucket_arn = module.ec2_relay.binary_bucket_arn
+}
+
 # ------------------------------------------------------------------------------
 # Outputs
 # ------------------------------------------------------------------------------

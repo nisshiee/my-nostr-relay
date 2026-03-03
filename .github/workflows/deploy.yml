@@ -1,0 +1,103 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/relay/**'
+      - 'deploy/**'
+  workflow_dispatch: # 手動デプロイ
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04-arm # ARM64ネイティブランナー
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install musl-tools
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+
+      - name: Setup Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/relay
+
+      - name: Build relay binary
+        working-directory: services/relay
+        run: cargo build --release --target aarch64-unknown-linux-musl --features dynamo
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::426192960050:role/nostr-relay-github-actions-deploy
+          role-session-name: github-actions-deploy
+          aws-region: ap-northeast-1
+
+      - name: Upload binary to S3
+        run: |
+          aws s3 cp services/relay/target/aarch64-unknown-linux-musl/release/relay \
+            s3://nostr-relay-binary-426192960050/relay-v2/relay
+
+      - name: Upload env file to S3
+        run: |
+          aws s3 cp deploy/relay-v2.env \
+            s3://nostr-relay-binary-426192960050/relay-v2/env
+
+      - name: Execute deployment via SSM
+        run: |
+          echo "Starting deployment..."
+          COMMAND_ID=$(aws ssm send-command \
+            --document-name nostr-relay-ec2-relay-v2-deploy \
+            --targets "Key=tag:Name,Values=nostr-relay-ec2-relay-v2" \
+            --query 'Command.CommandId' \
+            --output text)
+          
+          echo "Command ID: $COMMAND_ID"
+          echo "Waiting for command to complete..."
+          
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id $(aws ssm describe-instance-information \
+              --filters "Key=tag:Name,Values=nostr-relay-ec2-relay-v2" \
+              --query 'InstanceInformationList[0].InstanceId' \
+              --output text)
+          
+          echo "Getting command result..."
+          INSTANCE_ID=$(aws ssm describe-instance-information \
+            --filters "Key=tag:Name,Values=nostr-relay-ec2-relay-v2" \
+            --query 'InstanceInformationList[0].InstanceId' \
+            --output text)
+          
+          RESULT=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID")
+          
+          STATUS=$(echo "$RESULT" | jq -r '.Status')
+          STDOUT=$(echo "$RESULT" | jq -r '.StandardOutputContent')
+          STDERR=$(echo "$RESULT" | jq -r '.StandardErrorContent')
+          
+          echo "Deployment Status: $STATUS"
+          echo "--- Standard Output ---"
+          echo "$STDOUT"
+          
+          if [ -n "$STDERR" ]; then
+            echo "--- Standard Error ---"
+            echo "$STDERR"
+          fi
+          
+          if [ "$STATUS" != "Success" ]; then
+            echo "Deployment failed!"
+            exit 1
+          fi
+          
+          echo "Deployment completed successfully!"
