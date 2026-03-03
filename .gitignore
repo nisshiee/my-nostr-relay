@@ -40,5 +40,5 @@ node_modules/
 /apps/web/next-env.d.ts
 /apps/web/coverage/
 
-# AWS Lambda
+# Build artifacts
 dist/

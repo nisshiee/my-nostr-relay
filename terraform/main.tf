@@ -21,7 +21,7 @@ provider "aws" {
   region = "ap-northeast-1"
 }
 
-# us-east-1プロバイダー（Lambda@EdgeとCloudFront証明書用）
+# us-east-1プロバイダー（CloudFront用ACM証明書）
 provider "aws" {
   alias  = "us_east_1"
   region = "us-east-1"
@@ -35,27 +35,6 @@ data "aws_caller_identity" "current" {}
 
 locals {
   domain_name = "nostr.nisshiee.org"
-}
-
-# ------------------------------------------------------------------------------
-# Budget Module用変数
-# Task 4.5: 予算管理モジュールの設定変数
-# ------------------------------------------------------------------------------
-
-variable "budget_limit_amount" {
-  description = "月額予算閾値（USD）"
-  type        = string
-  default     = "10"
-}
-
-variable "slack_team_id" {
-  description = "Slack Team ID（例: T07EA123LEP）。AWS ChatbotでSlackワークスペース連携後に取得"
-  type        = string
-}
-
-variable "slack_channel_id" {
-  description = "Slackチャンネル ID（例: C07EZ1ABC23）。通知先チャンネルのID"
-  type        = string
 }
 
 # ------------------------------------------------------------------------------
@@ -108,12 +87,31 @@ resource "aws_acm_certificate_validation" "cloudfront" {
   validation_record_fqdns = [for record in aws_route53_record.cloudfront_acm_validation : record.fqdn]
 }
 
+# ------------------------------------------------------------------------------
+# API Module
+# CloudFront Distribution、DynamoDB events テーブル、Route53レコードを管理
+# v1リソース（API Gateway, Lambda, Lambda@Edge等）は廃止済み
+# ------------------------------------------------------------------------------
 module "api" {
   source                     = "./modules/api"
   domain_name                = local.domain_name
   zone_id                    = module.domain.zone_id
-  certificate_arn            = module.domain.certificate_arn
   cloudfront_certificate_arn = aws_acm_certificate_validation.cloudfront.certificate_arn
+  relay_origin_domain        = module.ec2_relay.origin_domain_name
+}
+
+# ------------------------------------------------------------------------------
+# EC2 Relay v2 Module
+# axumベースの常駐WebSocketサーバー用EC2インフラストラクチャ
+# ------------------------------------------------------------------------------
+module "ec2_relay" {
+  source = "./modules/ec2-relay"
+
+  domain_name       = local.domain_name
+  zone_id           = module.domain.zone_id
+  events_table_arn  = module.api.events_table_arn
+  events_table_name = module.api.events_table_name
+  binary_bucket     = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
 
   # NIP-11 リレー情報設定
   relay_name             = "nisshieeのリレー"
@@ -125,18 +123,6 @@ module "api" {
   relay_privacy_policy   = "https://nostr.nisshiee.org/relay/privacy"
   relay_terms_of_service = "https://nostr.nisshiee.org/relay/terms"
   relay_posting_policy   = "https://nostr.nisshiee.org/relay/posting-policy"
-
-  # Task 3.5: EC2 SQLite検索API設定
-  sqlite_api_endpoint         = module.ec2_search.search_api_url
-  sqlite_api_token_param_path = module.ec2_search.parameter_store_path
-  lambda_ssm_policy_arn       = module.ec2_search.lambda_ssm_policy_arn
-
-  providers = {
-    aws           = aws
-    aws.us_east_1 = aws.us_east_1
-  }
-
-  depends_on = [module.ec2_search]
 }
 
 module "web" {
@@ -146,63 +132,8 @@ module "web" {
 }
 
 # ------------------------------------------------------------------------------
-# EC2 Search Module
-# SQLiteベースの検索APIサーバー用インフラストラクチャ
-# OpenSearch Serviceの低コスト代替として導入
+# Outputs
 # ------------------------------------------------------------------------------
-module "ec2_search" {
-  source               = "./modules/ec2-search"
-  domain_name          = local.domain_name
-  zone_id              = module.domain.zone_id
-  binary_bucket        = "nostr-relay-binary-${data.aws_caller_identity.current.account_id}"
-  binary_key           = "sqlite-api/sqlite-api"
-  binary_name          = "sqlite-api"
-  parameter_store_path = "/nostr-relay/ec2-search/api-token"
-}
-
-# ------------------------------------------------------------------------------
-# Budget Module
-# Task 4.5: AWS予算アラートに基づくサービス自動停止・復旧機能
-#
-# 要件:
-# - AWS Budgetの閾値超過時にサービスを自動停止
-# - 月初に自動でサービスを復旧
-# - Slack通知により停止/復旧状態を運用者に即時通知
-#
-# Requirements: 5.6
-# ------------------------------------------------------------------------------
-module "budget" {
-  source = "./modules/budget"
-
-  # 予算設定
-  budget_limit_amount = var.budget_limit_amount
-
-  # Slack連携設定
-  slack_team_id    = var.slack_team_id
-  slack_channel_id = var.slack_channel_id
-
-  # 停止対象のrelay Lambda関数名リスト
-  # modules/api で定義されているLambda関数を参照
-  relay_lambda_function_names = [
-    "nostr_relay_connect",
-    "nostr_relay_disconnect",
-    "nostr_relay_default"
-  ]
-
-  # sqlite-api EC2インスタンスID
-  # modules/ec2-searchの出力を参照
-  ec2_instance_id = module.ec2_search.instance_id
-
-  # CloudFrontディストリビューションID
-  # modules/apiの出力を参照
-  cloudfront_distribution_id = module.api.cloudfront_distribution_id
-
-  # sqlite-apiヘルスチェックエンドポイント
-  # Recovery Lambdaがsqlite-apiの起動確認に使用
-  sqlite_api_endpoint = module.ec2_search.search_api_url
-
-  depends_on = [module.api, module.ec2_search]
-}
 
 output "nameservers" {
   value = module.domain.nameservers
@@ -216,113 +147,22 @@ output "cloudfront_domain_name" {
   value = module.api.cloudfront_domain_name
 }
 
-output "ec2_search_security_group_id" {
-  description = "EC2検索サーバー用セキュリティグループID"
-  value       = module.ec2_search.security_group_id
+output "ec2_relay_instance_id" {
+  description = "relay-v2 EC2インスタンスID"
+  value       = module.ec2_relay.instance_id
 }
 
-output "ec2_search_instance_id" {
-  description = "EC2検索サーバーインスタンスID"
-  value       = module.ec2_search.instance_id
+output "ec2_relay_elastic_ip" {
+  description = "relay-v2 Elastic IP"
+  value       = module.ec2_relay.elastic_ip
 }
 
-output "ec2_search_private_ip" {
-  description = "EC2検索サーバーのプライベートIPアドレス"
-  value       = module.ec2_search.private_ip
+output "ec2_relay_binary_bucket" {
+  description = "relay-v2バイナリ配布用S3バケット名"
+  value       = module.ec2_relay.binary_bucket
 }
 
-output "ec2_search_elastic_ip" {
-  description = "EC2検索サーバーのElastic IP（パブリックIPアドレス）"
-  value       = module.ec2_search.elastic_ip
-}
-
-output "ec2_search_api_endpoint" {
-  description = "EC2検索APIエンドポイントFQDN"
-  value       = module.ec2_search.search_api_endpoint
-}
-
-output "ec2_search_api_url" {
-  description = "EC2検索APIのベースURL"
-  value       = module.ec2_search.search_api_url
-  sensitive   = true
-}
-
-output "ec2_search_parameter_store_path" {
-  description = "APIトークンを保存するParameter Storeのパス"
-  value       = module.ec2_search.parameter_store_path
-}
-
-output "ec2_search_binary_bucket" {
-  description = "HTTP APIサーバーバイナリを格納するS3バケット名"
-  value       = module.ec2_search.binary_bucket
-}
-
-output "ec2_search_api_token_parameter_arn" {
-  description = "APIトークンパラメータのARN"
-  value       = module.ec2_search.api_token_parameter_arn
-}
-
-output "ec2_search_lambda_ssm_policy_arn" {
-  description = "Lambda用SSMアクセスポリシーのARN（Lambda IAMロールにアタッチ用）"
-  value       = module.ec2_search.lambda_ssm_policy_arn
-}
-
-output "ec2_search_binary_bucket_arn" {
-  description = "バイナリ配布用S3バケットのARN"
-  value       = module.ec2_search.binary_bucket_arn
-}
-
-output "ec2_search_ssm_document_name" {
-  description = "バイナリ更新用SSMドキュメント名"
-  value       = module.ec2_search.ssm_document_name
-}
-
-output "ec2_search_ssm_document_arn" {
-  description = "バイナリ更新用SSMドキュメントのARN"
-  value       = module.ec2_search.ssm_document_arn
-}
-
-# ------------------------------------------------------------------------------
-# Budget Module Outputs
-# Task 4.5: 予算管理モジュールの出力
-# ------------------------------------------------------------------------------
-
-output "budget_alert_sns_topic_arn" {
-  description = "予算アラートSNSトピックARN"
-  value       = module.budget.alert_sns_topic_arn
-}
-
-output "budget_result_sns_topic_arn" {
-  description = "結果通知SNSトピックARN"
-  value       = module.budget.result_sns_topic_arn
-}
-
-output "budget_shutdown_lambda_function_name" {
-  description = "Shutdown Lambda関数名"
-  value       = module.budget.shutdown_lambda_function_name
-}
-
-output "budget_recovery_lambda_function_name" {
-  description = "Recovery Lambda関数名"
-  value       = module.budget.recovery_lambda_function_name
-}
-
-output "budget_name" {
-  description = "AWS Budget名"
-  value       = module.budget.budget_name
-}
-
-output "budget_limit_amount" {
-  description = "設定された予算閾値（USD）"
-  value       = module.budget.budget_limit_amount
-}
-
-output "budget_monthly_recovery_rule_name" {
-  description = "EventBridge月次復旧ルール名"
-  value       = module.budget.monthly_recovery_rule_name
-}
-
-output "budget_chatbot_configuration_arn" {
-  description = "AWS Chatbot Slack Channel Configuration ARN"
-  value       = module.budget.chatbot_configuration_arn
+output "ec2_relay_ssm_document_name" {
+  description = "relay-v2バイナリ更新用SSMドキュメント名"
+  value       = module.ec2_relay.ssm_document_name
 }

@@ -1,52 +1,88 @@
-# AI-DLC and Spec-Driven Development
+# Development Guidelines
 
-Kiro-style Spec Driven Development implementation on AI-DLC (AI Development Life Cycle)
+## プロジェクト概要
 
-## Project Context
+Nostr Relay — EC2 (axum WebSocket) + CloudFront + DynamoDB で動作するパーソナルリレーサーバー。
 
-### Paths
-- Steering: `.kiro/steering/`
-- Specs: `.kiro/specs/`
+### アーキテクチャ
 
-### Steering vs Specification
+```
+Client --> CloudFront (SSL) --> EC2 (t4g.micro, port 3000)
+                                  |
+                               axum WebSocket + HTTP (NIP-11)
+                                  |
+                               DynamoDB (nostr_relay_events)
+```
 
-**Steering** (`.kiro/steering/`) - Guide AI with project-wide rules and context
-**Specs** (`.kiro/specs/`) - Formalize development process for individual features
+### ディレクトリ構成
 
-### Active Specifications
-- Check `.kiro/specs/` for active specifications
-- Use `/kiro:spec-status [feature-name]` to check progress
+- `services/relay/` — Rust (axum) リレーサーバー
+- `apps/web/` — Next.js Webフロントエンド (Vercel)
+- `terraform/` — インフラ定義 (EC2, CloudFront, DynamoDB, Route53, S3)
+- `nips/` — Nostrプロトコル仕様 (submodule)
+- `RELAY_NIPS.md` — Relay実装に関連するNIPの要約
 
-## Development Guidelines
-- Think in English, generate responses in Japanese. All Markdown content written to project files (e.g., requirements.md, design.md, tasks.md, research.md, validation reports) MUST be written in the target language configured for this specification (see spec.json.language).
+### インフラ
 
-## Minimal Workflow
-- Phase 0 (optional): `/kiro:steering`, `/kiro:steering-custom`
-- Phase 1 (Specification):
-  - `/kiro:spec-init "description"`
-  - `/kiro:spec-requirements {feature}`
-  - `/kiro:validate-gap {feature}` (optional: for existing codebase)
-  - `/kiro:spec-design {feature} [-y]`
-  - `/kiro:validate-design {feature}` (optional: design review)
-  - `/kiro:spec-tasks {feature} [-y]`
-- Phase 2 (Implementation): `/kiro:spec-impl {feature} [tasks]`
-  - `/kiro:validate-impl {feature}` (optional: after implementation)
-- Progress check: `/kiro:spec-status {feature}` (use anytime)
+- **AWS Account**: `426192960050`, profile: `nostr-relay`
+- **EC2**: `i-0d0e9aa2b1922fa21` (t4g.micro, AL2023, ARM64)
+- **EIP**: `18.182.116.56`
+- **CloudFront**: `E1AMD7PAPLY003`
+- **Domain**: `relay.nostr.nisshiee.org`
+- **DynamoDB**: `nostr_relay_events` (provisioned RCU=5, WCU=5)
+- **S3**: `nostr-relay-binary-426192960050` (バイナリ配布)
+- **SSM Document**: `nostr-relay-ec2-relay-v2-update-binary`
+- **Frontend**: `nostr.nisshiee.org` (Vercel)
 
-## Development Rules
-- 3-phase approval workflow: Requirements → Design → Tasks → Implementation
-- Human review required each phase; use `-y` only for intentional fast-track
-- Keep steering current and verify alignment with `/kiro:spec-status`
-- Follow the user's instructions precisely, and within that scope act autonomously: gather the necessary context and complete the requested work end-to-end in this run, asking questions only when essential information is missing or the instructions are critically ambiguous.
+## コーディング規約
+
 - Rustコード修正後は必ず `cargo clippy --all-targets --all-features` を実行し、警告がなくなるまで修正すること
 - `cargo test` も合わせて実行し、テストがパスすることを確認すること
 - コードのコメント（`///` ドキュメントコメント、`//` 通常コメント）は日本語で記述すること
 - コミットメッセージは日本語で記述すること
 - Pull Requestのタイトル・本文は日本語で記述すること
-- Lambda関数は必ずARM64アーキテクチャでビルド (`cargo lambda build --release --arm64`)
-- Terraformで新規Lambda関数を作成する際は必ず `architectures = ["arm64"]` を指定すること
 
-## Steering Configuration
-- Load entire `.kiro/steering/` as project memory
-- Default files: `product.md`, `tech.md`, `structure.md`
-- Custom files are supported (managed via `/kiro:steering-custom`)
+### Rust コーディング規約
+
+- **モジュール構成**: `store/mod.rs` 方式ではなく `store.rs` + `store/` ディレクトリ方式を使うこと（Rust 2018+ スタイル）
+  - ✅ `src/store.rs` + `src/store/in_memory.rs` + `src/store/dynamo.rs`
+  - ❌ `src/store/mod.rs` + `src/store/in_memory.rs` + `src/store/dynamo.rs`
+
+## ビルド・デプロイ
+
+### リレーサーバー (ARM64 for EC2)
+
+```bash
+# ローカルビルド（Mac → Linux ARM64 クロスコンパイル）
+cd services/relay
+ulimit -n 10240  # macOSのFD制限回避
+cargo zigbuild --release --target aarch64-unknown-linux-gnu -j 1
+
+# デプロイ（S3経由 + SSM Document）
+aws-vault exec nostr-relay -- aws s3 cp \
+  target/aarch64-unknown-linux-gnu/release/relay \
+  s3://nostr-relay-binary-426192960050/relay-v2/relay
+
+aws-vault exec nostr-relay -- aws ssm send-command \
+  --document-name nostr-relay-ec2-relay-v2-update-binary \
+  --targets "Key=tag:Name,Values=nostr-relay-ec2-relay-v2"
+```
+
+### Webフロントエンド
+
+```bash
+cd apps/web && npm run dev
+```
+
+### Terraform
+
+```bash
+cd terraform
+aws-vault exec nostr-relay -- terraform plan
+aws-vault exec nostr-relay -- terraform apply
+```
+
+## プロトコル参照
+
+Nostrプロトコル仕様は `nips/` サブモジュール（公式リポジトリ）を参照。
+Relay実装に関連するNIPの要約は `RELAY_NIPS.md` に記載。
