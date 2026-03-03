@@ -56,7 +56,7 @@ Client --> CloudFront (SSL) --> EC2 (t4g.micro, port 3000)
 # ローカルビルド（Mac → Linux ARM64 クロスコンパイル）
 cd services/relay
 ulimit -n 10240  # macOSのFD制限回避
-cargo zigbuild --release --target aarch64-unknown-linux-gnu -j 1
+cargo zigbuild --release --target aarch64-unknown-linux-gnu --features dynamo -j 1
 
 # デプロイ（S3経由 + SSM Document）
 aws-vault exec nostr-relay -- aws s3 cp \
