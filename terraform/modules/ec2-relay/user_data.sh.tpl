@@ -22,7 +22,7 @@ echo "User Data script started at $(date)"
 # パッケージインストール
 # ------------------------------------------------------------------------------
 echo "Installing packages..."
-apk add --no-cache aws-cli doas logrotate
+apk add --no-cache aws-cli doas logrotate curl
 
 # ------------------------------------------------------------------------------
 # 専用ユーザーの作成
@@ -81,8 +81,8 @@ set -eu
 echo "=== Deploy started at $(date) ==="
 
 # IMDSv2からリージョンを取得
-TOKEN=$(wget -q -O - --header "X-aws-ec2-metadata-token-ttl-seconds: 21600" --method PUT http://169.254.169.254/latest/api/token)
-REGION=$(wget -q -O - --header "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" http://169.254.169.254/latest/api/token)
+REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 export AWS_DEFAULT_REGION="$REGION"
 
 echo "Deploying binary..."
@@ -198,8 +198,8 @@ rc-service crond start 2>/dev/null || true
 echo "Starting initial deployment from S3..."
 
 # IMDSv2からリージョンを取得
-TOKEN=$(wget -q -O - --header "X-aws-ec2-metadata-token-ttl-seconds: 21600" --method PUT http://169.254.169.254/latest/api/token)
-REGION=$(wget -q -O - --header "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+TOKEN=$(curl -s -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" http://169.254.169.254/latest/api/token)
+REGION=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
 export AWS_DEFAULT_REGION="$REGION"
 
 echo "Detected region: $REGION"
