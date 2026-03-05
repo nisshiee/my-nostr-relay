@@ -22,7 +22,7 @@ echo "User Data script started at $(date)"
 # パッケージインストール
 # ------------------------------------------------------------------------------
 echo "Installing packages..."
-apk add --no-cache aws-cli doas
+apk add --no-cache aws-cli doas logrotate
 
 # ------------------------------------------------------------------------------
 # 専用ユーザーの作成
@@ -169,6 +169,28 @@ chmod 755 /etc/init.d/nostr-relay-v2
 # ブート時自動起動を有効化
 echo "Enabling service..."
 rc-update add nostr-relay-v2 default
+
+# ------------------------------------------------------------------------------
+# ログローテーション設定
+# ------------------------------------------------------------------------------
+echo "Configuring log rotation..."
+cat > /etc/logrotate.d/nostr-relay-v2 <<'LOGROTATEEOF'
+/var/log/nostr-relay-v2.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    size 10M
+}
+LOGROTATEEOF
+
+# logrotateのcron設定（Alpineではデフォルトで /etc/periodic/daily/ にある）
+# 念のため確認・有効化
+rc-update add crond default 2>/dev/null || true
+rc-service crond start 2>/dev/null || true
 
 # ------------------------------------------------------------------------------
 # 初回デプロイ: S3からバイナリとenvファイルを取得
