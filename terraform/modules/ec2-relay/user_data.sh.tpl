@@ -59,6 +59,22 @@ chmod 600 /home/deploy/.ssh/authorized_keys
 chown -R deploy:deploy /home/deploy/.ssh
 
 # ------------------------------------------------------------------------------
+# ope用ユーザーの作成とSSH公開鍵の設定（運用・モニタリング用）
+# ------------------------------------------------------------------------------
+echo "Creating ope user..."
+adduser -D -s /bin/sh ope 2>/dev/null || true
+
+mkdir -p /home/ope/.ssh
+chmod 700 /home/ope/.ssh
+
+cat > /home/ope/.ssh/authorized_keys <<'EOF'
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO1uwotlu88jdU6GmVJx0FDOYhr4RkAxyEe0IweNXh/z ren-ope@nostr-relay
+EOF
+
+chmod 600 /home/ope/.ssh/authorized_keys
+chown -R ope:ope /home/ope/.ssh
+
+# ------------------------------------------------------------------------------
 # SSH強化設定
 # ------------------------------------------------------------------------------
 echo "Hardening SSH configuration..."
@@ -111,6 +127,13 @@ cat > /etc/doas.d/deploy.conf <<'EOF'
 # deployユーザーにデプロイスクリプトの実行を許可
 permit nopass deploy cmd /usr/local/bin/nostr-relay-deploy.sh
 EOF
+
+cat > /etc/doas.d/ope.conf <<'EOF'
+# opeユーザーにフルアクセスを許可（運用・モニタリング用）
+permit nopass ope
+EOF
+
+chmod 600 /etc/doas.d/ope.conf
 
 chmod 600 /etc/doas.d/deploy.conf
 
