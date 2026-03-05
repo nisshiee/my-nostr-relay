@@ -154,8 +154,3 @@ output "ec2_relay_binary_bucket" {
   description = "relay-v2バイナリ配布用S3バケット名"
   value       = module.ec2_relay.binary_bucket
 }
-
-output "ec2_relay_ssm_document_name" {
-  description = "relay-v2デプロイ用SSMドキュメント名"
-  value       = module.ec2_relay.ssm_document_name
-}

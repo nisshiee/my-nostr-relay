@@ -75,52 +75,6 @@ resource "aws_iam_role_policy" "s3_access" {
   })
 }
 
-# SSMアクセス用ポリシー
-resource "aws_iam_role_policy" "ssm_access" {
-  name = "ssm-deploy-access"
-  role = aws_iam_role.github_actions_deploy.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        # SSM Documentへのアクセス（特定ドキュメントARNで絞るためタグ条件不要）
-        Effect = "Allow"
-        Action = [
-          "ssm:SendCommand"
-        ]
-        Resource = [
-          "arn:aws:ssm:ap-northeast-1:426192960050:document/nostr-relay-ec2-relay-v2-deploy",
-        ]
-      },
-      {
-        # EC2インスタンスへのアクセス（タグで対象を限定）
-        Effect = "Allow"
-        Action = [
-          "ssm:SendCommand"
-        ]
-        Resource = [
-          "arn:aws:ec2:ap-northeast-1:426192960050:instance/*"
-        ]
-        Condition = {
-          StringEquals = {
-            "ssm:resourceTag/Name" = "nostr-relay-ec2-relay-v2"
-          }
-        }
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:GetCommandInvocation",
-          "ssm:ListCommandInvocations",
-          "ssm:DescribeInstanceInformation"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 output "github_actions_role_arn" {
   description = "GitHub Actions用IAMロールのARN"
   value       = aws_iam_role.github_actions_deploy.arn
