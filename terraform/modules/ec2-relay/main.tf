@@ -48,6 +48,12 @@ variable "binary_key" {
   default     = "relay-v2/relay"
 }
 
+variable "alpine_ami_id" {
+  description = "Alpine Linux AMI ID (aarch64 UEFI)"
+  type        = string
+  default     = "ami-031de6eae288436c6" # Alpine 3.23.3 aarch64 uefi tiny (ap-northeast-1)
+}
+
 # ------------------------------------------------------------------------------
 # Data Sources
 # ------------------------------------------------------------------------------
@@ -67,25 +73,6 @@ data "aws_subnets" "public" {
   filter {
     name   = "map-public-ip-on-launch"
     values = ["true"]
-  }
-}
-
-# Amazon Linux 2023 AMI（ARM64）
-data "aws_ami" "amazon_linux_2023" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = ["al2023-ami-*-kernel-*-arm64"]
-  }
-  filter {
-    name   = "architecture"
-    values = ["arm64"]
-  }
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
   }
 }
 
@@ -114,7 +101,16 @@ resource "aws_security_group" "relay" {
     prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
   }
 
-  # アウトバウンドは全許可（DynamoDB, SSM, S3通信用）
+  # SSH: GitHub Actionsからのデプロイ用（鍵認証で保護）
+  ingress {
+    description = "SSH for deployment"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # アウトバウンドは全許可（DynamoDB, S3通信用）
   egress {
     description = "Allow all outbound traffic"
     from_port   = 0
@@ -151,13 +147,7 @@ resource "aws_iam_role" "relay" {
   }
 }
 
-# SSM用マネージドポリシー
-resource "aws_iam_role_policy_attachment" "relay_ssm" {
-  role       = aws_iam_role.relay.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-# DynamoDB + S3 + SSMアクセス用カスタムポリシー
+# DynamoDB + S3アクセス用カスタムポリシー
 resource "aws_iam_role_policy" "relay_custom" {
   name = "nostr-relay-ec2-relay-v2-custom"
   role = aws_iam_role.relay.id
@@ -205,12 +195,12 @@ resource "aws_iam_instance_profile" "relay" {
 # ------------------------------------------------------------------------------
 # EC2インスタンス
 #
-# t4g.micro: ARM64 (Graviton2)、2 vCPU、1GB RAM
+# t4g.nano: ARM64 (Graviton2)、2 vCPU、512MB RAM
 # ------------------------------------------------------------------------------
 
 resource "aws_instance" "relay" {
-  ami           = data.aws_ami.amazon_linux_2023.id
-  instance_type = "t4g.micro"
+  ami           = var.alpine_ami_id
+  instance_type = "t4g.nano"
 
   subnet_id              = tolist(data.aws_subnets.public.ids)[0]
   vpc_security_group_ids = [aws_security_group.relay.id]
@@ -219,7 +209,7 @@ resource "aws_instance" "relay" {
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = 30
+    volume_size           = 2
     delete_on_termination = true
     encrypted             = true
 
