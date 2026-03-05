@@ -205,6 +205,7 @@ resource "aws_instance" "relay" {
   subnet_id              = tolist(data.aws_subnets.public.ids)[0]
   vpc_security_group_ids = [aws_security_group.relay.id]
   iam_instance_profile   = aws_iam_instance_profile.relay.name
+  key_name               = "tmp"  # デバッグ用（SSH問題解決後に削除）
   ebs_optimized          = true
 
   root_block_device {
