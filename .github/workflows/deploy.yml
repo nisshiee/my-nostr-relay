@@ -53,51 +53,14 @@ jobs:
           aws s3 cp deploy/relay-v2.env \
             s3://nostr-relay-binary-426192960050/relay-v2/env
 
-      - name: Execute deployment via SSM
+      - name: SSH秘密鍵の設定
         run: |
-          echo "Starting deployment..."
-          COMMAND_ID=$(aws ssm send-command \
-            --document-name nostr-relay-ec2-relay-v2-deploy \
-            --targets "Key=tag:Name,Values=nostr-relay-ec2-relay-v2" \
-            --query 'Command.CommandId' \
-            --output text)
-          
-          echo "Command ID: $COMMAND_ID"
-          echo "Waiting for command to complete..."
-          
-          aws ssm wait command-executed \
-            --command-id "$COMMAND_ID" \
-            --instance-id $(aws ssm describe-instance-information \
-              --filters "Key=tag:Name,Values=nostr-relay-ec2-relay-v2" \
-              --query 'InstanceInformationList[0].InstanceId' \
-              --output text)
-          
-          echo "Getting command result..."
-          INSTANCE_ID=$(aws ssm describe-instance-information \
-            --filters "Key=tag:Name,Values=nostr-relay-ec2-relay-v2" \
-            --query 'InstanceInformationList[0].InstanceId' \
-            --output text)
-          
-          RESULT=$(aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$INSTANCE_ID")
-          
-          STATUS=$(echo "$RESULT" | jq -r '.Status')
-          STDOUT=$(echo "$RESULT" | jq -r '.StandardOutputContent')
-          STDERR=$(echo "$RESULT" | jq -r '.StandardErrorContent')
-          
-          echo "Deployment Status: $STATUS"
-          echo "--- Standard Output ---"
-          echo "$STDOUT"
-          
-          if [ -n "$STDERR" ]; then
-            echo "--- Standard Error ---"
-            echo "$STDERR"
-          fi
-          
-          if [ "$STATUS" != "Success" ]; then
-            echo "Deployment failed!"
-            exit 1
-          fi
-          
-          echo "Deployment completed successfully!"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: SSH経由でデプロイ
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new deploy@${{ secrets.EC2_HOST }} \
+            'doas /usr/local/bin/nostr-relay-deploy.sh'
