@@ -166,6 +166,10 @@ INITEOF
 
 chmod 755 /etc/init.d/nostr-relay-v2
 
+# ログファイルを事前作成（start-stop-daemonがnostr-relayユーザーで書き込めるように）
+touch /var/log/nostr-relay-v2.log
+chown nostr-relay:nostr-relay /var/log/nostr-relay-v2.log
+
 # ブート時自動起動を有効化
 echo "Enabling service..."
 rc-update add nostr-relay-v2 default
