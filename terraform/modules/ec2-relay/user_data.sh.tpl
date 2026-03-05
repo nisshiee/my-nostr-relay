@@ -47,6 +47,7 @@ chmod 700 /etc/nostr-relay-v2
 # ------------------------------------------------------------------------------
 echo "Creating deploy user..."
 adduser -D -s /bin/sh deploy 2>/dev/null || true
+passwd -u deploy
 
 mkdir -p /home/deploy/.ssh
 chmod 700 /home/deploy/.ssh
@@ -63,6 +64,7 @@ chown -R deploy:deploy /home/deploy/.ssh
 # ------------------------------------------------------------------------------
 echo "Creating ope user..."
 adduser -D -s /bin/sh ope 2>/dev/null || true
+passwd -u ope
 
 mkdir -p /home/ope/.ssh
 chmod 700 /home/ope/.ssh
