@@ -22,6 +22,11 @@ impl OwnerPriority {
         }
     }
 
+    /// フォロー先の数を返す
+    pub fn follows_count(&self) -> usize {
+        self.follows.len()
+    }
+
     /// イベントを保持すべきかどうかを判定する
     ///
     /// - owner_pubkeyがNone → created_at >= cutoff_ts で判定

@@ -7,6 +7,7 @@ use aws_sdk_dynamodb::types::{AttributeValue, ReturnConsumedCapacity};
 use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::models::{Event, EventId, Filter, VerifiedEvent};
+use crate::owner_priority::OwnerPriority;
 use super::{DeleteResult, EventStore, InMemoryEventStore, SaveResult, StoreError};
 
 /// DynamoDB対応のイベントストア
@@ -21,6 +22,8 @@ pub struct DynamoEventStore {
     gsi_pk_kind_name: String,
     /// GSI名: pk_kind_d (Addressable用)
     gsi_pk_kind_d_name: String,
+    /// オーナー優先度によるイベント保持判定
+    owner_priority: OwnerPriority,
 }
 
 impl DynamoEventStore {
@@ -38,12 +41,22 @@ impl DynamoEventStore {
         let gsi_pk_kind_d_name = std::env::var("DYNAMODB_GSI_PK_KIND_D")
             .unwrap_or_else(|_| "GSI-PkKindD".to_string());
         
+        // オーナーpubkeyを環境変数から取得（未設定でも動作可能）
+        let owner_pubkey = std::env::var("RELAY_PUBKEY").ok();
+        let mut owner_priority = OwnerPriority::new(owner_pubkey);
+        
+        // DynamoDBからオーナーのフォローリストをロード
+        owner_priority.load_follows_from_dynamo(&client, &table_name, &gsi_pk_kind_name).await?;
+        let follows_count = owner_priority.follows_count();
+        info!(follows_count, "オーナーのフォローリストをロード完了");
+        
         let store = Self {
             inner,
             client,
             table_name,
             gsi_pk_kind_name,
             gsi_pk_kind_d_name,
+            owner_priority,
         };
         
         Ok(store)
@@ -58,6 +71,7 @@ impl DynamoEventStore {
             table_name,
             gsi_pk_kind_name: "GSI-PkKind".to_string(),
             gsi_pk_kind_d_name: "GSI-PkKindD".to_string(),
+            owner_priority: OwnerPriority::new(None),
         }
     }
 
@@ -99,15 +113,14 @@ impl DynamoEventStore {
         // プロビジョンドRCUを取得してディレイ計算に使用
         let provisioned_rcu = self.get_provisioned_rcu().await?;
         info!(
-            "DynamoDBから直近{}日のイベントをロード中 (cutoff: {}, provisioned_rcu: {})",
+            "DynamoDBからイベントをロード中（オーナー/フォロー先は全期間、その他は直近{}日） (cutoff: {}, provisioned_rcu: {})",
             retention_days, cutoff_ts, provisioned_rcu
         );
         
+        // 全件Scanし、アプリ側でowner_priorityによるフィルタリングを行う
         let scan_input = self.client
             .scan()
             .table_name(&self.table_name)
-            .filter_expression("created_at >= :cutoff")
-            .expression_attribute_values(":cutoff", AttributeValue::N(cutoff_ts.to_string()))
             .select(aws_sdk_dynamodb::types::Select::AllAttributes)
             .return_consumed_capacity(ReturnConsumedCapacity::Total);
 
@@ -140,6 +153,14 @@ impl DynamoEventStore {
             if let Some(items) = result.items {
                 for item in items {
                     if let Ok(event) = self.parse_dynamo_item(item) {
+                        // オーナー優先度による保持判定
+                        if !self.owner_priority.should_retain(
+                            &event.pubkey.to_hex(),
+                            event.created_at.as_i64(),
+                            cutoff_ts as i64,
+                        ) {
+                            continue;
+                        }
                         if let Ok(verified) = event.verify() {
                             if let Ok(save_result) = self.inner.save(&verified).await {
                                 if matches!(save_result, SaveResult::Saved | SaveResult::Replaced) {
