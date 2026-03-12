@@ -1,0 +1,29 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['services/relay/**']
+  pull_request:
+    paths: ['services/relay/**']
+
+jobs:
+  rust-ci:
+    runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: services/relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: services/relay
+      - name: フォーマットチェック
+        run: cargo fmt -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: テスト
+        run: cargo test
