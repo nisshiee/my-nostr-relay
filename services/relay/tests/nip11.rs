@@ -57,12 +57,15 @@ async fn handler(
             let conn_id = uuid::Uuid::now_v7().to_string();
             let relay = state.relay.clone();
             let limitation = state.limitation.clone();
+            let owner_priority =
+                std::sync::Arc::new(relay::owner_priority::OwnerPriority::new(None));
             ws.on_upgrade(move |socket| {
                 relay::ws::handle_socket(
                     socket,
                     relay,
                     conn_id,
                     limitation,
+                    owner_priority,
                     tokio_util::sync::CancellationToken::new(),
                 )
             })

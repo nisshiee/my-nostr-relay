@@ -11,6 +11,7 @@ use tracing::{debug, error, info, instrument, trace, warn};
 
 use crate::config::LimitationConfig;
 use crate::models::{ClientMessage, Event, Filter, RelayMessage, SubscriptionId};
+use crate::owner_priority::OwnerPriority;
 use crate::relay::Relay;
 use crate::store::EventStore;
 use crate::store::SaveResult;
@@ -145,12 +146,13 @@ fn ping_interval() -> std::time::Duration {
 }
 
 /// WebSocket 接続を処理
-#[instrument(skip(socket, relay, limitation, shutdown), fields(connection_id = %conn_id))]
+#[instrument(skip(socket, relay, limitation, _owner_priority, shutdown), fields(connection_id = %conn_id))]
 pub async fn handle_socket<S: EventStore + 'static>(
     socket: WebSocket,
     relay: Arc<Relay<S>>,
     conn_id: String,
     limitation: Arc<LimitationConfig>,
+    _owner_priority: Arc<OwnerPriority>,
     shutdown: CancellationToken,
 ) {
     info!("WebSocket接続を確立");

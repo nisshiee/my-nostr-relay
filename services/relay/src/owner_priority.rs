@@ -27,6 +27,14 @@ impl OwnerPriority {
         self.follows.len()
     }
 
+    /// 指定されたpubkeyがオーナーかどうかを判定する
+    ///
+    /// - `owner_pubkey` が `Some` でかつ `pubkey` と一致すれば `true`
+    /// - `owner_pubkey` が `None` の場合は `false`
+    pub fn is_owner(&self, pubkey: &str) -> bool {
+        self.owner_pubkey.as_deref() == Some(pubkey)
+    }
+
     /// イベントを保持すべきかどうかを判定する
     ///
     /// - owner_pubkeyがNone → created_at >= cutoff_ts で判定
@@ -174,6 +182,27 @@ mod tests {
         // それ以外のイベントはcutoff以降は保持
         let op = create_with_follows();
         assert!(op.should_retain(OTHER_PK, CUTOFF + 500, CUTOFF));
+    }
+
+    #[test]
+    fn test_is_owner_match() {
+        // オーナー本人ならtrue
+        let op = OwnerPriority::new(Some(OWNER_PK.to_string()));
+        assert!(op.is_owner(OWNER_PK));
+    }
+
+    #[test]
+    fn test_is_owner_non_owner() {
+        // オーナー以外ならfalse
+        let op = OwnerPriority::new(Some(OWNER_PK.to_string()));
+        assert!(!op.is_owner(OTHER_PK));
+    }
+
+    #[test]
+    fn test_is_owner_none() {
+        // owner_pubkeyがNoneならfalse
+        let op = OwnerPriority::new(None);
+        assert!(!op.is_owner(OWNER_PK));
     }
 
     #[test]

@@ -13,7 +13,10 @@ mod in_memory;
 pub use dynamo::DynamoEventStore;
 pub use in_memory::InMemoryEventStore;
 
+use std::sync::Arc;
+
 use crate::models::{Event, Filter, VerifiedEvent};
+use crate::owner_priority::OwnerPriority;
 
 #[cfg(feature = "dynamo")]
 use tracing::debug;
@@ -74,19 +77,25 @@ pub type AppEventStore = DynamoEventStore;
 pub type AppEventStore = InMemoryEventStore;
 
 /// EventStoreのファクトリ関数（feature flagによる切り替え）
-pub async fn create_event_store() -> Result<AppEventStore, StoreError> {
+///
+/// ストアとオーナー優先度のペアを返す。
+/// オーナー優先度はWebSocketハンドラでcreated_atバリデーションの免除判定に使用する。
+pub async fn create_event_store() -> Result<(AppEventStore, Arc<OwnerPriority>), StoreError> {
     #[cfg(feature = "dynamo")]
     {
         let table_name = std::env::var("DYNAMODB_TABLE_NAME")
             .unwrap_or_else(|_| "nostr_relay_events".to_string());
 
         debug!("DynamoEventStoreを初期化中 (table: {})", table_name);
-        DynamoEventStore::new(table_name).await
+        let store = DynamoEventStore::new(table_name).await?;
+        let owner_priority = store.owner_priority();
+        Ok((store, owner_priority))
     }
 
     #[cfg(not(feature = "dynamo"))]
     {
         debug!("InMemoryEventStoreを初期化中");
-        Ok(InMemoryEventStore::new())
+        let owner_priority = Arc::new(OwnerPriority::new(std::env::var("RELAY_PUBKEY").ok()));
+        Ok((InMemoryEventStore::new(), owner_priority))
     }
 }

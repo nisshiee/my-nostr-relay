@@ -1,6 +1,7 @@
 //! DynamoDB永続化イベントストア（本番用）
 
 use std::collections::HashMap as AwsHashMap;
+use std::sync::Arc;
 
 use aws_sdk_dynamodb::Client as DynamoClient;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnConsumedCapacity};
@@ -23,7 +24,7 @@ pub struct DynamoEventStore {
     /// GSI名: pk_kind_d (Addressable用)
     gsi_pk_kind_d_name: String,
     /// オーナー優先度によるイベント保持判定
-    owner_priority: OwnerPriority,
+    owner_priority: Arc<OwnerPriority>,
 }
 
 impl DynamoEventStore {
@@ -52,6 +53,8 @@ impl DynamoEventStore {
         let follows_count = owner_priority.follows_count();
         info!(follows_count, "オーナーのフォローリストをロード完了");
 
+        let owner_priority = Arc::new(owner_priority);
+
         let store = Self {
             inner,
             client,
@@ -73,8 +76,13 @@ impl DynamoEventStore {
             table_name,
             gsi_pk_kind_name: "GSI-PkKind".to_string(),
             gsi_pk_kind_d_name: "GSI-PkKindD".to_string(),
-            owner_priority: OwnerPriority::new(None),
+            owner_priority: Arc::new(OwnerPriority::new(None)),
         }
+    }
+
+    /// オーナー優先度を取得する
+    pub fn owner_priority(&self) -> Arc<OwnerPriority> {
+        Arc::clone(&self.owner_priority)
     }
 
     /// テーブルのプロビジョンドRCUを取得
