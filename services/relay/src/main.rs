@@ -131,7 +131,11 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             info!("DynamoDBからのイベントロードをバックグラウンドで開始");
             let created_at_lower_limit = limitation_clone.created_at_lower_limit;
-            match relay_clone.store().load_recent_events(created_at_lower_limit).await {
+            match relay_clone
+                .store()
+                .load_recent_events(created_at_lower_limit)
+                .await
+            {
                 Ok(()) => info!("DynamoDBからのイベントロードが完了"),
                 Err(e) => error!(error = %e, "DynamoDBからのイベントロードに失敗"),
             }

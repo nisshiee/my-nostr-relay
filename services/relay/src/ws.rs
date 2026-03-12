@@ -662,7 +662,10 @@ mod tests {
         // 1年前のイベント（通常なら拒否される）
         let event = crate::test_helpers::create_custom_event(1, 1000000, "old event", vec![]);
         let result = check_created_at(&event, &limitation, &owner_priority);
-        assert!(result.is_none(), "オーナーのイベントは過去制限をバイパスすべき");
+        assert!(
+            result.is_none(),
+            "オーナーのイベントは過去制限をバイパスすべき"
+        );
     }
 
     #[test]
