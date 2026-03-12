@@ -72,33 +72,41 @@ fn check_content_length(event: &Event, limitation: &LimitationConfig) -> Option<
 }
 
 /// イベントのcreated_atを検証する。範囲外の場合は拒否メッセージを返す。
-fn check_created_at(event: &Event, limitation: &LimitationConfig) -> Option<RelayMessage> {
+/// オーナー本人のイベントには過去制限（lower_limit）を適用しない。
+/// 未来制限（upper_limit）は全員に適用する。
+fn check_created_at(
+    event: &Event,
+    limitation: &LimitationConfig,
+    owner_priority: &OwnerPriority,
+) -> Option<RelayMessage> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
     let event_ts = event.created_at.as_i64();
 
-    // 過去制限
-    let lower_bound = now.saturating_sub(limitation.created_at_lower_limit);
-    if event_ts < lower_bound as i64 {
-        warn!(
-            event_id = %event.id,
-            created_at = event_ts,
-            lower_bound = lower_bound,
-            "created_atが古すぎる"
-        );
-        return Some(RelayMessage::Ok {
-            event_id: event.id,
-            success: false,
-            message: format!(
-                "invalid: event is too old (created_at_lower_limit: {}s)",
-                limitation.created_at_lower_limit
-            ),
-        });
+    // 過去制限（オーナー本人はスキップ）
+    if !owner_priority.is_owner(&event.pubkey.to_hex()) {
+        let lower_bound = now.saturating_sub(limitation.created_at_lower_limit);
+        if event_ts < lower_bound as i64 {
+            warn!(
+                event_id = %event.id,
+                created_at = event_ts,
+                lower_bound = lower_bound,
+                "created_atが古すぎる"
+            );
+            return Some(RelayMessage::Ok {
+                event_id: event.id,
+                success: false,
+                message: format!(
+                    "invalid: event is too old (created_at_lower_limit: {}s)",
+                    limitation.created_at_lower_limit
+                ),
+            });
+        }
     }
 
-    // 未来制限
+    // 未来制限（全員に適用）
     let upper_bound = now.saturating_add(limitation.created_at_upper_limit);
     if event_ts > upper_bound as i64 {
         warn!(
@@ -146,13 +154,13 @@ fn ping_interval() -> std::time::Duration {
 }
 
 /// WebSocket 接続を処理
-#[instrument(skip(socket, relay, limitation, _owner_priority, shutdown), fields(connection_id = %conn_id))]
+#[instrument(skip(socket, relay, limitation, owner_priority, shutdown), fields(connection_id = %conn_id))]
 pub async fn handle_socket<S: EventStore + 'static>(
     socket: WebSocket,
     relay: Arc<Relay<S>>,
     conn_id: String,
     limitation: Arc<LimitationConfig>,
-    _owner_priority: Arc<OwnerPriority>,
+    owner_priority: Arc<OwnerPriority>,
     shutdown: CancellationToken,
 ) {
     info!("WebSocket接続を確立");
@@ -283,7 +291,7 @@ pub async fn handle_socket<S: EventStore + 'static>(
                         }
 
                         // 制限値チェック: created_at（過去・未来）
-                        if let Some(reject) = check_created_at(&event, &limitation) {
+                        if let Some(reject) = check_created_at(&event, &limitation, &owner_priority) {
                             if send_message(&mut ws_tx, &reject).await.is_err() {
                                 return;
                             }
@@ -633,6 +641,66 @@ mod tests {
         state.subscriptions.insert(sub_id.clone(), filters);
         state.subscriptions.remove(&sub_id);
         assert!(!state.subscriptions.contains_key(&sub_id));
+    }
+
+    /// テスト用のデフォルトキーペアからpubkey（hex文字列）を取得するヘルパー
+    fn default_test_pubkey() -> String {
+        let event = crate::test_helpers::create_test_event();
+        event.pubkey.to_hex()
+    }
+
+    #[test]
+    fn test_check_created_at_owner_bypass_lower_limit() {
+        // オーナーのイベントは古くても過去制限で拒否されない
+        let owner_pubkey = default_test_pubkey();
+        let owner_priority = OwnerPriority::new(Some(owner_pubkey));
+        let limitation = LimitationConfig {
+            created_at_lower_limit: 3600, // 1時間前まで
+            created_at_upper_limit: 600,
+            ..Default::default()
+        };
+        // 1年前のイベント（通常なら拒否される）
+        let event = crate::test_helpers::create_custom_event(1, 1000000, "old event", vec![]);
+        let result = check_created_at(&event, &limitation, &owner_priority);
+        assert!(result.is_none(), "オーナーのイベントは過去制限をバイパスすべき");
+    }
+
+    #[test]
+    fn test_check_created_at_owner_still_has_upper_limit() {
+        // オーナーでも未来制限は適用される
+        let owner_pubkey = default_test_pubkey();
+        let owner_priority = OwnerPriority::new(Some(owner_pubkey));
+        let limitation = LimitationConfig {
+            created_at_lower_limit: 3600,
+            created_at_upper_limit: 600, // 未来10分まで
+            ..Default::default()
+        };
+        // 遠い未来のイベント
+        let far_future_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+            + 10000;
+        let event =
+            crate::test_helpers::create_custom_event(1, far_future_ts, "future event", vec![]);
+        let result = check_created_at(&event, &limitation, &owner_priority);
+        assert!(result.is_some(), "オーナーでも未来制限は適用されるべき");
+    }
+
+    #[test]
+    fn test_check_created_at_non_owner_unchanged() {
+        // 非オーナーは従来通り過去制限が適用される
+        let owner_priority = OwnerPriority::new(Some("different_owner_pubkey".to_string()));
+        let limitation = LimitationConfig {
+            created_at_lower_limit: 3600, // 1時間前まで
+            created_at_upper_limit: 600,
+            ..Default::default()
+        };
+        // 1年前のイベント（非オーナーなので拒否される）
+        let event =
+            crate::test_helpers::create_custom_event(1, 1000000, "old non-owner event", vec![]);
+        let result = check_created_at(&event, &limitation, &owner_priority);
+        assert!(result.is_some(), "非オーナーは過去制限で拒否されるべき");
     }
 
     #[test]
