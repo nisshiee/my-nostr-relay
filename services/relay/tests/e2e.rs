@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::{SinkExt, StreamExt};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::net::TcpListener;
 use tokio::time::timeout;
@@ -22,22 +22,25 @@ async fn start_relay_with_config(limitation: relay::config::LimitationConfig) ->
     let relay_instance = Arc::new(relay::relay::Relay::new(store));
     let limitation = Arc::new(limitation);
 
-    let app = axum::Router::new()
-        .route(
-            "/",
-            axum::routing::get(
-                move |ws: axum::extract::ws::WebSocketUpgrade| {
-                    let relay_clone = relay_instance.clone();
-                    let lim_clone = limitation.clone();
-                    async move {
-                        let conn_id = uuid::Uuid::now_v7().to_string();
-                        ws.on_upgrade(move |socket| {
-                            relay::ws::handle_socket(socket, relay_clone, conn_id, lim_clone, tokio_util::sync::CancellationToken::new())
-                        })
-                    }
-                },
-            ),
-        );
+    let app = axum::Router::new().route(
+        "/",
+        axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+            let relay_clone = relay_instance.clone();
+            let lim_clone = limitation.clone();
+            async move {
+                let conn_id = uuid::Uuid::now_v7().to_string();
+                ws.on_upgrade(move |socket| {
+                    relay::ws::handle_socket(
+                        socket,
+                        relay_clone,
+                        conn_id,
+                        lim_clone,
+                        tokio_util::sync::CancellationToken::new(),
+                    )
+                })
+            }
+        }),
+    );
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -52,8 +55,7 @@ async fn start_relay_with_config(limitation: relay::config::LimitationConfig) ->
 /// テスト用の有効なNostrイベントを生成
 fn make_test_event(content: &str, kind: u64) -> Value {
     let secret_key_bytes =
-        hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
-            .unwrap();
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
     let secp = secp256k1::Secp256k1::new();
     let secret_key =
         secp256k1::SecretKey::from_byte_array(secret_key_bytes.try_into().unwrap()).unwrap();
@@ -189,9 +191,7 @@ async fn test_close_stops_broadcast() {
 
     // B: イベント送信
     let event = make_test_event("after close", 1);
-    tx_b.send(text_msg(&json!(["EVENT", event])))
-        .await
-        .unwrap();
+    tx_b.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
     let _ = recv_msg(&mut rx_b, 3000).await; // BのOK
 
     // A: broadcastが届かないことを確認
@@ -226,10 +226,7 @@ async fn test_self_broadcast() {
 
     // 自分自身へのbroadcast
     let broadcast = recv_msg(&mut rx, 5000).await;
-    assert!(
-        broadcast.is_some(),
-        "❌ 自分自身へのbroadcastが届かない！"
-    );
+    assert!(broadcast.is_some(), "❌ 自分自身へのbroadcastが届かない！");
     let broadcast = broadcast.unwrap();
     assert_eq!(broadcast[0], "EVENT");
     assert_eq!(broadcast[1], "self");
@@ -305,16 +302,23 @@ async fn test_req_overwrite_subscription() {
 
     // B: kind=1のイベント送信
     let event1 = make_test_event("kind1 event", 1);
-    tx_b.send(text_msg(&json!(["EVENT", event1]))).await.unwrap();
+    tx_b.send(text_msg(&json!(["EVENT", event1])))
+        .await
+        .unwrap();
     let _ = recv_msg(&mut rx_b, 3000).await;
 
     // A: kind=1のbroadcastは届かないはず
     let maybe = recv_msg(&mut rx_a, 1000).await;
-    assert!(maybe.is_none(), "上書き後にkind=1のbroadcastが届いてしまった");
+    assert!(
+        maybe.is_none(),
+        "上書き後にkind=1のbroadcastが届いてしまった"
+    );
 
     // B: kind=2のイベント送信
     let event2 = make_test_event("kind2 event", 2);
-    tx_b.send(text_msg(&json!(["EVENT", event2]))).await.unwrap();
+    tx_b.send(text_msg(&json!(["EVENT", event2])))
+        .await
+        .unwrap();
     let _ = recv_msg(&mut rx_b, 3000).await;
 
     // A: kind=2のbroadcastは届くはず
@@ -338,7 +342,9 @@ async fn test_invalid_json_returns_notice() {
     assert_eq!(resp[0], "NOTICE");
 
     // 不明なメッセージタイプ
-    tx.send(text_msg(&json!(["UNKNOWN", "data"]))).await.unwrap();
+    tx.send(text_msg(&json!(["UNKNOWN", "data"])))
+        .await
+        .unwrap();
     let resp2 = recv_msg(&mut rx, 3000).await.expect("NOTICE応答が来ない");
     assert_eq!(resp2[0], "NOTICE");
 }
@@ -368,7 +374,10 @@ async fn test_duplicate_event_ok_response() {
     assert_eq!(ok2[2], true);
     // NIP-01: duplicate: プレフィックス
     let msg = ok2[3].as_str().unwrap();
-    assert!(msg.starts_with("duplicate:"), "duplicate prefixがない: {msg}");
+    assert!(
+        msg.starts_with("duplicate:"),
+        "duplicate prefixがない: {msg}"
+    );
 }
 
 /// 不正署名のイベントへのOK(false)応答テスト
@@ -419,9 +428,7 @@ async fn test_realtime_broadcast_between_clients() {
 
     // B: イベント送信
     let event = make_test_event("realtime test", 1);
-    tx_b.send(text_msg(&json!(["EVENT", event])))
-        .await
-        .unwrap();
+    tx_b.send(text_msg(&json!(["EVENT", event]))).await.unwrap();
 
     // B: OK応答
     let ok = recv_msg(&mut rx_b, 3000).await.expect("BのOK応答が来ない");
@@ -494,8 +501,7 @@ async fn test_replaceable_event_returns_latest_only() {
 /// タグ付きテストイベントを作成
 fn make_test_event_with_tags(content: &str, kind: u64, tags: Vec<Vec<&str>>) -> Value {
     let secret_key_bytes =
-        hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
-            .unwrap();
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
     let secp = secp256k1::Secp256k1::new();
     let secret_key =
         secp256k1::SecretKey::from_byte_array(secret_key_bytes.try_into().unwrap()).unwrap();
@@ -530,8 +536,7 @@ fn make_test_event_with_tags(content: &str, kind: u64, tags: Vec<Vec<&str>>) -> 
 /// カスタムcreated_atのテストイベント作成
 fn make_test_event_with_timestamp(content: &str, kind: u64, created_at: u64) -> Value {
     let secret_key_bytes =
-        hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
-            .unwrap();
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
     let secp = secp256k1::Secp256k1::new();
     let secret_key =
         secp256k1::SecretKey::from_byte_array(secret_key_bytes.try_into().unwrap()).unwrap();
@@ -611,7 +616,7 @@ async fn test_limitation_max_event_tags() {
 #[tokio::test]
 async fn test_limitation_max_content_length() {
     let config = relay::config::LimitationConfig {
-        max_content_length: 10, // コンテンツ最大10文字
+        max_content_length: 10,      // コンテンツ最大10文字
         max_message_length: 1048576, // メッセージ長は十分大きく
         ..Default::default()
     };
@@ -662,7 +667,12 @@ async fn test_limitation_max_subscriptions() {
     tx.send(text_msg(&req3)).await.unwrap();
     let resp3 = recv_msg(&mut rx, 2000).await.unwrap();
     assert_eq!(resp3[0], "CLOSED");
-    assert!(resp3[2].as_str().unwrap().contains("too many subscriptions"));
+    assert!(
+        resp3[2]
+            .as_str()
+            .unwrap()
+            .contains("too many subscriptions")
+    );
 }
 
 /// max_filters 制限テスト
@@ -704,7 +714,8 @@ async fn test_limitation_created_at_too_old() {
     let two_hours_ago = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() - 7200;
+        .as_secs()
+        - 7200;
     let event = make_test_event_with_timestamp("old event", 1, two_hours_ago);
     let msg = json!(["EVENT", event]);
     tx.send(text_msg(&msg)).await.unwrap();
@@ -732,7 +743,8 @@ async fn test_limitation_created_at_too_future() {
     let five_min_future = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_secs() + 300;
+        .as_secs()
+        + 300;
     let event = make_test_event_with_timestamp("future event", 1, five_min_future);
     let msg = json!(["EVENT", event]);
     tx.send(text_msg(&msg)).await.unwrap();
@@ -889,8 +901,7 @@ async fn test_limitation_subscription_overwrite_not_counted() {
 /// タグ付き・カスタムcreated_atのテストイベント作成
 fn make_test_event_full(content: &str, kind: u64, created_at: u64, tags: Vec<Vec<&str>>) -> Value {
     let secret_key_bytes =
-        hex::decode("0000000000000000000000000000000000000000000000000000000000000001")
-            .unwrap();
+        hex::decode("0000000000000000000000000000000000000000000000000000000000000001").unwrap();
     let secp = secp256k1::Secp256k1::new();
     let secret_key =
         secp256k1::SecretKey::from_byte_array(secret_key_bytes.try_into().unwrap()).unwrap();
@@ -945,7 +956,10 @@ async fn test_nip70_protected_event_rejected() {
     assert_eq!(resp[1].as_str().unwrap(), event_id);
     assert_eq!(resp[2], false, "保護イベントは拒否されるべき");
     let msg = resp[3].as_str().unwrap();
-    assert!(msg.starts_with("blocked:"), "blocked: プレフィックスが必要: {msg}");
+    assert!(
+        msg.starts_with("blocked:"),
+        "blocked: プレフィックスが必要: {msg}"
+    );
 }
 
 /// NIP-70: `["-"]` タグなしのイベントは通常通り受け入れられるテスト
@@ -991,9 +1005,14 @@ async fn test_nip70_protected_event_not_stored() {
     let _ = recv_msg(&mut rx, 3000).await;
 
     // REQ で確認 — イベントは保存されていないはず
-    tx.send(text_msg(&json!(["REQ", "check", {}]))).await.unwrap();
+    tx.send(text_msg(&json!(["REQ", "check", {}])))
+        .await
+        .unwrap();
     let msg = recv_msg(&mut rx, 3000).await.unwrap();
-    assert_eq!(msg[0], "EOSE", "保護イベントは保存されていないのでEOSEのみ返るべき");
+    assert_eq!(
+        msg[0], "EOSE",
+        "保護イベントは保存されていないのでEOSEのみ返るべき"
+    );
 }
 
 /// NIP-70: 保護イベントが拒否されてもbroadcastされないテスト
@@ -1011,7 +1030,9 @@ async fn test_nip70_protected_event_not_broadcast() {
     let (mut tx_b, mut rx_b) = ws_b.split();
 
     // A: サブスクリプション登録
-    tx_a.send(text_msg(&json!(["REQ", "live", {}]))).await.unwrap();
+    tx_a.send(text_msg(&json!(["REQ", "live", {}])))
+        .await
+        .unwrap();
     let eose = recv_msg(&mut rx_a, 3000).await.unwrap();
     assert_eq!(eose[0], "EOSE");
 
@@ -1053,18 +1074,25 @@ async fn test_nip09_deletion_by_e_tag() {
     assert_eq!(ok[2], true);
 
     // kind 5 削除リクエストを投稿
-    let delete_event = make_test_event_full("", 5, now + 1, vec![vec!["e", &event_id], vec!["k", "1"]]);
-    tx.send(text_msg(&json!(["EVENT", delete_event]))).await.unwrap();
+    let delete_event =
+        make_test_event_full("", 5, now + 1, vec![vec!["e", &event_id], vec!["k", "1"]]);
+    tx.send(text_msg(&json!(["EVENT", delete_event])))
+        .await
+        .unwrap();
     let ok2 = recv_msg(&mut rx, 3000).await.unwrap();
     assert_eq!(ok2[0], "OK");
     assert_eq!(ok2[2], true);
 
     // REQ で確認 — 元のイベントは削除され、削除リクエストのみ残る
-    tx.send(text_msg(&json!(["REQ", "check", {}]))).await.unwrap();
+    tx.send(text_msg(&json!(["REQ", "check", {}])))
+        .await
+        .unwrap();
     let mut events = vec![];
     loop {
         let msg = recv_msg(&mut rx, 3000).await.unwrap();
-        if msg[0] == "EOSE" { break; }
+        if msg[0] == "EOSE" {
+            break;
+        }
         events.push(msg);
     }
     assert_eq!(events.len(), 1, "削除後は削除リクエストのみ残るべき");
@@ -1097,20 +1125,28 @@ async fn test_nip09_deletion_broadcast_and_query() {
     let _ = recv_msg(&mut rx_b, 3000).await;
 
     // A: サブスクリプション登録
-    tx_a.send(text_msg(&json!(["REQ", "live", {}]))).await.unwrap();
+    tx_a.send(text_msg(&json!(["REQ", "live", {}])))
+        .await
+        .unwrap();
     // 既存イベント + EOSE を消費
     loop {
         let msg = recv_msg(&mut rx_a, 3000).await.unwrap();
-        if msg[0] == "EOSE" { break; }
+        if msg[0] == "EOSE" {
+            break;
+        }
     }
 
     // B: 削除リクエスト
     let delete_event = make_test_event_full("", 5, now + 1, vec![vec!["e", &event_id]]);
-    tx_b.send(text_msg(&json!(["EVENT", delete_event]))).await.unwrap();
+    tx_b.send(text_msg(&json!(["EVENT", delete_event])))
+        .await
+        .unwrap();
     let _ = recv_msg(&mut rx_b, 3000).await;
 
     // A: 削除リクエストが broadcast で届く
-    let broadcast = recv_msg(&mut rx_a, 5000).await.expect("削除リクエストのbroadcastが届かない");
+    let broadcast = recv_msg(&mut rx_a, 5000)
+        .await
+        .expect("削除リクエストのbroadcastが届かない");
     assert_eq!(broadcast[0], "EVENT");
     assert_eq!(broadcast[2]["kind"], 5);
 }

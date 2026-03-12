@@ -4,14 +4,14 @@
 //! - `InMemoryEventStore`: インメモリ実装（開発・テスト用）
 //! - `DynamoEventStore`: DynamoDB永続化実装（本番用、`dynamo` feature有効時のみ）
 
-mod in_memory;
 #[cfg(feature = "dynamo")]
 mod dynamo;
+mod in_memory;
 
 // Re-exports
-pub use in_memory::InMemoryEventStore;
 #[cfg(feature = "dynamo")]
 pub use dynamo::DynamoEventStore;
+pub use in_memory::InMemoryEventStore;
 
 use crate::models::{Event, Filter, VerifiedEvent};
 
@@ -79,11 +79,11 @@ pub async fn create_event_store() -> Result<AppEventStore, StoreError> {
     {
         let table_name = std::env::var("DYNAMODB_TABLE_NAME")
             .unwrap_or_else(|_| "nostr_relay_events".to_string());
-        
+
         debug!("DynamoEventStoreを初期化中 (table: {})", table_name);
         DynamoEventStore::new(table_name).await
     }
-    
+
     #[cfg(not(feature = "dynamo"))]
     {
         debug!("InMemoryEventStoreを初期化中");

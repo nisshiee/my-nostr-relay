@@ -39,7 +39,11 @@ mod tests {
         let inner = &serialized[1..serialized.len() - 1];
         assert_eq!(inner.len(), 128);
         // 全て小文字の16進数であること
-        assert!(inner.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            inner
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]

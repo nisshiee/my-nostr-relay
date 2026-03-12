@@ -89,7 +89,10 @@ mod tests {
     fn test_deserialize() {
         let json = r#"["p","pubkey123"]"#;
         let tag: Tag = serde_json::from_str(json).unwrap();
-        assert_eq!(tag, Tag::try_from(vec!["p".to_string(), "pubkey123".to_string()]).unwrap());
+        assert_eq!(
+            tag,
+            Tag::try_from(vec!["p".to_string(), "pubkey123".to_string()]).unwrap()
+        );
     }
 
     #[test]

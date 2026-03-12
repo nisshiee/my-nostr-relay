@@ -1,5 +1,5 @@
-use serde::ser::SerializeSeq;
 use serde::Serialize;
+use serde::ser::SerializeSeq;
 
 /// NIP-01 リレーからクライアントへのメッセージ
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::{de::Visitor, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 use thiserror::Error;
 
 /// フィルタのパースエラー
@@ -161,7 +161,7 @@ impl Filter {
     /// IDフィルタのマッチング
     fn matches_ids(&self, event: &super::Event) -> bool {
         match &self.ids {
-            None => true, // 条件なし → マッチ
+            None => true,                         // 条件なし → マッチ
             Some(ids) if ids.is_empty() => false, // 空リスト → マッチしない
             Some(ids) => ids.contains(&event.id),
         }
@@ -202,9 +202,7 @@ impl Filter {
                     let event_tag_name = &tag_slice[0];
                     let event_tag_value = &tag_slice[1];
                     // タグ名が一致（単一文字）
-                    if event_tag_name.len() == 1
-                        && event_tag_name.starts_with(*tag_name)
-                    {
+                    if event_tag_name.len() == 1 && event_tag_name.starts_with(*tag_name) {
                         // フィルタ値のいずれかと完全一致
                         return filter_values.iter().any(|v| v == event_tag_value);
                     }
@@ -294,10 +292,7 @@ mod tests {
             filter.tags.get('e').unwrap(),
             &vec!["event1".to_string(), "event2".to_string()]
         );
-        assert_eq!(
-            filter.tags.get('p').unwrap(),
-            &vec!["pubkey1".to_string()]
-        );
+        assert_eq!(filter.tags.get('p').unwrap(), &vec!["pubkey1".to_string()]);
     }
 
     #[test]

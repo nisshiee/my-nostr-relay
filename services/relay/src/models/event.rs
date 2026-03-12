@@ -4,7 +4,8 @@ use secp256k1::Secp256k1;
 use sha2::{Digest, Sha256};
 
 /// 署名検証用のSecp256k1コンテキスト（モジュール内で共有）
-static SECP: LazyLock<Secp256k1<secp256k1::VerifyOnly>> = LazyLock::new(Secp256k1::verification_only);
+static SECP: LazyLock<Secp256k1<secp256k1::VerifyOnly>> =
+    LazyLock::new(Secp256k1::verification_only);
 
 /// Nostrイベント（NIP-01準拠）
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -151,8 +152,12 @@ impl Event {
         }
 
         // Step 2: Schnorr署名検証（共有コンテキスト使用）
-        SECP.verify_schnorr(self.sig.as_signature(), &computed_id, self.pubkey.as_xonly_public_key())
-            .map_err(|_| VerificationError::SignatureVerificationFailed)?;
+        SECP.verify_schnorr(
+            self.sig.as_signature(),
+            &computed_id,
+            self.pubkey.as_xonly_public_key(),
+        )
+        .map_err(|_| VerificationError::SignatureVerificationFailed)?;
 
         Ok(VerifiedEvent(self))
     }

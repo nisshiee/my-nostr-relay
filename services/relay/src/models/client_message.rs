@@ -1,7 +1,7 @@
 use serde::{
+    Deserialize, Serialize,
     de::{self, Visitor},
     ser::SerializeSeq,
-    Deserialize, Serialize,
 };
 use thiserror::Error;
 
@@ -173,9 +173,9 @@ impl<'de> Deserialize<'de> for ClientMessage {
 
                         Ok(ClientMessage::Close(subscription_id))
                     }
-                    _ => Err(de::Error::custom(ClientMessageParseError::UnknownMessageType(
-                        message_type,
-                    ))),
+                    _ => Err(de::Error::custom(
+                        ClientMessageParseError::UnknownMessageType(message_type),
+                    )),
                 }
             }
         }
