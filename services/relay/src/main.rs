@@ -127,9 +127,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "dynamo")]
     {
         let relay_clone = Arc::clone(&relay);
+        let limitation_clone = Arc::clone(&limitation);
         tokio::spawn(async move {
             info!("DynamoDBからのイベントロードをバックグラウンドで開始");
-            match relay_clone.store().load_recent_events().await {
+            let created_at_lower_limit = limitation_clone.created_at_lower_limit;
+            match relay_clone.store().load_recent_events(created_at_lower_limit).await {
                 Ok(()) => info!("DynamoDBからのイベントロードが完了"),
                 Err(e) => error!(error = %e, "DynamoDBからのイベントロードに失敗"),
             }
