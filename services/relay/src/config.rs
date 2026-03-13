@@ -81,8 +81,14 @@ impl LimitationConfig {
             max_subid_length: DEFAULT_MAX_SUBID_LENGTH, // NIP-01仕様固定
             max_event_tags: parse_env_u32(ENV_MAX_EVENT_TAGS, DEFAULT_MAX_EVENT_TAGS),
             max_content_length: parse_env_u32(ENV_MAX_CONTENT_LENGTH, DEFAULT_MAX_CONTENT_LENGTH),
-            created_at_lower_limit: parse_env_u64(ENV_CREATED_AT_LOWER_LIMIT, DEFAULT_CREATED_AT_LOWER_LIMIT),
-            created_at_upper_limit: parse_env_u64(ENV_CREATED_AT_UPPER_LIMIT, DEFAULT_CREATED_AT_UPPER_LIMIT),
+            created_at_lower_limit: parse_env_u64(
+                ENV_CREATED_AT_LOWER_LIMIT,
+                DEFAULT_CREATED_AT_LOWER_LIMIT,
+            ),
+            created_at_upper_limit: parse_env_u64(
+                ENV_CREATED_AT_UPPER_LIMIT,
+                DEFAULT_CREATED_AT_UPPER_LIMIT,
+            ),
         };
 
         info!(
@@ -132,6 +138,7 @@ fn parse_env_u64(key: &str, default: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_default_config() {
@@ -147,6 +154,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_defaults() {
         // 環境変数をクリア
         for key in [
@@ -158,7 +166,9 @@ mod tests {
             ENV_CREATED_AT_LOWER_LIMIT,
             ENV_CREATED_AT_UPPER_LIMIT,
         ] {
-            unsafe { env::remove_var(key); }
+            unsafe {
+                env::remove_var(key);
+            }
         }
 
         let config = LimitationConfig::from_env();
@@ -166,6 +176,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_from_env_custom_values() {
         unsafe {
             env::set_var(ENV_MAX_MESSAGE_LENGTH, "262144");
@@ -196,11 +207,14 @@ mod tests {
             ENV_CREATED_AT_LOWER_LIMIT,
             ENV_CREATED_AT_UPPER_LIMIT,
         ] {
-            unsafe { env::remove_var(key); }
+            unsafe {
+                env::remove_var(key);
+            }
         }
     }
 
     #[test]
+    #[serial]
     fn test_from_env_invalid_values_use_defaults() {
         unsafe {
             env::set_var(ENV_MAX_MESSAGE_LENGTH, "not_a_number");

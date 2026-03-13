@@ -32,7 +32,6 @@ impl<S: EventStore> Relay<S> {
         Self { store, event_tx }
     }
 
-
     /// イベントを保存し、成功したら broadcast で配信
     ///
     /// # 戻り値
@@ -53,7 +52,10 @@ impl<S: EventStore> Relay<S> {
         // Ephemeral イベント: 保存せず配信のみ
         if event.kind.is_ephemeral() {
             let _ = self.event_tx.send(event.into_inner());
-            debug!(elapsed_ms = start.elapsed().as_millis(), "publish完了（ephemeral）");
+            debug!(
+                elapsed_ms = start.elapsed().as_millis(),
+                "publish完了（ephemeral）"
+            );
             return Ok(SaveResult::Ephemeral);
         }
 
@@ -64,10 +66,10 @@ impl<S: EventStore> Relay<S> {
             // NIP-09: kind 5（削除リクエスト）の場合、参照されたイベントを削除
             // TODO: 削除済みイベントの再投稿防止（NIP-09 SHOULD級）は未実装。
             // 削除リクエストを記録し、以降の同一イベントのEVENTメッセージをrejectする仕組みが望ましい。
-            if event.kind.is_deletion_request() {
-                if let Err(e) = self.store.delete(&event).await {
-                    warn!(error = %e, event_id = %event.inner().id, "削除リクエストの処理に失敗");
-                }
+            if event.kind.is_deletion_request()
+                && let Err(e) = self.store.delete(&event).await
+            {
+                warn!(error = %e, event_id = %event.inner().id, "削除リクエストの処理に失敗");
             }
             let _ = self.event_tx.send(event.into_inner());
         }
@@ -104,7 +106,10 @@ impl<S: EventStore> Relay<S> {
 mod tests {
     use super::*;
     use crate::store::InMemoryEventStore;
-    use crate::test_helpers::{create_custom_event, create_custom_event_with_keypair, create_test_event, create_test_event_with_content};
+    use crate::test_helpers::{
+        create_custom_event, create_custom_event_with_keypair, create_test_event,
+        create_test_event_with_content,
+    };
 
     #[tokio::test]
     async fn test_publish_new_event() {
@@ -269,8 +274,7 @@ mod tests {
         assert_eq!(result, SaveResult::Ignored);
 
         // broadcast されない（タイムアウト）
-        let result =
-            tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
+        let result = tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv()).await;
         assert!(result.is_err()); // タイムアウト
     }
 
@@ -287,7 +291,8 @@ mod tests {
         relay.publish(event.verify().unwrap()).await.unwrap();
 
         // 削除リクエストを publish
-        let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &event_id], vec!["k", "1"]]);
+        let delete_event =
+            create_custom_event(5, 2000, "", vec![vec!["e", &event_id], vec!["k", "1"]]);
         let result = relay.publish(delete_event.verify().unwrap()).await.unwrap();
         assert_eq!(result, SaveResult::Saved);
 
@@ -334,7 +339,8 @@ mod tests {
             0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
             0x1d, 0x1e, 0x1f, 0x20,
         ];
-        let delete_event = create_custom_event_with_keypair(5, 2000, "", vec![vec!["e", &event_id]], other_secret);
+        let delete_event =
+            create_custom_event_with_keypair(5, 2000, "", vec![vec!["e", &event_id]], other_secret);
         relay.publish(delete_event.verify().unwrap()).await.unwrap();
 
         // 元のイベントは残っている（+ 削除リクエスト）

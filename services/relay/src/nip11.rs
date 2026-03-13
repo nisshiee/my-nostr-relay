@@ -83,26 +83,26 @@ impl RelayInformation {
     ///
     /// `RELAY_PUBKEY` が設定されていない場合はエラーを返します
     /// LimitationConfigを指定してRelayInformationを構築
-    pub fn from_env_with_config(limitation_config: &LimitationConfig) -> Result<Self, Box<dyn std::error::Error>> {
-        let name = env::var("RELAY_NAME")
-            .unwrap_or_else(|_| "Nostr Relay".to_string());
-        
-        let description = env::var("RELAY_DESCRIPTION")
-            .unwrap_or_else(|_| "A Nostr relay server".to_string());
-        
-        let pubkey = env::var("RELAY_PUBKEY")
-            .map_err(|_| "RELAY_PUBKEY環境変数が設定されていません")?;
-        
-        let contact = env::var("RELAY_CONTACT")
-            .unwrap_or_default();
-        
+    pub fn from_env_with_config(
+        limitation_config: &LimitationConfig,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let name = env::var("RELAY_NAME").unwrap_or_else(|_| "Nostr Relay".to_string());
+
+        let description =
+            env::var("RELAY_DESCRIPTION").unwrap_or_else(|_| "A Nostr relay server".to_string());
+
+        let pubkey =
+            env::var("RELAY_PUBKEY").map_err(|_| "RELAY_PUBKEY環境変数が設定されていません")?;
+
+        let contact = env::var("RELAY_CONTACT").unwrap_or_default();
+
         let supported_nips = SUPPORTED_NIPS.to_vec();
-        
+
         let software = env::var("RELAY_SOFTWARE")
             .unwrap_or_else(|_| "https://github.com/nisshiee/my-nostr-relay".to_string());
-        
-        let version = env::var("RELAY_VERSION")
-            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
+
+        let version =
+            env::var("RELAY_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string());
 
         let limitation = Limitation::from(limitation_config);
 

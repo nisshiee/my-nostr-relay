@@ -6,8 +6,8 @@ use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::{debug, instrument, trace};
 
-use crate::models::{Event, EventId, Filter, VerifiedEvent};
 use super::{DeleteResult, EventStore, SaveResult, StoreError};
+use crate::models::{Event, EventId, Filter, VerifiedEvent};
 
 /// インメモリイベントストア（開発・テスト用）
 pub struct InMemoryEventStore {
@@ -194,12 +194,12 @@ impl EventStore for InMemoryEventStore {
         }
 
         // 最終ソート（マージ後）
-        merged.sort_by(|a, b| {
-            match b.created_at.as_i64().cmp(&a.created_at.as_i64()) {
+        merged.sort_by(
+            |a, b| match b.created_at.as_i64().cmp(&a.created_at.as_i64()) {
                 std::cmp::Ordering::Equal => a.id.to_string().cmp(&b.id.to_string()),
                 other => other,
-            }
-        });
+            },
+        );
 
         debug!(
             total_events = events.len(),
@@ -231,29 +231,29 @@ impl EventStore for InMemoryEventStore {
 
         // e-tag処理: イベントIDで削除
         for id_hex in &e_tag_ids {
-            if let Ok(event_id) = id_hex.parse::<EventId>() {
-                if let Some(target) = events.get(&event_id) {
-                    // 同一pubkeyチェック
-                    if target.pubkey.to_hex() != requester_pubkey {
-                        continue;
-                    }
-                    // kind-5イベントは削除しない
-                    if target.kind.is_deletion_request() {
-                        continue;
-                    }
-                    // インデックスから削除
-                    if target.kind.is_replaceable() {
-                        let key = (target.pubkey.to_hex(), target.kind.as_u16());
-                        replaceable_index.remove(&key);
-                    }
-                    if target.kind.is_addressable() {
-                        let d_tag = target.d_tag_value().to_string();
-                        let key = (target.pubkey.to_hex(), target.kind.as_u16(), d_tag);
-                        addressable_index.remove(&key);
-                    }
-                    events.remove(&event_id);
-                    deleted_count += 1;
+            if let Ok(event_id) = id_hex.parse::<EventId>()
+                && let Some(target) = events.get(&event_id)
+            {
+                // 同一pubkeyチェック
+                if target.pubkey.to_hex() != requester_pubkey {
+                    continue;
                 }
+                // kind-5イベントは削除しない
+                if target.kind.is_deletion_request() {
+                    continue;
+                }
+                // インデックスから削除
+                if target.kind.is_replaceable() {
+                    let key = (target.pubkey.to_hex(), target.kind.as_u16());
+                    replaceable_index.remove(&key);
+                }
+                if target.kind.is_addressable() {
+                    let d_tag = target.d_tag_value().to_string();
+                    let key = (target.pubkey.to_hex(), target.kind.as_u16(), d_tag);
+                    addressable_index.remove(&key);
+                }
+                events.remove(&event_id);
+                deleted_count += 1;
             }
         }
 
@@ -271,14 +271,14 @@ impl EventStore for InMemoryEventStore {
                     continue;
                 }
                 let key = (pubkey.clone(), kind_num, d_id.clone());
-                if let Some(existing_id) = addressable_index.get(&key).copied() {
-                    if let Some(existing) = events.get(&existing_id) {
-                        // 削除リクエストのcreated_at以前のイベントのみ削除
-                        if existing.created_at.as_i64() <= inner.created_at.as_i64() {
-                            events.remove(&existing_id);
-                            addressable_index.remove(&key);
-                            deleted_count += 1;
-                        }
+                if let Some(existing_id) = addressable_index.get(&key).copied()
+                    && let Some(existing) = events.get(&existing_id)
+                {
+                    // 削除リクエストのcreated_at以前のイベントのみ削除
+                    if existing.created_at.as_i64() <= inner.created_at.as_i64() {
+                        events.remove(&existing_id);
+                        addressable_index.remove(&key);
+                        deleted_count += 1;
                     }
                 }
             }
@@ -292,7 +292,10 @@ impl EventStore for InMemoryEventStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_helpers::{create_custom_event, create_custom_event_with_keypair, create_test_event, create_test_event_with_content};
+    use crate::test_helpers::{
+        create_custom_event, create_custom_event_with_keypair, create_test_event,
+        create_test_event_with_content,
+    };
 
     #[tokio::test]
     async fn test_save_and_query() {
@@ -428,12 +431,11 @@ mod tests {
         let event1 = create_custom_event(0, 1000, "content a", vec![]);
         let event2 = create_custom_event(0, 1000, "content b", vec![]);
 
-        let (smaller_id_event, larger_id_event) =
-            if event1.id.to_string() < event2.id.to_string() {
-                (event1, event2)
-            } else {
-                (event2, event1)
-            };
+        let (smaller_id_event, larger_id_event) = if event1.id.to_string() < event2.id.to_string() {
+            (event1, event2)
+        } else {
+            (event2, event1)
+        };
 
         let verified_larger = larger_id_event.verify().unwrap();
         store.save(&verified_larger).await.unwrap();
@@ -453,12 +455,14 @@ mod tests {
     async fn test_addressable_event_newer_overwrites() {
         let store = InMemoryEventStore::new();
 
-        let old_event = create_custom_event(30000, 1000, "old article", vec![vec!["d", "article1"]]);
+        let old_event =
+            create_custom_event(30000, 1000, "old article", vec![vec!["d", "article1"]]);
         let verified_old = old_event.verify().unwrap();
         let result1 = store.save(&verified_old).await.unwrap();
         assert_eq!(result1, SaveResult::Saved);
 
-        let new_event = create_custom_event(30000, 2000, "new article", vec![vec!["d", "article1"]]);
+        let new_event =
+            create_custom_event(30000, 2000, "new article", vec![vec!["d", "article1"]]);
         let verified_new = new_event.clone().verify().unwrap();
         let result2 = store.save(&verified_new).await.unwrap();
         assert_eq!(result2, SaveResult::Replaced);
@@ -597,7 +601,8 @@ mod tests {
         let event_id = event.id.to_string();
         store.save(&event.verify().unwrap()).await.unwrap();
 
-        let delete_event = create_custom_event(5, 2000, "", vec![vec!["e", &event_id], vec!["k", "1"]]);
+        let delete_event =
+            create_custom_event(5, 2000, "", vec![vec!["e", &event_id], vec!["k", "1"]]);
         let verified_delete = delete_event.verify().unwrap();
 
         let result = store.delete(&verified_delete).await.unwrap();
@@ -620,7 +625,8 @@ mod tests {
             0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
             0x1d, 0x1e, 0x1f, 0x20,
         ];
-        let delete_event = create_custom_event_with_keypair(5, 2000, "", vec![vec!["e", &event_id]], other_secret);
+        let delete_event =
+            create_custom_event_with_keypair(5, 2000, "", vec![vec!["e", &event_id]], other_secret);
         let verified_delete = delete_event.verify().unwrap();
 
         let result = store.delete(&verified_delete).await.unwrap();
@@ -658,7 +664,12 @@ mod tests {
         store.save(&event.verify().unwrap()).await.unwrap();
 
         let a_tag_value = format!("30000:{}:my-article", pubkey);
-        let delete_event = create_custom_event(5, 2000, "", vec![vec!["a", &a_tag_value], vec!["k", "30000"]]);
+        let delete_event = create_custom_event(
+            5,
+            2000,
+            "",
+            vec![vec!["a", &a_tag_value], vec!["k", "30000"]],
+        );
         let verified_delete = delete_event.verify().unwrap();
 
         let result = store.delete(&verified_delete).await.unwrap();
@@ -672,7 +683,8 @@ mod tests {
     async fn test_delete_a_tag_respects_created_at() {
         let store = InMemoryEventStore::new();
 
-        let event = create_custom_event(30000, 3000, "newer article", vec![vec!["d", "my-article"]]);
+        let event =
+            create_custom_event(30000, 3000, "newer article", vec![vec!["d", "my-article"]]);
         let pubkey = event.pubkey.to_hex();
         store.save(&event.verify().unwrap()).await.unwrap();
 
@@ -722,7 +734,9 @@ mod tests {
 
         let a_tag_value = format!("30000:{}:my-article", pubkey);
         let delete_event = create_custom_event(
-            5, 2000, "",
+            5,
+            2000,
+            "",
             vec![vec!["e", &event1_id], vec!["a", &a_tag_value]],
         );
         let verified_delete = delete_event.verify().unwrap();

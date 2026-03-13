@@ -16,7 +16,7 @@ use relay::config::LimitationConfig;
 use relay::logging;
 use relay::nip11::RelayInformation;
 use relay::relay::Relay;
-use relay::store::{create_event_store, AppEventStore};
+use relay::store::{AppEventStore, create_event_store};
 use relay::ws;
 
 /// アプリケーション共有状態
@@ -40,7 +40,9 @@ async fn handler(
             let relay = state.relay.clone();
             let limitation = state.limitation.clone();
             let shutdown = state.shutdown.clone();
-            ws.on_upgrade(move |socket| ws::handle_socket(socket, relay, conn_id, limitation, shutdown))
+            ws.on_upgrade(move |socket| {
+                ws::handle_socket(socket, relay, conn_id, limitation, shutdown)
+            })
         }
         Err(_) => {
             // NIP-11 Request 判定
@@ -56,52 +58,46 @@ async fn handler(
 }
 
 async fn handle_nip11(limitation: &LimitationConfig) -> Response {
-    use axum::http::{StatusCode, HeaderMap, HeaderValue};
-    
+    use axum::http::{HeaderMap, HeaderValue, StatusCode};
+
     let mut headers = HeaderMap::new();
-    
+
     // CORSヘッダーの設定（NIP-11必須）
+    headers.insert("Access-Control-Allow-Origin", HeaderValue::from_static("*"));
     headers.insert(
-        "Access-Control-Allow-Origin", 
-        HeaderValue::from_static("*")
+        "Access-Control-Allow-Headers",
+        HeaderValue::from_static("Accept, Content-Type"),
     );
     headers.insert(
-        "Access-Control-Allow-Headers", 
-        HeaderValue::from_static("Accept, Content-Type")
+        "Access-Control-Allow-Methods",
+        HeaderValue::from_static("GET, OPTIONS"),
     );
-    headers.insert(
-        "Access-Control-Allow-Methods", 
-        HeaderValue::from_static("GET, OPTIONS")
-    );
-    
+
     // Content-Type設定
-    headers.insert(
-        "Content-Type", 
-        HeaderValue::from_static("application/json")
-    );
+    headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
     // 環境変数からリレー情報を取得（制限値設定を反映）
     match RelayInformation::from_env_with_config(limitation) {
-        Ok(info) => {
-            match serde_json::to_string(&info) {
-                Ok(json) => (StatusCode::OK, headers, json).into_response(),
-                Err(e) => {
-                    tracing::error!(error = %e, "NIP-11情報のJSON化に失敗");
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        headers,
-                        "{\"error\":\"Internal server error\"}".to_string()
-                    ).into_response()
-                }
+        Ok(info) => match serde_json::to_string(&info) {
+            Ok(json) => (StatusCode::OK, headers, json).into_response(),
+            Err(e) => {
+                tracing::error!(error = %e, "NIP-11情報のJSON化に失敗");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    headers,
+                    "{\"error\":\"Internal server error\"}".to_string(),
+                )
+                    .into_response()
             }
-        }
+        },
         Err(e) => {
             tracing::error!(error = %e, "NIP-11情報の取得に失敗");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 headers,
-                "{\"error\":\"Relay information not configured\"}".to_string()
-            ).into_response()
+                "{\"error\":\"Relay information not configured\"}".to_string(),
+            )
+                .into_response()
         }
     }
 }
@@ -138,14 +134,19 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let shutdown = CancellationToken::new();
-    let state = AppState { relay, limitation, shutdown: shutdown.clone() };
+    let state = AppState {
+        relay,
+        limitation,
+        shutdown: shutdown.clone(),
+    };
 
-    let app = Router::new()
-        .route("/", get(handler))
-        .with_state(state);
+    let app = Router::new().route("/", get(handler)).with_state(state);
 
     let bind_addr = "0.0.0.0:3000";
-    info!(bind_address = bind_addr, "サーバーがリスニングを開始しました");
+    info!(
+        bind_address = bind_addr,
+        "サーバーがリスニングを開始しました"
+    );
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
@@ -166,12 +167,10 @@ async fn main() -> anyhow::Result<()> {
 
 /// SIGTERM/SIGINTを待機し、受信したらCancellationTokenをキャンセルする
 async fn shutdown_signal(token: CancellationToken) {
-    use tokio::signal::unix::{signal, SignalKind};
+    use tokio::signal::unix::{SignalKind, signal};
 
-    let mut sigterm = signal(SignalKind::terminate())
-        .expect("SIGTERMハンドラの登録に失敗");
-    let mut sigint = signal(SignalKind::interrupt())
-        .expect("SIGINTハンドラの登録に失敗");
+    let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERMハンドラの登録に失敗");
+    let mut sigint = signal(SignalKind::interrupt()).expect("SIGINTハンドラの登録に失敗");
 
     tokio::select! {
         _ = sigterm.recv() => {

@@ -6,13 +6,7 @@ pub const MAX_SUBSCRIPTION_ID_LENGTH: usize = 64;
 
 /// Nostrサブスクリプションの識別子
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    serde_with::SerializeDisplay,
-    serde_with::DeserializeFromStr,
+    Debug, Clone, PartialEq, Eq, Hash, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
 )]
 pub struct SubscriptionId(String);
 

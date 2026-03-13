@@ -3,7 +3,14 @@ use std::str::FromStr;
 
 /// Nostrイベントの一意識別子（32バイト）
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde_with::SerializeDisplay, serde_with::DeserializeFromStr,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde_with::SerializeDisplay,
+    serde_with::DeserializeFromStr,
 )]
 pub struct EventId([u8; 32]);
 
