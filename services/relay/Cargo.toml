@@ -69,7 +69,5 @@ aws-config = { version = "1.5.5", optional = true }
 tokio-tungstenite = "0.28"
 reqwest = { version = "0.13", features = ["json"] }
 serial_test = "3"
-# モックテスト用
-mockall = "0.13"
 # DynamoDB Local用のTCP待機ヘルパー
 tokio-test = "0.4"
