@@ -126,6 +126,7 @@ impl RelayInformation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_supported_nips_contains_expected() {
@@ -145,6 +146,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_relay_information_from_env_missing_pubkey() {
         unsafe {
             env::remove_var("RELAY_PUBKEY");
@@ -160,6 +162,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_relay_information_from_env_with_pubkey() {
         unsafe {
             env::set_var("RELAY_PUBKEY", "deadbeef");
@@ -191,6 +194,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_relay_information_from_env_defaults() {
         unsafe {
             env::set_var("RELAY_PUBKEY", "abcdef123456");
