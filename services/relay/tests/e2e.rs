@@ -29,12 +29,15 @@ async fn start_relay_with_config(limitation: relay::config::LimitationConfig) ->
             let lim_clone = limitation.clone();
             async move {
                 let conn_id = uuid::Uuid::now_v7().to_string();
+                let owner_priority =
+                    std::sync::Arc::new(relay::owner_priority::OwnerPriority::new(None));
                 ws.on_upgrade(move |socket| {
                     relay::ws::handle_socket(
                         socket,
                         relay_clone,
                         conn_id,
                         lim_clone,
+                        owner_priority,
                         tokio_util::sync::CancellationToken::new(),
                     )
                 })

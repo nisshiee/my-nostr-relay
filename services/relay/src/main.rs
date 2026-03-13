@@ -15,6 +15,7 @@ use tracing::{error, info};
 use relay::config::LimitationConfig;
 use relay::logging;
 use relay::nip11::RelayInformation;
+use relay::owner_priority::OwnerPriority;
 use relay::relay::Relay;
 use relay::store::{AppEventStore, create_event_store};
 use relay::ws;
@@ -24,6 +25,7 @@ use relay::ws;
 struct AppState {
     relay: Arc<Relay<AppEventStore>>,
     limitation: Arc<LimitationConfig>,
+    owner_priority: Arc<OwnerPriority>,
     shutdown: CancellationToken,
 }
 
@@ -39,9 +41,10 @@ async fn handler(
             let conn_id = uuid::Uuid::now_v7().to_string();
             let relay = state.relay.clone();
             let limitation = state.limitation.clone();
+            let owner_priority = state.owner_priority.clone();
             let shutdown = state.shutdown.clone();
             ws.on_upgrade(move |socket| {
-                ws::handle_socket(socket, relay, conn_id, limitation, shutdown)
+                ws::handle_socket(socket, relay, conn_id, limitation, owner_priority, shutdown)
             })
         }
         Err(_) => {
@@ -116,7 +119,7 @@ async fn main() -> anyhow::Result<()> {
     let limitation = Arc::new(LimitationConfig::from_env());
 
     // EventStore の実装を選択（feature flagに基づいてDynamoDB/InMemory切り替え）
-    let store = create_event_store().await?;
+    let (store, owner_priority) = create_event_store().await?;
     let relay = Arc::new(Relay::new(store));
 
     // DynamoDB使用時: バックグラウンドで既存イベントをロード
@@ -124,9 +127,15 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "dynamo")]
     {
         let relay_clone = Arc::clone(&relay);
+        let limitation_clone = Arc::clone(&limitation);
         tokio::spawn(async move {
             info!("DynamoDBからのイベントロードをバックグラウンドで開始");
-            match relay_clone.store().load_recent_events().await {
+            let created_at_lower_limit = limitation_clone.created_at_lower_limit;
+            match relay_clone
+                .store()
+                .load_recent_events(created_at_lower_limit)
+                .await
+            {
                 Ok(()) => info!("DynamoDBからのイベントロードが完了"),
                 Err(e) => error!(error = %e, "DynamoDBからのイベントロードに失敗"),
             }
@@ -137,6 +146,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         relay,
         limitation,
+        owner_priority,
         shutdown: shutdown.clone(),
     };
 

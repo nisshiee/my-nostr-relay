@@ -1,6 +1,7 @@
 //! DynamoDB永続化イベントストア（本番用）
 
 use std::collections::HashMap as AwsHashMap;
+use std::sync::Arc;
 
 use aws_sdk_dynamodb::Client as DynamoClient;
 use aws_sdk_dynamodb::types::{AttributeValue, ReturnConsumedCapacity};
@@ -23,7 +24,7 @@ pub struct DynamoEventStore {
     /// GSI名: pk_kind_d (Addressable用)
     gsi_pk_kind_d_name: String,
     /// オーナー優先度によるイベント保持判定
-    owner_priority: OwnerPriority,
+    owner_priority: Arc<OwnerPriority>,
 }
 
 impl DynamoEventStore {
@@ -52,6 +53,8 @@ impl DynamoEventStore {
         let follows_count = owner_priority.follows_count();
         info!(follows_count, "オーナーのフォローリストをロード完了");
 
+        let owner_priority = Arc::new(owner_priority);
+
         let store = Self {
             inner,
             client,
@@ -73,8 +76,13 @@ impl DynamoEventStore {
             table_name,
             gsi_pk_kind_name: "GSI-PkKind".to_string(),
             gsi_pk_kind_d_name: "GSI-PkKindD".to_string(),
-            owner_priority: OwnerPriority::new(None),
+            owner_priority: Arc::new(OwnerPriority::new(None)),
         }
+    }
+
+    /// オーナー優先度を取得する
+    pub fn owner_priority(&self) -> Arc<OwnerPriority> {
+        Arc::clone(&self.owner_priority)
     }
 
     /// テーブルのプロビジョンドRCUを取得
@@ -101,24 +109,21 @@ impl DynamoEventStore {
     /// バックグラウンドで呼び出すことを想定。ロード完了前のREQは
     /// InMemoryストアの内容のみで応答するため、結果が不完全になる場合がある。
     ///
-    /// - created_atフィルターで直近のイベントのみロード（デフォルト: 30日）
+    /// - `created_at_lower_limit` は秒単位。非優遇ユーザーのcutoffタイムスタンプ算出に使用。
     /// - プロビジョンドRCUに基づいてページ間ディレイを自動調整し、スロットリングを回避する
-    pub async fn load_recent_events(&self) -> Result<(), StoreError> {
-        let retention_days: u64 = std::env::var("DYNAMODB_LOAD_RETENTION_DAYS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(30);
+    pub async fn load_recent_events(&self, created_at_lower_limit: u64) -> Result<(), StoreError> {
         let now_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let cutoff_ts = now_ts.saturating_sub(retention_days * 86400);
+        let cutoff_ts = now_ts.saturating_sub(created_at_lower_limit);
 
         // プロビジョンドRCUを取得してディレイ計算に使用
         let provisioned_rcu = self.get_provisioned_rcu().await?;
+        let retention_days = created_at_lower_limit / 86400;
         info!(
-            "DynamoDBからイベントをロード中（オーナー/フォロー先は全期間、その他は直近{}日） (cutoff: {}, provisioned_rcu: {})",
-            retention_days, cutoff_ts, provisioned_rcu
+            "DynamoDBからイベントをロード中（オーナー/フォロー先は全期間、その他は直近{}日={}秒） (cutoff: {}, provisioned_rcu: {})",
+            retention_days, created_at_lower_limit, cutoff_ts, provisioned_rcu
         );
 
         // 全件Scanし、アプリ側でowner_priorityによるフィルタリングを行う
