@@ -100,7 +100,8 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
 
     // 各列の先頭カードのスコアを追跡（新規カードの列選択に使う）
     // scoredNotes はスコア降順なので、各列に最初に入ったカードが先頭
-    const topScore = new Array<number>(columnCount).fill(Infinity);
+    // 空の列は最優先で埋めたいので -Infinity（= 最もスコアが低い）
+    const topScore = new Array<number>(columnCount).fill(-Infinity);
 
     // まず既存カード（前回割り当てがあるもの）を同じ列に維持
     for (const note of scoredNotes) {
@@ -110,10 +111,10 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
       }
     }
 
-    // 各列の先頭スコアを計算（scoredNotes はスコア降順）
+    // 各列の先頭スコアを計算（scoredNotes はスコア降順なので最初に見つかったのが先頭）
     for (const note of scoredNotes) {
       const col = newAssignment.get(note.id);
-      if (col !== undefined && topScore[col] === Infinity) {
+      if (col !== undefined && topScore[col] === -Infinity) {
         topScore[col] = note.score;
       }
     }
@@ -122,7 +123,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     for (const note of scoredNotes) {
       if (newAssignment.has(note.id)) continue;
 
-      // 先頭スコアが最も低い列を探す（空の列は Infinity なので優先される）
+      // 先頭スコアが最も低い列を探す（空の列は -Infinity なので最優先）
       let bestCol = 0;
       let bestScore = topScore[0];
       for (let c = 1; c < columnCount; c++) {
