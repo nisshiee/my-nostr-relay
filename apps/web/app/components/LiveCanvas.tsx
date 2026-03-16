@@ -12,6 +12,22 @@ import {
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { NoteCard } from "./NoteCard";
 
+/** カード間のギャップ（px）— mb-3 相当 */
+const GAP = 12;
+
+/**
+ * ノート ID から決定論的に列インデックスを算出する（純粋関数）
+ * FNV-1a 風の簡易ハッシュを使用
+ */
+function idToColumn(id: string, columnCount: number): number {
+  let hash = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return ((hash >>> 0) % columnCount);
+}
+
 interface LiveCanvasProps {
   notes: CanvasNote[];
   profiles: Map<string, NostrProfile>;
@@ -25,141 +41,12 @@ function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-/**
- * 中央列から外側に向かってインデックスを生成する
- * 例: 列数5 → [2, 3, 1, 4, 0]（中央から外側へ）
- */
-function centerOutOrder(columnCount: number): number[] {
-  const order: number[] = [];
-  const center = Math.floor(columnCount / 2);
-  order.push(center);
-
-  for (let offset = 1; offset < columnCount; offset++) {
-    if (center + offset < columnCount) {
-      order.push(center + offset);
-    }
-    if (center - offset >= 0) {
-      order.push(center - offset);
-    }
-  }
-
-  return order;
-}
-
-/** 横移動を許可する上位行数 */
-const MOBILE_ROWS = 4;
-
-/**
- * 目標列に向かって±1列ずつ移動する（隣の列までしか動かない）
- */
-function moveToward(current: number, target: number): number {
-  if (target > current) return current + 1;
-  if (target < current) return current - 1;
-  return current;
-}
-
-/**
- * 最も短い列のインデックスを返す
- */
-function shortestColumn(columns: CanvasNote[][]): number {
-  let minIdx = 0;
-  let minLen = columns[0].length;
-  for (let c = 1; c < columns.length; c++) {
-    if (columns[c].length < minLen) {
-      minLen = columns[c].length;
-      minIdx = c;
-    }
-  }
-  return minIdx;
-}
-
-/**
- * スコア降順のノートを列に割り当てる
- *
- * - 上位ノート（MOBILE_ROWS 行分）は中央優先の理想列に向かって±1列ずつ移動
- *   ただし、移動する側のカードより高さが大きいカードを押し出してしまう場合は移動しない
- * - それ以降のノートは前回の列を維持（横移動なし）
- * - 前回の列情報がないノート（新規）は最も短い列に配置
- */
-function distributeToColumns(
-  sortedNotes: CanvasNote[],
-  columnCount: number,
-  prevAssignment: Map<string, number>,
-  heightMap: Map<string, number>
-): { columns: CanvasNote[][]; assignment: Map<string, number> } {
-  const columns: CanvasNote[][] = Array.from(
-    { length: columnCount },
-    () => []
-  );
-  const assignment = new Map<string, number>();
-  const order = centerOutOrder(columnCount);
-
-  const getHeight = (id: string) => heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
-
-  // 横移動可能な上位ノート数（MOBILE_ROWS 行 × 列数）
-  const mobileCount = Math.min(
-    MOBILE_ROWS * columnCount,
-    sortedNotes.length
-  );
-
-  // 上位ノート: 理想列に向かって±1列ずつ移動
-  for (let i = 0; i < mobileCount; i++) {
-    const note = sortedNotes[i];
-    const idealCol = order[i % columnCount];
-    const prevCol = prevAssignment.get(note.id);
-
-    let col: number;
-    if (prevCol === undefined || prevCol >= columnCount) {
-      // 新規ノート → 理想列にそのまま配置
-      col = idealCol;
-    } else if (prevCol === idealCol) {
-      // 既に理想列にいる
-      col = prevCol;
-    } else {
-      // 既存ノート → 前回の列から理想列へ±1列移動を試みる
-      const candidateCol = moveToward(prevCol, idealCol);
-      const myHeight = getHeight(note.id);
-
-      // 移動先の列にいるカードのうち、自分より高さが大きいカードがあるか確認
-      // そのカードが自分の移動によって押し出される（下にずれる）ことになる
-      const wouldDisplaceTaller = columns[candidateCol].some(
-        (existing) => getHeight(existing.id) > myHeight
-      );
-
-      col = wouldDisplaceTaller ? prevCol : candidateCol;
-    }
-    columns[col].push(note);
-    assignment.set(note.id, col);
-  }
-
-  // 下位ノート: 前回の列を維持
-  for (let i = mobileCount; i < sortedNotes.length; i++) {
-    const note = sortedNotes[i];
-    const prevCol = prevAssignment.get(note.id);
-
-    if (prevCol !== undefined && prevCol < columnCount) {
-      columns[prevCol].push(note);
-      assignment.set(note.id, prevCol);
-    } else {
-      // 新規 or 列数変更 → 最も短い列に
-      const col = shortestColumn(columns);
-      columns[col].push(note);
-      assignment.set(note.id, col);
-    }
-  }
-
-  // 各列内をスコア降順でソート（古いノートが上に残るのを防ぐ）
-  for (const col of columns) {
-    col.sort((a, b) => b.score - a.score);
-  }
-
-  return { columns, assignment };
-}
-
 export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   // スコア再計算用の基準時刻（タイマーで定期更新）
-  const [nowEpoch, setNowEpoch] = useState(() => Math.floor(Date.now() / 1000));
+  const [nowEpoch, setNowEpoch] = useState(() =>
+    Math.floor(Date.now() / 1000),
+  );
 
   // ウィンドウ幅から列数を計算
   useEffect(() => {
@@ -192,7 +79,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
 
   // カードの高さマップ（ResizeObserver から更新される）
   const [heightMap, setHeightMap] = useState<Map<string, number>>(
-    () => new Map()
+    () => new Map(),
   );
 
   // カードの高さが変わった時のコールバック
@@ -206,42 +93,96 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
   }, []);
 
   // 列割り当て状態を「レンダー中の状態調整」パターンで管理
-  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
-  const [columnState, setColumnState] = useState<{
-    columns: CanvasNote[][];
+  const [colAssignState, setColAssignState] = useState<{
     assignment: Map<string, number>;
     prevScoredNotes: CanvasNote[];
     prevColumnCount: number;
-    prevHeightMap: Map<string, number>;
   }>({
-    columns: [],
     assignment: new Map(),
     prevScoredNotes: [],
     prevColumnCount: 0,
+  });
+
+  if (
+    scoredNotes !== colAssignState.prevScoredNotes ||
+    columnCount !== colAssignState.prevColumnCount
+  ) {
+    const newAssignment = new Map<string, number>();
+
+    for (const note of scoredNotes) {
+      // ID ベースで決定論的に列を割り当て（列数が変わっても均等分配）
+      newAssignment.set(note.id, idToColumn(note.id, columnCount));
+    }
+
+    setColAssignState({
+      assignment: newAssignment,
+      prevScoredNotes: scoredNotes,
+      prevColumnCount: columnCount,
+    });
+  }
+
+  const columnAssignment = colAssignState.assignment;
+
+  // Y 座標の単調増加を保証する状態（レンダー中の状態調整パターン）
+  const [yState, setYState] = useState<{
+    positions: Map<string, number>;
+    prevScoredNotes: CanvasNote[];
+    prevColumnAssignment: Map<string, number>;
+    prevHeightMap: Map<string, number>;
+  }>({
+    positions: new Map(),
+    prevScoredNotes: [],
+    prevColumnAssignment: new Map(),
     prevHeightMap: new Map(),
   });
 
   if (
-    scoredNotes !== columnState.prevScoredNotes ||
-    columnCount !== columnState.prevColumnCount ||
-    heightMap !== columnState.prevHeightMap
+    scoredNotes !== yState.prevScoredNotes ||
+    columnAssignment !== yState.prevColumnAssignment ||
+    heightMap !== yState.prevHeightMap
   ) {
-    const result = distributeToColumns(
-      scoredNotes,
-      columnCount,
-      columnState.assignment,
-      heightMap
-    );
-    setColumnState({
-      columns: result.columns,
-      assignment: result.assignment,
+    const newPositions = new Map<string, number>();
+
+    for (let colIdx = 0; colIdx < columnCount; colIdx++) {
+      const colNotes = scoredNotes.filter(
+        (n) => columnAssignment.get(n.id) === colIdx,
+      );
+      let y = 0;
+      for (const note of colNotes) {
+        const prevY = yState.positions.get(note.id);
+        // 単調増加: 新しい Y が以前より小さい場合は以前の値を維持
+        const newY = prevY !== undefined ? Math.max(y, prevY) : y;
+        newPositions.set(note.id, newY);
+        y = newY + (heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+      }
+    }
+
+    setYState({
+      positions: newPositions,
       prevScoredNotes: scoredNotes,
-      prevColumnCount: columnCount,
+      prevColumnAssignment: columnAssignment,
       prevHeightMap: heightMap,
     });
   }
 
-  const columns = columnState.columns;
+  const yPositions = yState.positions;
+
+  /**
+   * 列の高さを yPositions ベースで計算する
+   */
+  function computeColumnHeight(
+    colNotes: CanvasNote[],
+  ): number {
+    if (colNotes.length === 0) return 0;
+    let maxBottom = 0;
+    for (const note of colNotes) {
+      const y = yPositions.get(note.id) ?? 0;
+      const h = heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT;
+      const bottom = y + h;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+    return maxBottom;
+  }
 
   // 接続状態インジケーター
   const statusIndicator = useCallback(() => {
@@ -306,42 +247,70 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           </div>
         )}
 
-        {/* Masonry グリッド */}
+        {/* Masonry グリッド（absolute positioning） */}
         {notes.length > 0 && (
           <div className="flex justify-center gap-4">
-            {columns.map((colNotes, colIdx) => (
-              <div
-                key={colIdx}
-                className="flex flex-col"
-                style={{ width: `${COLUMN_WIDTH}px`, maxWidth: `${COLUMN_WIDTH}px` }}
-              >
-                <AnimatePresence mode="popLayout">
-                  {colNotes.map((note) => (
-                    <motion.div
-                      key={note.id}
-                      layoutId={note.id}
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{
-                        opacity: note.fadingOut ? 0 : 1,
-                        scale: note.fadingOut ? 0.95 : 1,
-                      }}
-                      exit={{ opacity: 0, scale: 0.8 }}
-                      transition={{
-                        layout: { type: "spring", stiffness: 300, damping: 30 },
-                        opacity: { duration: note.fadingOut ? 1 : 0.4 },
-                        scale: { duration: note.fadingOut ? 1 : 0.3 },
-                      }}
-                    >
-                      <NoteCard
-                        note={note}
-                        profile={profiles.get(note.pubkey)}
-                        onHeightChange={handleHeightChange}
-                      />
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </div>
-            ))}
+            {Array.from({ length: columnCount }, (_, colIdx) => {
+              const colNotes = scoredNotes.filter(
+                (n) => columnAssignment.get(n.id) === colIdx,
+              );
+              const columnHeight = computeColumnHeight(colNotes);
+
+              return (
+                <div
+                  key={colIdx}
+                  className="relative"
+                  style={{
+                    width: `${COLUMN_WIDTH}px`,
+                    maxWidth: `${COLUMN_WIDTH}px`,
+                    height: columnHeight,
+                  }}
+                >
+                  <AnimatePresence>
+                    {colNotes.map((note) => {
+                      const y = yPositions.get(note.id) ?? 0;
+                      return (
+                        <motion.div
+                          key={note.id}
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{
+                            opacity: note.fadingOut ? 0 : 1,
+                            scale: note.fadingOut ? 0.95 : 1,
+                            y,
+                          }}
+                          exit={{ opacity: 0, scale: 0.8 }}
+                          transition={{
+                            y: {
+                              type: "spring",
+                              stiffness: 300,
+                              damping: 30,
+                            },
+                            opacity: {
+                              duration: note.fadingOut ? 1 : 0.4,
+                            },
+                            scale: {
+                              duration: note.fadingOut ? 1 : 0.3,
+                            },
+                          }}
+                          style={{
+                            position: "absolute",
+                            top: 0,
+                            left: 0,
+                            width: "100%",
+                          }}
+                        >
+                          <NoteCard
+                            note={note}
+                            profile={profiles.get(note.pubkey)}
+                            onHeightChange={handleHeightChange}
+                          />
+                        </motion.div>
+                      );
+                    })}
+                  </AnimatePresence>
+                </div>
+              );
+            })}
           </div>
         )}
       </main>
