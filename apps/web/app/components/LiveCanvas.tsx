@@ -15,6 +15,184 @@ import { NoteCard } from "./NoteCard";
 /** カード間のギャップ（px）— mb-3 相当 */
 const GAP = 12;
 
+/** カードの配置情報 */
+interface CardPlacement {
+  col: number;
+  y: number;
+}
+
+/**
+ * カスケード押し出しでカードを配置する
+ *
+ * 制約:
+ * 1. 上には押し出されない（押し出し先の y >= 現在の y）
+ * 2. 横に押し出す場合、自分より高さが大きいカードは押し出せない
+ * 3. 同じ連鎖内で既に移動したカードは押し出し対象外（循環防止）
+ */
+function displaceCard(
+  layout: Map<string, CardPlacement>,
+  columns: Map<string, number>[],  // columns[colIdx] = Map<noteId, y>
+  displacedId: string,
+  targetCol: number,
+  targetY: number,
+  heightMap: Map<string, number>,
+  columnCount: number,
+  movedInChain: Set<string>,
+): void {
+  const displacedHeight = heightMap.get(displacedId) ?? DEFAULT_CARD_HEIGHT;
+
+  // この位置で既存カードと衝突するか確認
+  // 衝突 = 既存カードの y 範囲と重なる && まだ移動してないカード
+  let collidingId: string | null = null;
+  let collidingY = 0;
+
+  const colCards = columns[targetCol];
+  for (const [id, y] of colCards) {
+    if (movedInChain.has(id)) continue;
+    const h = heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
+    // 重なり判定: targetY が [y, y+h+GAP) の範囲にあるか、
+    // または既存カードが [targetY, targetY+displacedHeight+GAP) の範囲にあるか
+    if (targetY < y + h + GAP && targetY + displacedHeight + GAP > y) {
+      collidingId = id;
+      collidingY = y;
+      break;
+    }
+  }
+
+  if (collidingId === null) {
+    // 衝突なし → そのまま配置
+    // 元の列から削除
+    for (let c = 0; c < columnCount; c++) {
+      columns[c].delete(displacedId);
+    }
+    columns[targetCol].set(displacedId, targetY);
+    layout.set(displacedId, { col: targetCol, y: targetY });
+    return;
+  }
+
+  // 衝突あり → 先に自分を配置してから、衝突相手を押し出す
+  // 元の列から削除
+  for (let c = 0; c < columnCount; c++) {
+    columns[c].delete(displacedId);
+  }
+  columns[targetCol].set(displacedId, targetY);
+  layout.set(displacedId, { col: targetCol, y: targetY });
+  movedInChain.add(displacedId);
+
+  const collidingHeight = heightMap.get(collidingId) ?? DEFAULT_CARD_HEIGHT;
+  const pushDownY = targetY + displacedHeight + GAP;
+
+  // 横への押し出しを試みる
+  // 制約: 自分(displaced)より高さが大きいカードは横に押し出せない
+  if (collidingHeight <= displacedHeight) {
+    // 隣の列に押し出しを試みる（左右両方チェック）
+    const candidates: { col: number; y: number }[] = [];
+
+    for (const nextCol of [targetCol - 1, targetCol + 1]) {
+      if (nextCol < 0 || nextCol >= columnCount) continue;
+      // 押し出し先のy は現在のy以上でなければならない（上には押し出されない）
+      const candidateY = Math.max(collidingY, 0);
+      if (candidateY >= collidingY) {
+        candidates.push({ col: nextCol, y: candidateY });
+      }
+    }
+
+    if (candidates.length > 0) {
+      // 最もy座標が近い候補を選ぶ
+      const best = candidates.reduce((a, b) =>
+        Math.abs(a.y - collidingY) <= Math.abs(b.y - collidingY) ? a : b
+      );
+      displaceCard(layout, columns, collidingId, best.col, best.y, heightMap, columnCount, movedInChain);
+      return;
+    }
+  }
+
+  // 横に出せない → 下に押し出す
+  displaceCard(layout, columns, collidingId, targetCol, pushDownY, heightMap, columnCount, movedInChain);
+}
+
+/**
+ * 初期配置: スコア昇順で「先頭スコアが最低の列」に配置
+ */
+function buildInitialLayout(
+  sortedNotes: CanvasNote[],
+  columnCount: number,
+  heightMap: Map<string, number>,
+): Map<string, CardPlacement> {
+  const layout = new Map<string, CardPlacement>();
+  const columns: Map<string, number>[] = Array.from(
+    { length: columnCount },
+    () => new Map(),
+  );
+
+  // 先頭スコアで列を選択するために、スコア昇順で処理
+  const notesAsc = [...sortedNotes].reverse();
+  const topScore = new Array<number>(columnCount).fill(-Infinity);
+
+  for (const note of notesAsc) {
+    // 先頭スコアが最も低い列を選ぶ
+    let bestCol = 0;
+    for (let c = 1; c < columnCount; c++) {
+      if (topScore[c] < topScore[bestCol]) {
+        bestCol = c;
+      }
+    }
+
+    // その列の一番上に挿入（y=0）して既存カードを押し出す
+    const movedInChain = new Set<string>();
+    displaceCard(layout, columns, note.id, bestCol, 0, heightMap, columnCount, movedInChain);
+    topScore[bestCol] = note.score;
+  }
+
+  return layout;
+}
+
+/**
+ * 新規カード1枚を既存レイアウトに挿入
+ */
+function insertIntoLayout(
+  prevLayout: Map<string, CardPlacement>,
+  note: CanvasNote,
+  allNotes: CanvasNote[],
+  columnCount: number,
+  heightMap: Map<string, number>,
+): Map<string, CardPlacement> {
+  const layout = new Map(prevLayout);
+  const columns: Map<string, number>[] = Array.from(
+    { length: columnCount },
+    () => new Map(),
+  );
+
+  // 既存レイアウトからcolumns を復元
+  for (const [id, placement] of layout) {
+    if (placement.col < columnCount) {
+      columns[placement.col].set(id, placement.y);
+    }
+  }
+
+  // 先頭スコアが最低の列を探す
+  const topScore = new Array<number>(columnCount).fill(-Infinity);
+  for (const n of allNotes) {
+    const p = layout.get(n.id);
+    if (!p) continue;
+    if (n.score > topScore[p.col]) {
+      topScore[p.col] = n.score;
+    }
+  }
+
+  let bestCol = 0;
+  for (let c = 1; c < columnCount; c++) {
+    if (topScore[c] < topScore[bestCol]) {
+      bestCol = c;
+    }
+  }
+
+  // 列のトップ（y=0）に挿入してカスケード押し出し
+  const movedInChain = new Set<string>();
+  displaceCard(layout, columns, note.id, bestCol, 0, heightMap, columnCount, movedInChain);
+
+  return layout;
+}
 
 interface LiveCanvasProps {
   notes: CanvasNote[];
@@ -80,126 +258,87 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     });
   }, []);
 
-  // 列割り当て状態を「レンダー中の状態調整」パターンで管理
-  const [colAssignState, setColAssignState] = useState<{
-    assignment: Map<string, number>;
-    prevScoredNotes: CanvasNote[];
+  // カスケード押し出しベースのレイアウト状態
+  const [layoutState, setLayoutState] = useState<{
+    layout: Map<string, CardPlacement>;
+    prevNoteIds: Set<string>;
     prevColumnCount: number;
-  }>({
-    assignment: new Map(),
-    prevScoredNotes: [],
-    prevColumnCount: 0,
-  });
-
-  if (
-    scoredNotes !== colAssignState.prevScoredNotes ||
-    columnCount !== colAssignState.prevColumnCount
-  ) {
-    const prevAssignment = colAssignState.assignment;
-    const columnCountChanged = columnCount !== colAssignState.prevColumnCount;
-    const newAssignment = new Map<string, number>();
-
-    // 各列の先頭（一番上）カードのスコアを追跡
-    // 空の列は -Infinity（= 最もスコアが低い → 最優先で埋める）
-    const topScore = new Array<number>(columnCount).fill(-Infinity);
-
-    // まず既存カード（前回割り当てがあるもの）を同じ列に維持
-    // ただし列数が変わった場合は全カードを再配置
-    if (!columnCountChanged) {
-      for (const note of scoredNotes) {
-        const prev = prevAssignment.get(note.id);
-        if (prev !== undefined && prev < columnCount) {
-          newAssignment.set(note.id, prev);
-          // 各列の最高スコアを追跡（= 一番上に来るカードのスコア）
-          if (note.score > topScore[prev]) {
-            topScore[prev] = note.score;
-          }
-        }
-      }
-    }
-
-    // 新規カードを「先頭スコアが最低の列」に配置
-    // スコア昇順（低い方から）で処理する
-    // 低スコアカードが各列に入ると topScore が低い値に設定され、
-    // 次のカード（より高スコア）は別の最低列に行く → 均等分配
-    const newNotes = scoredNotes.filter((n) => !newAssignment.has(n.id));
-    newNotes.reverse(); // scoredNotes はスコア降順なので reverse で昇順に
-
-    for (const note of newNotes) {
-      // 先頭スコアが最も低い列を探す（カード数は判断に使わない）
-      let bestCol = 0;
-      for (let c = 1; c < columnCount; c++) {
-        if (topScore[c] < topScore[bestCol]) {
-          bestCol = c;
-        }
-      }
-
-      newAssignment.set(note.id, bestCol);
-      topScore[bestCol] = note.score;
-    }
-
-    setColAssignState({
-      assignment: newAssignment,
-      prevScoredNotes: scoredNotes,
-      prevColumnCount: columnCount,
-    });
-  }
-
-  const columnAssignment = colAssignState.assignment;
-
-  // Y 座標の単調増加を保証する状態（レンダー中の状態調整パターン）
-  const [yState, setYState] = useState<{
-    positions: Map<string, number>;
-    prevScoredNotes: CanvasNote[];
-    prevColumnAssignment: Map<string, number>;
     prevHeightMap: Map<string, number>;
   }>({
-    positions: new Map(),
-    prevScoredNotes: [],
-    prevColumnAssignment: new Map(),
+    layout: new Map(),
+    prevNoteIds: new Set(),
+    prevColumnCount: 0,
     prevHeightMap: new Map(),
   });
 
-  if (
-    scoredNotes !== yState.prevScoredNotes ||
-    columnAssignment !== yState.prevColumnAssignment ||
-    heightMap !== yState.prevHeightMap
-  ) {
-    const newPositions = new Map<string, number>();
+  // ノートの追加・列数変更・高さ変更を検知してレイアウトを更新
+  const currentNoteIds = useMemo(
+    () => new Set(scoredNotes.map((n) => n.id)),
+    [scoredNotes],
+  );
 
-    for (let colIdx = 0; colIdx < columnCount; colIdx++) {
-      const colNotes = scoredNotes.filter(
-        (n) => columnAssignment.get(n.id) === colIdx,
+  if (
+    currentNoteIds !== layoutState.prevNoteIds ||
+    columnCount !== layoutState.prevColumnCount ||
+    heightMap !== layoutState.prevHeightMap
+  ) {
+    let newLayout: Map<string, CardPlacement>;
+
+    // 列数が変わった or 初回 → 全体を再配置
+    if (
+      columnCount !== layoutState.prevColumnCount ||
+      layoutState.layout.size === 0
+    ) {
+      newLayout = buildInitialLayout(scoredNotes, columnCount, heightMap);
+    } else {
+      // 新規カードだけ挿入
+      const newNotes = scoredNotes.filter(
+        (n) => !layoutState.prevNoteIds.has(n.id),
       );
-      let y = 0;
-      for (const note of colNotes) {
-        newPositions.set(note.id, y);
-        y += (heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+
+      if (newNotes.length > 0) {
+        newLayout = new Map(layoutState.layout);
+        for (const note of newNotes) {
+          newLayout = insertIntoLayout(
+            newLayout,
+            note,
+            scoredNotes,
+            columnCount,
+            heightMap,
+          );
+        }
+      } else {
+        // 新規なし（高さ変更のみ）→ 再配置
+        newLayout = buildInitialLayout(scoredNotes, columnCount, heightMap);
+      }
+
+      // 削除されたカードをレイアウトから除去
+      for (const id of newLayout.keys()) {
+        if (!currentNoteIds.has(id)) {
+          newLayout.delete(id);
+        }
       }
     }
 
-    setYState({
-      positions: newPositions,
-      prevScoredNotes: scoredNotes,
-      prevColumnAssignment: columnAssignment,
+    setLayoutState({
+      layout: newLayout,
+      prevNoteIds: currentNoteIds,
+      prevColumnCount: columnCount,
       prevHeightMap: heightMap,
     });
   }
 
-  const yPositions = yState.positions;
+  const cardLayout = layoutState.layout;
 
   /**
-   * 列の高さを yPositions ベースで計算する
+   * 列の高さを cardLayout ベースで計算する
    */
-  function computeColumnHeight(
-    colNotes: CanvasNote[],
-  ): number {
-    if (colNotes.length === 0) return 0;
+  function computeColumnHeight(colIdx: number): number {
     let maxBottom = 0;
-    for (const note of colNotes) {
-      const y = yPositions.get(note.id) ?? 0;
-      const h = heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT;
-      const bottom = y + h;
+    for (const [id, placement] of cardLayout) {
+      if (placement.col !== colIdx) continue;
+      const h = heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
+      const bottom = placement.y + h;
       if (bottom > maxBottom) maxBottom = bottom;
     }
     return maxBottom;
@@ -287,14 +426,15 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           </div>
         )}
 
-        {/* Masonry グリッド（absolute positioning） */}
+        {/* Masonry グリッド（absolute positioning + カスケード押し出し） */}
         {notes.length > 0 && (
           <div className="flex justify-center gap-4">
             {Array.from({ length: columnCount }, (_, colIdx) => {
-              const colNotes = scoredNotes.filter(
-                (n) => columnAssignment.get(n.id) === colIdx,
-              );
-              const columnHeight = computeColumnHeight(colNotes);
+              const colNotes = scoredNotes.filter((n) => {
+                const p = cardLayout.get(n.id);
+                return p !== undefined && p.col === colIdx;
+              });
+              const columnHeight = computeColumnHeight(colIdx);
 
               return (
                 <div
@@ -308,7 +448,8 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                 >
                   <AnimatePresence>
                     {colNotes.map((note) => {
-                      const y = yPositions.get(note.id) ?? 0;
+                      const placement = cardLayout.get(note.id);
+                      const y = placement?.y ?? 0;
                       return (
                         <motion.div
                           key={note.id}
