@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Relay } from "nostr-tools/relay";
+import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import type { Subscription } from "nostr-tools/abstract-relay";
+import type { SubCloser } from "nostr-tools/abstract-pool";
 import { RELAY_URL, MAX_NOTES, INITIAL_NOTES_LIMIT } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import type { CanvasNote, NostrProfile } from "../lib/types";
@@ -17,6 +19,11 @@ interface UseNostrRelayResult {
 
 /**
  * Nostrリレーに接続し、フォロー中ユーザーのノートとプロフィールを取得するhook
+ *
+ * 接続フロー:
+ * 1. 自分のリレーに接続してkind:10002（NIP-65リレーリスト）とkind:3（フォローリスト）を取得
+ * 2. 取得したリレーリスト全体にSimplePoolで接続
+ * 3. フォロー中ユーザーのkind:1（ノート）とkind:0（プロフィール）をsubscribe
  */
 export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
   const [notes, setNotes] = useState<CanvasNote[]>([]);
@@ -27,7 +34,9 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
   // クリーンアップ用のref
   const relayRef = useRef<Relay | null>(null);
+  const poolRef = useRef<SimplePool | null>(null);
   const subsRef = useRef<Subscription[]>([]);
+  const poolSubsRef = useRef<SubCloser[]>([]);
 
   /** ノートを追加（重複排除・スコア計算・prune込み） */
   const addNote = useCallback((event: Event) => {
@@ -88,10 +97,18 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
         }
       }
       subsRef.current = [];
+      for (const sub of poolSubsRef.current) {
+        try {
+          sub.close();
+        } catch {
+          // 既に閉じている場合は無視
+        }
+      }
+      poolSubsRef.current = [];
     };
 
     /** リレー接続を閉じる */
-    const closeRelay = () => {
+    const closeAll = () => {
       closeSubs();
       if (relayRef.current) {
         try {
@@ -101,20 +118,27 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
         }
         relayRef.current = null;
       }
+      if (poolRef.current) {
+        try {
+          poolRef.current.close([]);
+        } catch {
+          // 既に閉じている場合は無視
+        }
+        poolRef.current = null;
+      }
     };
 
     const connect = async () => {
       setStatus("connecting");
 
       try {
-        // リレーに接続
+        // 自分のリレーに接続してメタデータを取得
         const relay = await Relay.connect(RELAY_URL);
         if (cancelled) {
           relay.close();
           return;
         }
         relayRef.current = relay;
-        setStatus("connected");
 
         // ステップ1: Relay List Metadata（NIP-65, kind:10002）を取得
         const relayUrls = await new Promise<string[]>(
@@ -142,12 +166,6 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
         );
 
         if (cancelled) return;
-
-        // TODO: 取得したリレーURLに接続する（Phase 4で複数リレー対応予定）
-        // 現時点ではログに出すだけ
-        if (relayUrls.length > 0) {
-          console.log("ユーザーのリレーリスト:", relayUrls);
-        }
 
         // ステップ2: Contact List（kind:3）を取得してフォローリストを抽出
         const followPubkeys = await new Promise<string[]>(
@@ -177,9 +195,22 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
         if (cancelled || followPubkeys.length === 0) return;
 
-        // ステップ3: フォロー中ユーザーのテキストノート（kind:1）をsubscribe
-        const notesSub = relay.subscribe(
-          [{ kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter],
+        // ステップ3: リレーリストを使ってSimplePoolで複数リレーに接続
+        // 自分のリレーも含める（重複はSimplePoolが処理）
+        const allRelays = relayUrls.length > 0
+          ? [...new Set([RELAY_URL, ...relayUrls])]
+          : [RELAY_URL];
+
+        console.log("接続リレー一覧:", allRelays);
+
+        const pool = new SimplePool();
+        poolRef.current = pool;
+        setStatus("connected");
+
+        // ステップ4: フォロー中ユーザーのテキストノート（kind:1）をsubscribe
+        const notesSub = pool.subscribeMany(
+          allRelays,
+          { kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT },
           {
             onevent(event: Event) {
               if (!cancelled) {
@@ -191,11 +222,12 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
             },
           },
         );
-        subsRef.current.push(notesSub);
+        poolSubsRef.current.push(notesSub);
 
-        // ステップ4: フォロー中ユーザーのプロフィール（kind:0）を取得
-        const profileSub = relay.subscribe(
-          [{ kinds: [0], authors: followPubkeys } as Filter],
+        // ステップ5: フォロー中ユーザーのプロフィール（kind:0）を取得
+        const profileSub = pool.subscribeMany(
+          allRelays,
+          { kinds: [0], authors: followPubkeys },
           {
             onevent(event: Event) {
               if (!cancelled) {
@@ -207,7 +239,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
             },
           },
         );
-        subsRef.current.push(profileSub);
+        poolSubsRef.current.push(profileSub);
       } catch {
         if (!cancelled) {
           setStatus("error");
@@ -220,7 +252,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
     // クリーンアップ（pubkey変更時にステートもリセット）
     return () => {
       cancelled = true;
-      closeRelay();
+      closeAll();
       setStatus("connecting");
       setNotes([]);
       setProfiles(new Map());
