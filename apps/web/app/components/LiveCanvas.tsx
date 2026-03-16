@@ -135,10 +135,6 @@ function placeCard(
     // 同じ列の候補は除外対象外（常に残る）
     if (c.col === targetCol) return true;
 
-    // 押し出されるカードより高さが大きいもの（同じ高さはOK）
-    const cHeight = heightMap.get(c.id) ?? DEFAULT_CARD_HEIGHT;
-    if (cHeight > victimHeight) return false;
-
     // topのy座標が押し出されるカードの元位置のtopより小さい（上にある）もの
     if (c.y < victimY) return false;
 
