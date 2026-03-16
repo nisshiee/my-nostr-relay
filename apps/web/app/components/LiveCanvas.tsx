@@ -267,6 +267,29 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     prevHeightMap: new Map(),
   });
 
+  // デバッグ: レイアウト結果を出力
+  const debugLayout = useCallback((label: string, layout: Map<string, CardPlacement>, _notes: CanvasNote[]) => {
+    const colSummary: Record<number, { count: number; cards: { id: string; y: number; h: number }[] }> = {};
+    for (const [id, p] of layout) {
+      if (!colSummary[p.col]) colSummary[p.col] = { count: 0, cards: [] };
+      colSummary[p.col].count++;
+      colSummary[p.col].cards.push({ id: id.slice(0, 8), y: Math.round(p.y), h: heightMap.get(id) ?? -1 });
+    }
+    // 重なりチェック
+    for (const [col, data] of Object.entries(colSummary)) {
+      const sorted = [...data.cards].sort((a, b) => a.y - b.y);
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const cur = sorted[i];
+        const next = sorted[i + 1];
+        const curH = cur.h === -1 ? DEFAULT_CARD_HEIGHT : cur.h;
+        if (cur.y + curH + GAP > next.y) {
+          console.warn(`[${label}] OVERLAP col${col}: ${cur.id}(y=${cur.y},h=${curH}) <-> ${next.id}(y=${next.y}) gap=${next.y - cur.y - curH}`);
+        }
+      }
+    }
+    console.log(`[${label}] total=${layout.size} cols=${JSON.stringify(Object.fromEntries(Object.entries(colSummary).map(([k, v]) => [k, v.count])))}`);
+  }, [heightMap]);
+
   // ノートの追加・列数変更・高さ変更を検知してレイアウトを更新
   const currentNoteIds = useMemo(
     () => new Set(scoredNotes.map((n) => n.id)),
@@ -315,6 +338,14 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
         }
       }
     }
+
+    const isInitial = columnCount !== layoutState.prevColumnCount || layoutState.layout.size === 0;
+    const addedCount = newLayout.size - layoutState.layout.size;
+    debugLayout(
+      isInitial ? "initial" : addedCount > 0 ? `insert(${addedCount})` : "heightChange",
+      newLayout,
+      scoredNotes,
+    );
 
     setLayoutState({
       layout: newLayout,
