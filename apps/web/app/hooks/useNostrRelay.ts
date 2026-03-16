@@ -208,17 +208,46 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
         setStatus("connected");
 
         // ステップ4: フォロー中ユーザーのテキストノート（kind:1）をsubscribe
+        // 初期ロード中はバッファに溜めて oneose でまとめて state に反映する
+        const initialBuffer: Event[] = [];
+        let initialLoading = true;
+
         const notesSub = pool.subscribeMany(
           allRelays,
           { kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT },
           {
             onevent(event: Event) {
-              if (!cancelled) {
+              if (cancelled) return;
+              if (initialLoading) {
+                initialBuffer.push(event);
+              } else {
                 addNote(event);
               }
             },
             oneose() {
-              // 過去ノートの取得完了、以降はリアルタイム受信
+              if (cancelled) return;
+              initialLoading = false;
+              // バッファを一括で state に反映
+              if (initialBuffer.length > 0) {
+                const now = Math.floor(Date.now() / 1000);
+                const seen = new Set<string>();
+                const batchNotes: CanvasNote[] = [];
+                for (const event of initialBuffer) {
+                  if (seen.has(event.id)) continue;
+                  seen.add(event.id);
+                  batchNotes.push({
+                    id: event.id,
+                    pubkey: event.pubkey,
+                    content: event.content,
+                    created_at: event.created_at,
+                    score: calcFreshnessScore(event.created_at, now),
+                    fadingOut: false,
+                  });
+                }
+                const sorted = sortByScore(batchNotes);
+                setNotes(sorted.slice(0, MAX_NOTES));
+              }
+              // 以降のイベントは addNote でリアルタイム処理
             },
           },
         );
