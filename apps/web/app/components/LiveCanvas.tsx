@@ -98,7 +98,9 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     const prevAssignment = colAssignState.assignment;
     const newAssignment = new Map<string, number>();
 
-    // 各列のカード数を追跡
+    // 各列の先頭（一番上）カードのスコアを追跡
+    // 空の列は -Infinity（= 最もスコアが低い → 最優先で埋める）
+    const topScore = new Array<number>(columnCount).fill(-Infinity);
     const colCount = new Array<number>(columnCount).fill(0);
 
     // まず既存カード（前回割り当てがあるもの）を同じ列に維持
@@ -107,22 +109,36 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
       if (prev !== undefined && prev < columnCount) {
         newAssignment.set(note.id, prev);
         colCount[prev]++;
+        // 各列の最高スコアを追跡（= 一番上に来るカードのスコア）
+        if (note.score > topScore[prev]) {
+          topScore[prev] = note.score;
+        }
       }
     }
 
-    // 新規カードは「カードが一番少ない列」に配置
-    for (const note of scoredNotes) {
-      if (newAssignment.has(note.id)) continue;
+    // 新規カードを「先頭スコアが最低の列」に配置
+    // スコア昇順（低い方から）で処理する
+    const newNotes = scoredNotes.filter((n) => !newAssignment.has(n.id));
+    newNotes.reverse();
 
+    for (const note of newNotes) {
+      // 先頭スコアが最も低い列を探す
+      // タイブレーク: 同スコアならカード数が少ない列を優先
       let bestCol = 0;
       for (let c = 1; c < columnCount; c++) {
-        if (colCount[c] < colCount[bestCol]) {
+        if (
+          topScore[c] < topScore[bestCol] ||
+          (topScore[c] === topScore[bestCol] && colCount[c] < colCount[bestCol])
+        ) {
           bestCol = c;
         }
       }
 
       newAssignment.set(note.id, bestCol);
       colCount[bestCol]++;
+      if (note.score > topScore[bestCol]) {
+        topScore[bestCol] = note.score;
+      }
     }
 
     setColAssignState({
