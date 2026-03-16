@@ -22,77 +22,147 @@ interface CardPlacement {
 }
 
 /**
- * カスケード押し出しでカードを配置する
- *
- * 制約:
- * 1. 上には押し出されない（押し出し先の y >= 現在の y）
- * 2. 横に押し出す場合、自分より高さが大きいカードは押し出せない
- * 3. 同じ連鎖内で既に移動したカードは押し出し対象外（循環防止）
- */
-/**
  * カードを指定位置に配置し、押し出されるカードをドミノ式に処理する
  *
  * 押し出しルール:
- * - 新カードは列のトップ(y=0)に配置 → その列のトップにいた1枚が押し出される
- * - 押し出されたカードの行き先は displace ロジックが決める（横 or 下）
- * - 行き先にカードがいればさらに連鎖
- *
- * 制約:
- * 1. 上には押し出されない（押し出し先の y >= 現在の y）
- * 2. 横に押し出す場合、押し出すカードより高さが大きいカードは横に押し出せない
- * 3. 同じ連鎖内で既に移動したカードは押し出し対象外（循環防止）
+ * 0. 押し出されるカードが列の一番下 → その列の最後尾に配置して終了
+ * 1. 押し出し先候補のリストアップ:
+ *    - 同じ列の、元位置の直下のカード
+ *    - 左右の列で、元位置とy座標が1pxでも重なるカード（複数可）
+ * 2. 別列の候補から除外:
+ *    - 押し出されるカードより高さが大きいもの（同じ高さはOK）
+ *    - topのy座標が押し出されるカードの元位置のtopより小さい（上にある）もの
+ *    - 既にこの連鎖で押し出されたもの
+ * 3. 残った候補のうちスコアが最も低いものの位置に移動 → 連鎖
  */
 function placeCard(
   layout: Map<string, CardPlacement>,
-  /** 各列のカードリスト: columns[col] = [{id, y}...] yでソート済み */
   columns: { id: string; y: number }[][],
   cardId: string,
   targetCol: number,
   targetY: number,
   heightMap: Map<string, number>,
+  scoreMap: Map<string, number>,
   columnCount: number,
   movedInChain: Set<string>,
 ): void {
   const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
 
-  // この位置にいるカードを探す（この列でtargetYの位置にいる1枚）
+  // この位置にいるカードを探す
   const colCards = columns[targetCol];
   const victimIdx = colCards.findIndex(
     (c) => c.id !== cardId && !movedInChain.has(c.id) && c.y === targetY,
   );
 
-  // 自分を配置
-  // 元の列から削除
+  // 自分を配置（元の列から削除して新位置に）
   for (let c = 0; c < columnCount; c++) {
     columns[c] = columns[c].filter((card) => card.id !== cardId);
   }
-  // 新位置に追加
-  colCards.push({ id: cardId, y: targetY });
+  columns[targetCol].push({ id: cardId, y: targetY });
   layout.set(cardId, { col: targetCol, y: targetY });
   movedInChain.add(cardId);
 
   // 押し出す相手がいない → 終了
   if (victimIdx === -1) return;
 
-  const victim = colCards[victimIdx];
+  // victimIdx は filter 前の colCards を参照しているので、
+  // filter 後の columns[targetCol] から victim を探し直す
+  const victim = columns[targetCol].find(
+    (c) => c.id !== cardId && c.y === targetY && !movedInChain.has(c.id),
+  );
+  if (!victim) return;
+
   const victimId = victim.id;
   const victimY = victim.y;
   const victimHeight = heightMap.get(victimId) ?? DEFAULT_CARD_HEIGHT;
 
-  // 押し出し先を決める
-  // 横への押し出しを試みる（制約: 自分より高さが大きいカードは横に押し出せない）
-  if (victimHeight <= cardHeight) {
-    for (const nextCol of [targetCol - 1, targetCol + 1]) {
-      if (nextCol < 0 || nextCol >= columnCount) continue;
-      // 上には押し出されない: 押し出し先y >= 現在のy
-      placeCard(layout, columns, victimId, nextCol, victimY, heightMap, columnCount, movedInChain);
-      return;
+  // --- ステップ0: 列の一番下のカードなら最後尾に配置して終了 ---
+  const sameColOthers = columns[targetCol].filter((c) => c.id !== victimId);
+  const isBottomOfColumn = sameColOthers.every((c) => c.y <= victimY);
+
+  if (isBottomOfColumn) {
+    const newY = targetY + cardHeight + GAP;
+    columns[targetCol] = columns[targetCol].filter((c) => c.id !== victimId);
+    columns[targetCol].push({ id: victimId, y: newY });
+    layout.set(victimId, { col: targetCol, y: newY });
+    movedInChain.add(victimId);
+    return;
+  }
+
+  // --- ステップ1: 押し出し先候補のリストアップ ---
+  interface Candidate {
+    id: string;
+    col: number;
+    y: number;
+    score: number;
+  }
+  const candidates: Candidate[] = [];
+
+  // 1a. 同じ列の、元位置の直下のカード
+  const belowInCol = columns[targetCol]
+    .filter((c) => c.id !== victimId && c.y > victimY)
+    .sort((a, b) => a.y - b.y);
+  if (belowInCol.length > 0) {
+    const below = belowInCol[0];
+    candidates.push({
+      id: below.id,
+      col: targetCol,
+      y: below.y,
+      score: scoreMap.get(below.id) ?? 0,
+    });
+  }
+
+  // 1b. 左右の列で、元位置とy座標が1pxでも重なるカード
+  const victimBottom = victimY + victimHeight;
+  for (const adjCol of [targetCol - 1, targetCol + 1]) {
+    if (adjCol < 0 || adjCol >= columnCount) continue;
+    for (const card of columns[adjCol]) {
+      const cardH = heightMap.get(card.id) ?? DEFAULT_CARD_HEIGHT;
+      const cardBottom = card.y + cardH;
+      if (victimY < cardBottom && victimBottom > card.y) {
+        candidates.push({
+          id: card.id,
+          col: adjCol,
+          y: card.y,
+          score: scoreMap.get(card.id) ?? 0,
+        });
+      }
     }
   }
 
-  // 横に出せない → 下に押し出す
-  const pushDownY = targetY + cardHeight + GAP;
-  placeCard(layout, columns, victimId, targetCol, pushDownY, heightMap, columnCount, movedInChain);
+  // --- ステップ2: 別列の候補から除外 ---
+  const filtered = candidates.filter((c) => {
+    // 同じ列の候補は除外対象外（常に残る）
+    if (c.col === targetCol) return true;
+
+    // 押し出されるカードより高さが大きいもの（同じ高さはOK）
+    const cHeight = heightMap.get(c.id) ?? DEFAULT_CARD_HEIGHT;
+    if (cHeight > victimHeight) return false;
+
+    // topのy座標が押し出されるカードの元位置のtopより小さい（上にある）もの
+    if (c.y < victimY) return false;
+
+    // 既にこの連鎖で押し出されたもの
+    if (movedInChain.has(c.id)) return false;
+
+    return true;
+  });
+
+  // --- ステップ3: 最もスコアが低いものを押し出し先とする ---
+  if (filtered.length === 0) {
+    // 候補がない → 下に配置して終了
+    const newY = targetY + cardHeight + GAP;
+    columns[targetCol] = columns[targetCol].filter((c) => c.id !== victimId);
+    columns[targetCol].push({ id: victimId, y: newY });
+    layout.set(victimId, { col: targetCol, y: newY });
+    movedInChain.add(victimId);
+    return;
+  }
+
+  const best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+
+  // 押し出されるカードを best の位置に配置 → best が次に押し出される
+  placeCard(layout, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, movedInChain);
 }
 
 /**
@@ -105,10 +175,8 @@ function buildInitialLayout(
 ): Map<string, CardPlacement> {
   const layout = new Map<string, CardPlacement>();
 
-  // 各列に割り当てられたノートIDリスト（スコア降順を維持）
   const colNotes: string[][] = Array.from({ length: columnCount }, () => []);
 
-  // スコア昇順で処理して「先頭スコアが最低の列」に配置
   const notesAsc = [...sortedNotes].reverse();
   const topScore = new Array<number>(columnCount).fill(-Infinity);
 
@@ -123,7 +191,6 @@ function buildInitialLayout(
     topScore[bestCol] = note.score;
   }
 
-  // 各列内をスコア降順でソートしてy座標を積み上げ
   const scoreMap = new Map(sortedNotes.map((n) => [n.id, n.score]));
   for (let col = 0; col < columnCount; col++) {
     colNotes[col].sort((a, b) => (scoreMap.get(b) ?? 0) - (scoreMap.get(a) ?? 0));
@@ -149,7 +216,6 @@ function insertIntoLayout(
 ): Map<string, CardPlacement> {
   const layout = new Map(prevLayout);
 
-  // 既存レイアウトから columns を復元
   const columns: { id: string; y: number }[][] = Array.from(
     { length: columnCount },
     () => [],
@@ -159,6 +225,9 @@ function insertIntoLayout(
       columns[placement.col].push({ id, y: placement.y });
     }
   }
+
+  // スコアマップ
+  const scoreMap = new Map(allNotes.map((n) => [n.id, n.score]));
 
   // 先頭スコアが最低の列を探す
   const topScore = new Array<number>(columnCount).fill(-Infinity);
@@ -177,9 +246,8 @@ function insertIntoLayout(
     }
   }
 
-  // 列のトップ（y=0）に挿入 → トップにいたカードがドミノ式に押し出される
   const movedInChain = new Set<string>();
-  placeCard(layout, columns, note.id, bestCol, 0, heightMap, columnCount, movedInChain);
+  placeCard(layout, columns, note.id, bestCol, 0, heightMap, scoreMap, columnCount, movedInChain);
 
   return layout;
 }
@@ -190,21 +258,16 @@ interface LiveCanvasProps {
   status: "connecting" | "loading" | "connected" | "error";
 }
 
-/**
- * ウィンドウ幅から列数を計算する
- */
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
 export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
-  // スコア再計算用の基準時刻（タイマーで定期更新）
   const [nowEpoch, setNowEpoch] = useState(() =>
     Math.floor(Date.now() / 1000),
   );
 
-  // ウィンドウ幅から列数を計算
   useEffect(() => {
     const update = () => setColumnCount(calcColumnCount(window.innerWidth));
     update();
@@ -212,7 +275,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  // 基準時刻を定期更新（スコア再計算トリガー）
   useEffect(() => {
     const timer = setInterval(() => {
       setNowEpoch(Math.floor(Date.now() / 1000));
@@ -220,7 +282,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return () => clearInterval(timer);
   }, []);
 
-  // スコアを再計算してソート
   const scoredNotes = useMemo(() => {
     const updated = notes.map((note) => {
       const score = calcFreshnessScore(note.created_at, nowEpoch);
@@ -233,12 +294,10 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return sortByScore(updated);
   }, [notes, nowEpoch]);
 
-  // カードの高さマップ（ResizeObserver から更新される）
   const [heightMap, setHeightMap] = useState<Map<string, number>>(
     () => new Map(),
   );
 
-  // カードの高さが変わった時のコールバック
   const handleHeightChange = useCallback((id: string, height: number) => {
     setHeightMap((prev) => {
       if (prev.get(id) === height) return prev;
@@ -248,7 +307,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     });
   }, []);
 
-  // カスケード押し出しベースのレイアウト状態
+  // レイアウト状態
   const [layoutState, setLayoutState] = useState<{
     layout: Map<string, CardPlacement>;
     prevNoteIds: Set<string>;
@@ -261,30 +320,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     prevHeightMap: new Map(),
   });
 
-  // デバッグ: レイアウト結果を出力
-  const debugLayout = useCallback((label: string, layout: Map<string, CardPlacement>, _notes: CanvasNote[]) => {
-    const colSummary: Record<number, { count: number; cards: { id: string; y: number; h: number }[] }> = {};
-    for (const [id, p] of layout) {
-      if (!colSummary[p.col]) colSummary[p.col] = { count: 0, cards: [] };
-      colSummary[p.col].count++;
-      colSummary[p.col].cards.push({ id: id.slice(0, 8), y: Math.round(p.y), h: heightMap.get(id) ?? -1 });
-    }
-    // 重なりチェック
-    for (const [col, data] of Object.entries(colSummary)) {
-      const sorted = [...data.cards].sort((a, b) => a.y - b.y);
-      for (let i = 0; i < sorted.length - 1; i++) {
-        const cur = sorted[i];
-        const next = sorted[i + 1];
-        const curH = cur.h === -1 ? DEFAULT_CARD_HEIGHT : cur.h;
-        if (cur.y + curH + GAP > next.y) {
-          console.warn(`[${label}] OVERLAP col${col}: ${cur.id}(y=${cur.y},h=${curH}) <-> ${next.id}(y=${next.y}) gap=${next.y - cur.y - curH}`);
-        }
-      }
-    }
-    console.log(`[${label}] total=${layout.size} cols=${JSON.stringify(Object.fromEntries(Object.entries(colSummary).map(([k, v]) => [k, v.count])))}`);
-  }, [heightMap]);
-
-  // ノートの追加・列数変更・高さ変更を検知してレイアウトを更新
   const currentNoteIds = useMemo(
     () => new Set(scoredNotes.map((n) => n.id)),
     [scoredNotes],
@@ -297,14 +332,12 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
   ) {
     let newLayout: Map<string, CardPlacement>;
 
-    // 列数が変わった or 初回 → 全体を再配置
     if (
       columnCount !== layoutState.prevColumnCount ||
       layoutState.layout.size === 0
     ) {
       newLayout = buildInitialLayout(scoredNotes, columnCount, heightMap);
     } else {
-      // 新規カードだけ挿入
       const newNotes = scoredNotes.filter(
         (n) => !layoutState.prevNoteIds.has(n.id),
       );
@@ -321,11 +354,9 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           );
         }
       } else {
-        // 新規なし（高さ変更 or カード削除のみ）
-        // 列割り当てはそのまま維持、y座標だけ再計算
+        // 高さ変更 or カード削除のみ → 列割り当て維持、y座標再計算
         newLayout = new Map<string, CardPlacement>();
         for (let col = 0; col < columnCount; col++) {
-          // この列のカードをスコア降順で取得（scoredNotes の順番を使う）
           const colCards = scoredNotes.filter((n) => {
             const p = layoutState.layout.get(n.id);
             return p !== undefined && p.col === col;
@@ -338,21 +369,12 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
         }
       }
 
-      // 削除されたカードをレイアウトから除去
       for (const id of newLayout.keys()) {
         if (!currentNoteIds.has(id)) {
           newLayout.delete(id);
         }
       }
     }
-
-    const isInitial = columnCount !== layoutState.prevColumnCount || layoutState.layout.size === 0;
-    const addedCount = newLayout.size - layoutState.layout.size;
-    debugLayout(
-      isInitial ? "initial" : addedCount > 0 ? `insert(${addedCount})` : "heightChange",
-      newLayout,
-      scoredNotes,
-    );
 
     setLayoutState({
       layout: newLayout,
@@ -364,9 +386,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
 
   const cardLayout = layoutState.layout;
 
-  /**
-   * 列の高さを cardLayout ベースで計算する
-   */
   function computeColumnHeight(colIdx: number): number {
     let maxBottom = 0;
     for (const [id, placement] of cardLayout) {
@@ -378,7 +397,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return maxBottom;
   }
 
-  // 接続状態インジケーター
   const statusIndicator = useCallback(() => {
     switch (status) {
       case "connecting":
@@ -414,7 +432,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
-      {/* ヘッダー */}
       <header className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-900">
         <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">
           Nostr Live Canvas
@@ -422,9 +439,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
         {statusIndicator()}
       </header>
 
-      {/* メインコンテンツ */}
       <main className="flex-1 overflow-y-auto p-4">
-        {/* 接続中のローディング表示 */}
         {status === "connecting" && notes.length === 0 && (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
@@ -436,7 +451,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           </div>
         )}
 
-        {/* 初期ロード中の表示 */}
         {status === "loading" && notes.length === 0 && (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
@@ -448,7 +462,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           </div>
         )}
 
-        {/* エラー表示 */}
         {status === "error" && notes.length === 0 && (
           <div className="flex h-full items-center justify-center">
             <div className="text-center">
@@ -460,7 +473,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           </div>
         )}
 
-        {/* Masonry グリッド（absolute positioning + カスケード押し出し） */}
         {notes.length > 0 && (
           <div className="flex justify-center gap-4">
             {Array.from({ length: columnCount }, (_, colIdx) => {
