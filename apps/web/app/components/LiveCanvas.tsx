@@ -96,6 +96,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     columnCount !== colAssignState.prevColumnCount
   ) {
     const prevAssignment = colAssignState.assignment;
+    const columnCountChanged = columnCount !== colAssignState.prevColumnCount;
     const newAssignment = new Map<string, number>();
 
     // 各列の先頭（一番上）カードのスコアを追跡
@@ -104,14 +105,17 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     const colCount = new Array<number>(columnCount).fill(0);
 
     // まず既存カード（前回割り当てがあるもの）を同じ列に維持
-    for (const note of scoredNotes) {
-      const prev = prevAssignment.get(note.id);
-      if (prev !== undefined && prev < columnCount) {
-        newAssignment.set(note.id, prev);
-        colCount[prev]++;
-        // 各列の最高スコアを追跡（= 一番上に来るカードのスコア）
-        if (note.score > topScore[prev]) {
-          topScore[prev] = note.score;
+    // ただし列数が変わった場合は全カードを再配置
+    if (!columnCountChanged) {
+      for (const note of scoredNotes) {
+        const prev = prevAssignment.get(note.id);
+        if (prev !== undefined && prev < columnCount) {
+          newAssignment.set(note.id, prev);
+          colCount[prev]++;
+          // 各列の最高スコアを追跡（= 一番上に来るカードのスコア）
+          if (note.score > topScore[prev]) {
+            topScore[prev] = note.score;
+          }
         }
       }
     }
