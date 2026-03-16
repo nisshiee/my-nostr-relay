@@ -1,5 +1,6 @@
 // ポリシーページ共通レイアウト
 // シンプルで読みやすいデザインを提供
+import Link from "next/link";
 
 export default function PolicyLayout({
   children,
@@ -10,36 +11,36 @@ export default function PolicyLayout({
     <div className="min-h-screen bg-zinc-50 dark:bg-black">
       <header className="border-b border-zinc-200 dark:border-zinc-800">
         <div className="mx-auto max-w-4xl px-6 py-4">
-          <a
+          <Link
             href="/"
             className="text-sm text-zinc-600 dark:text-zinc-400 hover:text-black dark:hover:text-white transition-colors"
           >
             ← ホームに戻る
-          </a>
+          </Link>
         </div>
       </header>
       <main className="mx-auto max-w-4xl px-6 py-12">{children}</main>
       <footer className="border-t border-zinc-200 dark:border-zinc-800 mt-16">
         <div className="mx-auto max-w-4xl px-6 py-8">
           <nav className="flex flex-wrap gap-6 text-sm text-zinc-600 dark:text-zinc-400">
-            <a
+            <Link
               href="/relay/terms"
               className="hover:text-black dark:hover:text-white transition-colors"
             >
               利用規約
-            </a>
-            <a
+            </Link>
+            <Link
               href="/relay/privacy"
               className="hover:text-black dark:hover:text-white transition-colors"
             >
               プライバシーポリシー
-            </a>
-            <a
+            </Link>
+            <Link
               href="/relay/posting-policy"
               className="hover:text-black dark:hover:text-white transition-colors"
             >
               投稿ポリシー
-            </a>
+            </Link>
           </nav>
           <p className="mt-4 text-xs text-zinc-500">
             最終更新日: 2025年11月29日
