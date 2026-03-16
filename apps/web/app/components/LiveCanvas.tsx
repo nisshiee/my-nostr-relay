@@ -122,13 +122,13 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     newNotes.reverse();
 
     for (const note of newNotes) {
-      // 先頭スコアが最も低い列を探す
-      // タイブレーク: 同スコアならカード数が少ない列を優先
+      // カード数が最も少ない列を探す
+      // タイブレーク: 同数なら先頭スコアが最も低い列を優先
       let bestCol = 0;
       for (let c = 1; c < columnCount; c++) {
         if (
-          topScore[c] < topScore[bestCol] ||
-          (topScore[c] === topScore[bestCol] && colCount[c] < colCount[bestCol])
+          colCount[c] < colCount[bestCol] ||
+          (colCount[c] === colCount[bestCol] && topScore[c] < topScore[bestCol])
         ) {
           bestCol = c;
         }
