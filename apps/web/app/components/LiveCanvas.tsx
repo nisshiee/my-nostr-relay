@@ -98,49 +98,31 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     const prevAssignment = colAssignState.assignment;
     const newAssignment = new Map<string, number>();
 
-    // 各列の先頭カードのスコアを追跡（新規カードの列選択に使う）
-    // scoredNotes はスコア降順なので、各列に最初に入ったカードが先頭
-    // 空の列は最優先で埋めたいので -Infinity（= 最もスコアが低い）
-    const topScore = new Array<number>(columnCount).fill(-Infinity);
+    // 各列のカード数を追跡
+    const colCount = new Array<number>(columnCount).fill(0);
 
     // まず既存カード（前回割り当てがあるもの）を同じ列に維持
     for (const note of scoredNotes) {
       const prev = prevAssignment.get(note.id);
       if (prev !== undefined && prev < columnCount) {
         newAssignment.set(note.id, prev);
+        colCount[prev]++;
       }
     }
 
-    // 各列の先頭スコアを計算（scoredNotes はスコア降順なので最初に見つかったのが先頭）
+    // 新規カードは「カードが一番少ない列」に配置
     for (const note of scoredNotes) {
-      const col = newAssignment.get(note.id);
-      if (col !== undefined && topScore[col] === -Infinity) {
-        topScore[col] = note.score;
-      }
-    }
+      if (newAssignment.has(note.id)) continue;
 
-    // 新規カード（前回割り当てがないもの）を「先頭スコアが最低の列」に配置
-    // スコア昇順（低い方から）で処理する。低スコアが先に各列に入り、
-    // 高スコアが後から入って先頭を奪うことで均等に分配される。
-    const newNotes = scoredNotes.filter((n) => !newAssignment.has(n.id));
-    newNotes.reverse(); // スコア昇順にする（scoredNotes はスコア降順）
-
-    for (const note of newNotes) {
-      // 先頭スコアが最も低い列を探す（空の列は -Infinity なので最優先）
       let bestCol = 0;
-      let bestScore = topScore[0];
       for (let c = 1; c < columnCount; c++) {
-        if (topScore[c] < bestScore) {
-          bestScore = topScore[c];
+        if (colCount[c] < colCount[bestCol]) {
           bestCol = c;
         }
       }
 
       newAssignment.set(note.id, bestCol);
-      // この新規カードのスコアが列の先頭スコアより高ければ更新
-      if (note.score > topScore[bestCol]) {
-        topScore[bestCol] = note.score;
-      }
+      colCount[bestCol]++;
     }
 
     setColAssignState({
