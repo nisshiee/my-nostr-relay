@@ -3,7 +3,7 @@ import { Relay } from "nostr-tools/relay";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import type { Subscription } from "nostr-tools/abstract-relay";
-import { RELAY_URL, MAX_NOTES } from "../lib/constants";
+import { RELAY_URL, MAX_NOTES, INITIAL_NOTES_LIMIT } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import type { CanvasNote, NostrProfile } from "../lib/types";
 
@@ -116,7 +116,40 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
         relayRef.current = relay;
         setStatus("connected");
 
-        // ステップ1: Contact List（kind:3）を取得してフォローリストを抽出
+        // ステップ1: Relay List Metadata（NIP-65, kind:10002）を取得
+        const relayUrls = await new Promise<string[]>(
+          (resolve) => {
+            let found = false;
+            const sub = relay.subscribe(
+              [{ kinds: [10002], authors: [pubkey], limit: 1 } as Filter],
+              {
+                onevent(event: Event) {
+                  if (found) return;
+                  found = true;
+                  // "r"タグからリレーURLを抽出（read/write問わず）
+                  const urls = event.tags
+                    .filter((tag) => tag[0] === "r" && tag[1])
+                    .map((tag) => tag[1]!);
+                  resolve(urls);
+                },
+                oneose() {
+                  if (!found) resolve([]);
+                },
+              },
+            );
+            subsRef.current.push(sub);
+          },
+        );
+
+        if (cancelled) return;
+
+        // TODO: 取得したリレーURLに接続する（Phase 4で複数リレー対応予定）
+        // 現時点ではログに出すだけ
+        if (relayUrls.length > 0) {
+          console.log("ユーザーのリレーリスト:", relayUrls);
+        }
+
+        // ステップ2: Contact List（kind:3）を取得してフォローリストを抽出
         const followPubkeys = await new Promise<string[]>(
           (resolve) => {
             let found = false;
@@ -144,9 +177,9 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
         if (cancelled || followPubkeys.length === 0) return;
 
-        // ステップ2: フォロー中ユーザーのテキストノート（kind:1）をsubscribe
+        // ステップ3: フォロー中ユーザーのテキストノート（kind:1）をsubscribe
         const notesSub = relay.subscribe(
-          [{ kinds: [1], authors: followPubkeys } as Filter],
+          [{ kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter],
           {
             onevent(event: Event) {
               if (!cancelled) {
@@ -160,7 +193,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
         );
         subsRef.current.push(notesSub);
 
-        // ステップ3: フォロー中ユーザーのプロフィール（kind:0）を取得
+        // ステップ4: フォロー中ユーザーのプロフィール（kind:0）を取得
         const profileSub = relay.subscribe(
           [{ kinds: [0], authors: followPubkeys } as Filter],
           {
