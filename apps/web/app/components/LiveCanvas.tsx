@@ -183,7 +183,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                   {colNotes.map((note) => (
                     <motion.div
                       key={note.id}
-                      layout
+                      layoutId={note.id}
                       initial={{ opacity: 0, scale: 0.8 }}
                       animate={{
                         opacity: note.fadingOut ? 0 : 1,
