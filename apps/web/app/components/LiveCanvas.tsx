@@ -131,6 +131,11 @@ function distributeToColumns(
     }
   }
 
+  // 各列内をスコア降順でソート（古いノートが上に残るのを防ぐ）
+  for (const col of columns) {
+    col.sort((a, b) => b.score - a.score);
+  }
+
   return { columns, assignment };
 }
 
