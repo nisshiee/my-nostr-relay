@@ -218,11 +218,23 @@ mod tests {
         assert_eq!(info.supported_nips, SUPPORTED_NIPS.to_vec());
         assert_eq!(info.software, "https://example.com/repo");
         assert_eq!(info.version, "1.0.0");
-        assert_eq!(info.privacy_policy.as_deref(), Some("https://example.com/privacy"));
-        assert_eq!(info.terms_of_service.as_deref(), Some("https://example.com/tos"));
-        assert_eq!(info.posting_policy.as_deref(), Some("https://example.com/posting"));
+        assert_eq!(
+            info.privacy_policy.as_deref(),
+            Some("https://example.com/privacy")
+        );
+        assert_eq!(
+            info.terms_of_service.as_deref(),
+            Some("https://example.com/tos")
+        );
+        assert_eq!(
+            info.posting_policy.as_deref(),
+            Some("https://example.com/posting")
+        );
         assert_eq!(info.icon.as_deref(), Some("https://example.com/icon.png"));
-        assert_eq!(info.banner.as_deref(), Some("https://example.com/banner.png"));
+        assert_eq!(
+            info.banner.as_deref(),
+            Some("https://example.com/banner.png")
+        );
 
         unsafe {
             env::remove_var("RELAY_PUBKEY");
@@ -297,7 +309,10 @@ mod tests {
         let info = RelayInformation::from_env().unwrap();
         assert_eq!(info.pubkey, "partial_test_key");
         // 設定したフィールドは値がある
-        assert_eq!(info.privacy_policy.as_deref(), Some("https://example.com/privacy"));
+        assert_eq!(
+            info.privacy_policy.as_deref(),
+            Some("https://example.com/privacy")
+        );
         assert_eq!(info.icon.as_deref(), Some("https://example.com/icon.png"));
         // 未設定のフィールドはNone
         assert!(info.terms_of_service.is_none());
