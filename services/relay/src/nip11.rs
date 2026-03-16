@@ -36,6 +36,21 @@ pub struct RelayInformation {
     pub version: String,
     /// NIP-11 制限値
     pub limitation: Limitation,
+    /// プライバシーポリシーのURL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub privacy_policy: Option<String>,
+    /// 利用規約のURL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terms_of_service: Option<String>,
+    /// 投稿ポリシーのURL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub posting_policy: Option<String>,
+    /// リレーのアイコン画像URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// リレーのバナー画像URL
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub banner: Option<String>,
 }
 
 /// NIP-11 limitation オブジェクト
@@ -106,6 +121,12 @@ impl RelayInformation {
 
         let limitation = Limitation::from(limitation_config);
 
+        let privacy_policy = env::var("RELAY_PRIVACY_POLICY").ok();
+        let terms_of_service = env::var("RELAY_TERMS_OF_SERVICE").ok();
+        let posting_policy = env::var("RELAY_POSTING_POLICY").ok();
+        let icon = env::var("RELAY_ICON").ok();
+        let banner = env::var("RELAY_BANNER").ok();
+
         Ok(Self {
             name,
             description,
@@ -115,6 +136,11 @@ impl RelayInformation {
             software,
             version,
             limitation,
+            privacy_policy,
+            terms_of_service,
+            posting_policy,
+            icon,
+            banner,
         })
     }
 
@@ -155,6 +181,11 @@ mod tests {
             env::remove_var("RELAY_CONTACT");
             env::remove_var("RELAY_SOFTWARE");
             env::remove_var("RELAY_VERSION");
+            env::remove_var("RELAY_PRIVACY_POLICY");
+            env::remove_var("RELAY_TERMS_OF_SERVICE");
+            env::remove_var("RELAY_POSTING_POLICY");
+            env::remove_var("RELAY_ICON");
+            env::remove_var("RELAY_BANNER");
         }
 
         let result = RelayInformation::from_env();
@@ -171,6 +202,11 @@ mod tests {
             env::set_var("RELAY_CONTACT", "test@example.com");
             env::set_var("RELAY_SOFTWARE", "https://example.com/repo");
             env::set_var("RELAY_VERSION", "1.0.0");
+            env::set_var("RELAY_PRIVACY_POLICY", "https://example.com/privacy");
+            env::set_var("RELAY_TERMS_OF_SERVICE", "https://example.com/tos");
+            env::set_var("RELAY_POSTING_POLICY", "https://example.com/posting");
+            env::set_var("RELAY_ICON", "https://example.com/icon.png");
+            env::set_var("RELAY_BANNER", "https://example.com/banner.png");
         }
 
         let info = RelayInformation::from_env().unwrap();
@@ -182,6 +218,23 @@ mod tests {
         assert_eq!(info.supported_nips, SUPPORTED_NIPS.to_vec());
         assert_eq!(info.software, "https://example.com/repo");
         assert_eq!(info.version, "1.0.0");
+        assert_eq!(
+            info.privacy_policy.as_deref(),
+            Some("https://example.com/privacy")
+        );
+        assert_eq!(
+            info.terms_of_service.as_deref(),
+            Some("https://example.com/tos")
+        );
+        assert_eq!(
+            info.posting_policy.as_deref(),
+            Some("https://example.com/posting")
+        );
+        assert_eq!(info.icon.as_deref(), Some("https://example.com/icon.png"));
+        assert_eq!(
+            info.banner.as_deref(),
+            Some("https://example.com/banner.png")
+        );
 
         unsafe {
             env::remove_var("RELAY_PUBKEY");
@@ -190,6 +243,11 @@ mod tests {
             env::remove_var("RELAY_CONTACT");
             env::remove_var("RELAY_SOFTWARE");
             env::remove_var("RELAY_VERSION");
+            env::remove_var("RELAY_PRIVACY_POLICY");
+            env::remove_var("RELAY_TERMS_OF_SERVICE");
+            env::remove_var("RELAY_POSTING_POLICY");
+            env::remove_var("RELAY_ICON");
+            env::remove_var("RELAY_BANNER");
         }
     }
 
@@ -203,6 +261,11 @@ mod tests {
             env::remove_var("RELAY_CONTACT");
             env::remove_var("RELAY_SOFTWARE");
             env::remove_var("RELAY_VERSION");
+            env::remove_var("RELAY_PRIVACY_POLICY");
+            env::remove_var("RELAY_TERMS_OF_SERVICE");
+            env::remove_var("RELAY_POSTING_POLICY");
+            env::remove_var("RELAY_ICON");
+            env::remove_var("RELAY_BANNER");
         }
 
         let info = RelayInformation::from_env().unwrap();
@@ -213,9 +276,61 @@ mod tests {
         assert_eq!(info.supported_nips, SUPPORTED_NIPS.to_vec());
         assert_eq!(info.software, "https://github.com/nisshiee/my-nostr-relay");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+        assert!(info.privacy_policy.is_none());
+        assert!(info.terms_of_service.is_none());
+        assert!(info.posting_policy.is_none());
+        assert!(info.icon.is_none());
+        assert!(info.banner.is_none());
 
         unsafe {
             env::remove_var("RELAY_PUBKEY");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_relay_information_partial_optional_fields() {
+        // 一部のオプショナルフィールドのみ設定した場合のテスト
+        unsafe {
+            env::set_var("RELAY_PUBKEY", "partial_test_key");
+            env::remove_var("RELAY_NAME");
+            env::remove_var("RELAY_DESCRIPTION");
+            env::remove_var("RELAY_CONTACT");
+            env::remove_var("RELAY_SOFTWARE");
+            env::remove_var("RELAY_VERSION");
+            // privacy_policyとiconのみ設定
+            env::set_var("RELAY_PRIVACY_POLICY", "https://example.com/privacy");
+            env::remove_var("RELAY_TERMS_OF_SERVICE");
+            env::remove_var("RELAY_POSTING_POLICY");
+            env::set_var("RELAY_ICON", "https://example.com/icon.png");
+            env::remove_var("RELAY_BANNER");
+        }
+
+        let info = RelayInformation::from_env().unwrap();
+        assert_eq!(info.pubkey, "partial_test_key");
+        // 設定したフィールドは値がある
+        assert_eq!(
+            info.privacy_policy.as_deref(),
+            Some("https://example.com/privacy")
+        );
+        assert_eq!(info.icon.as_deref(), Some("https://example.com/icon.png"));
+        // 未設定のフィールドはNone
+        assert!(info.terms_of_service.is_none());
+        assert!(info.posting_policy.is_none());
+        assert!(info.banner.is_none());
+
+        // JSONシリアライズでNoneのフィールドが省略されることを確認
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("privacy_policy"));
+        assert!(json.contains("icon"));
+        assert!(!json.contains("terms_of_service"));
+        assert!(!json.contains("posting_policy"));
+        assert!(!json.contains("banner"));
+
+        unsafe {
+            env::remove_var("RELAY_PUBKEY");
+            env::remove_var("RELAY_PRIVACY_POLICY");
+            env::remove_var("RELAY_ICON");
         }
     }
 }
