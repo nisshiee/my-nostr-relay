@@ -35,6 +35,9 @@ interface CardPlacement {
  *    - 既にこの連鎖で押し出されたもの
  * 3. 残った候補のうちスコアが最も低いものの位置に移動 → 連鎖
  */
+/** ドミノアニメーションの1ステップあたりの遅延（秒） */
+const DOMINO_DELAY = 0.08;
+
 function placeCard(
   layout: Map<string, CardPlacement>,
   columns: { id: string; y: number }[][],
@@ -45,6 +48,8 @@ function placeCard(
   scoreMap: Map<string, number>,
   columnCount: number,
   movedInChain: Set<string>,
+  /** 各カードの連鎖順序を記録（アニメーション遅延に使用） */
+  chainOrder?: Map<string, number>,
 ): void {
   const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
 
@@ -61,6 +66,9 @@ function placeCard(
   columns[targetCol].push({ id: cardId, y: targetY });
   layout.set(cardId, { col: targetCol, y: targetY });
   movedInChain.add(cardId);
+  if (chainOrder) {
+    chainOrder.set(cardId, chainOrder.size);
+  }
 
   // 押し出す相手がいない → 終了
   if (victimIdx === -1) return;
@@ -158,7 +166,7 @@ function placeCard(
   const best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
 
   // 押し出されるカードを best の位置に配置 → best が次に押し出される
-  placeCard(layout, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, movedInChain);
+  placeCard(layout, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, movedInChain, chainOrder);
 }
 
 /**
@@ -209,7 +217,7 @@ function insertIntoLayout(
   allNotes: CanvasNote[],
   columnCount: number,
   heightMap: Map<string, number>,
-): Map<string, CardPlacement> {
+): { layout: Map<string, CardPlacement>; chainOrder: Map<string, number> } {
   const layout = new Map(prevLayout);
 
   const columns: { id: string; y: number }[][] = Array.from(
@@ -243,9 +251,10 @@ function insertIntoLayout(
   }
 
   const movedInChain = new Set<string>();
-  placeCard(layout, columns, note.id, bestCol, 0, heightMap, scoreMap, columnCount, movedInChain);
+  const chainOrder = new Map<string, number>();
+  placeCard(layout, columns, note.id, bestCol, 0, heightMap, scoreMap, columnCount, movedInChain, chainOrder);
 
-  return layout;
+  return { layout, chainOrder };
 }
 
 interface LiveCanvasProps {
@@ -306,11 +315,13 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
   // レイアウト状態
   const [layoutState, setLayoutState] = useState<{
     layout: Map<string, CardPlacement>;
+    delayMap: Map<string, number>;
     prevNoteIds: Set<string>;
     prevColumnCount: number;
     prevHeightMap: Map<string, number>;
   }>({
     layout: new Map(),
+    delayMap: new Map(),
     prevNoteIds: new Set(),
     prevColumnCount: 0,
     prevHeightMap: new Map(),
@@ -327,12 +338,14 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     heightMap !== layoutState.prevHeightMap
   ) {
     let newLayout: Map<string, CardPlacement>;
+    const newDelayMap = new Map<string, number>();
 
     if (
       columnCount !== layoutState.prevColumnCount ||
       layoutState.layout.size === 0
     ) {
       newLayout = buildInitialLayout(scoredNotes, columnCount, heightMap);
+      // 初期配置はアニメーション遅延なし
     } else {
       const newNotes = scoredNotes.filter(
         (n) => !layoutState.prevNoteIds.has(n.id),
@@ -341,13 +354,18 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
       if (newNotes.length > 0) {
         newLayout = new Map(layoutState.layout);
         for (const note of newNotes) {
-          newLayout = insertIntoLayout(
+          const result = insertIntoLayout(
             newLayout,
             note,
             scoredNotes,
             columnCount,
             heightMap,
           );
+          newLayout = result.layout;
+          // chainOrder をアニメーション遅延に変換
+          for (const [id, order] of result.chainOrder) {
+            newDelayMap.set(id, order * DOMINO_DELAY);
+          }
         }
       } else {
         // 高さ変更 or カード削除のみ → 列割り当て維持、y座標再計算
@@ -374,6 +392,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
 
     setLayoutState({
       layout: newLayout,
+      delayMap: newDelayMap,
       prevNoteIds: currentNoteIds,
       prevColumnCount: columnCount,
       prevHeightMap: heightMap,
@@ -381,6 +400,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
   }
 
   const cardLayout = layoutState.layout;
+  const delayMap = layoutState.delayMap;
 
   function computeColumnHeight(colIdx: number): number {
     let maxBottom = 0;
@@ -492,6 +512,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                     {colNotes.map((note) => {
                       const placement = cardLayout.get(note.id);
                       const y = placement?.y ?? 0;
+                      const delay = delayMap.get(note.id) ?? 0;
                       return (
                         <motion.div
                           key={note.id}
@@ -507,6 +528,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                               type: "spring",
                               stiffness: 300,
                               damping: 30,
+                              delay,
                             },
                             opacity: {
                               duration: note.fadingOut ? 1 : 0.4,
