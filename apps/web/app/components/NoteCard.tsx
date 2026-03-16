@@ -30,24 +30,16 @@ function relativeTime(unixTimestamp: number): string {
 interface NoteCardProps {
   note: CanvasNote;
   profile?: NostrProfile;
-  fadingOut: boolean;
 }
 
-export function NoteCard({ note, profile, fadingOut }: NoteCardProps) {
+export function NoteCard({ note, profile }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
   const avatarUrl = profile?.picture;
 
   return (
     <div
-      className={`
-        rounded-xl border border-gray-200 dark:border-gray-700
-        bg-white dark:bg-gray-800
-        p-4 mb-3
-        transition-all duration-1000 ease-in-out
-        hover:shadow-md dark:hover:shadow-gray-900/50
-        ${fadingOut ? "opacity-0 scale-95" : "opacity-100 scale-100"}
-      `}
+      className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 mb-3 hover:shadow-md dark:hover:shadow-gray-900/50"
     >
       {/* ヘッダー: アバター + 名前 + 時刻 */}
       <div className="flex items-center gap-3 mb-2">

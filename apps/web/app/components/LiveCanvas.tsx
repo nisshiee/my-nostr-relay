@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import type { CanvasNote, NostrProfile } from "../lib/types";
 import {
   COLUMN_WIDTH,
@@ -178,18 +179,30 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                 className="flex flex-col"
                 style={{ width: `${COLUMN_WIDTH}px`, maxWidth: `${COLUMN_WIDTH}px` }}
               >
-                {colNotes.map((note) => (
-                  <div
-                    key={note.id}
-                    className="animate-[fadeIn_500ms_ease-in-out]"
-                  >
-                    <NoteCard
-                      note={note}
-                      profile={profiles.get(note.pubkey)}
-                      fadingOut={note.fadingOut}
-                    />
-                  </div>
-                ))}
+                <AnimatePresence mode="popLayout">
+                  {colNotes.map((note) => (
+                    <motion.div
+                      key={note.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{
+                        opacity: note.fadingOut ? 0 : 1,
+                        scale: note.fadingOut ? 0.95 : 1,
+                      }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      transition={{
+                        layout: { type: "spring", stiffness: 300, damping: 30 },
+                        opacity: { duration: note.fadingOut ? 1 : 0.4 },
+                        scale: { duration: note.fadingOut ? 1 : 0.3 },
+                      }}
+                    >
+                      <NoteCard
+                        note={note}
+                        profile={profiles.get(note.pubkey)}
+                      />
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
               </div>
             ))}
           </div>
