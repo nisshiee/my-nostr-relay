@@ -149,11 +149,8 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
       );
       let y = 0;
       for (const note of colNotes) {
-        const prevY = yState.positions.get(note.id);
-        // 単調増加: 新しい Y が以前より小さい場合は以前の値を維持
-        const newY = prevY !== undefined ? Math.max(y, prevY) : y;
-        newPositions.set(note.id, newY);
-        y = newY + (heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+        newPositions.set(note.id, y);
+        y += (heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
       }
     }
 
