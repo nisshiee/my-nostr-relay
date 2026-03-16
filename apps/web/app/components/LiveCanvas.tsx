@@ -112,7 +112,7 @@ function displaceCard(
 }
 
 /**
- * 初期配置: スコア昇順で「先頭スコアが最低の列」に配置
+ * 初期配置: スコア昇順で「先頭スコアが最低の列」に配置（単純積み上げ）
  */
 function buildInitialLayout(
   sortedNotes: CanvasNote[],
@@ -120,28 +120,34 @@ function buildInitialLayout(
   heightMap: Map<string, number>,
 ): Map<string, CardPlacement> {
   const layout = new Map<string, CardPlacement>();
-  const columns: Map<string, number>[] = Array.from(
-    { length: columnCount },
-    () => new Map(),
-  );
 
-  // 先頭スコアで列を選択するために、スコア昇順で処理
+  // 各列に割り当てられたノートIDリスト（スコア降順を維持）
+  const colNotes: string[][] = Array.from({ length: columnCount }, () => []);
+
+  // スコア昇順で処理して「先頭スコアが最低の列」に配置
   const notesAsc = [...sortedNotes].reverse();
   const topScore = new Array<number>(columnCount).fill(-Infinity);
 
   for (const note of notesAsc) {
-    // 先頭スコアが最も低い列を選ぶ
     let bestCol = 0;
     for (let c = 1; c < columnCount; c++) {
       if (topScore[c] < topScore[bestCol]) {
         bestCol = c;
       }
     }
-
-    // その列の一番上に挿入（y=0）して既存カードを押し出す
-    const movedInChain = new Set<string>();
-    displaceCard(layout, columns, note.id, bestCol, 0, heightMap, columnCount, movedInChain);
+    colNotes[bestCol].push(note.id);
     topScore[bestCol] = note.score;
+  }
+
+  // 各列内をスコア降順でソートしてy座標を積み上げ
+  const scoreMap = new Map(sortedNotes.map((n) => [n.id, n.score]));
+  for (let col = 0; col < columnCount; col++) {
+    colNotes[col].sort((a, b) => (scoreMap.get(b) ?? 0) - (scoreMap.get(a) ?? 0));
+    let y = 0;
+    for (const id of colNotes[col]) {
+      layout.set(id, { col, y });
+      y += (heightMap.get(id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+    }
   }
 
   return layout;
