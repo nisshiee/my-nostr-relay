@@ -7,6 +7,7 @@ import {
   COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
   FADEOUT_THRESHOLD,
+  DEFAULT_CARD_HEIGHT,
 } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { NoteCard } from "./NoteCard";
@@ -76,13 +77,15 @@ function shortestColumn(columns: CanvasNote[][]): number {
  * スコア降順のノートを列に割り当てる
  *
  * - 上位ノート（MOBILE_ROWS 行分）は中央優先の理想列に向かって±1列ずつ移動
+ *   ただし、移動する側のカードより高さが大きいカードを押し出してしまう場合は移動しない
  * - それ以降のノートは前回の列を維持（横移動なし）
  * - 前回の列情報がないノート（新規）は最も短い列に配置
  */
 function distributeToColumns(
   sortedNotes: CanvasNote[],
   columnCount: number,
-  prevAssignment: Map<string, number>
+  prevAssignment: Map<string, number>,
+  heightMap: Map<string, number>
 ): { columns: CanvasNote[][]; assignment: Map<string, number> } {
   const columns: CanvasNote[][] = Array.from(
     { length: columnCount },
@@ -90,6 +93,8 @@ function distributeToColumns(
   );
   const assignment = new Map<string, number>();
   const order = centerOutOrder(columnCount);
+
+  const getHeight = (id: string) => heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
 
   // 横移動可能な上位ノート数（MOBILE_ROWS 行 × 列数）
   const mobileCount = Math.min(
@@ -107,9 +112,21 @@ function distributeToColumns(
     if (prevCol === undefined || prevCol >= columnCount) {
       // 新規ノート → 理想列にそのまま配置
       col = idealCol;
+    } else if (prevCol === idealCol) {
+      // 既に理想列にいる
+      col = prevCol;
     } else {
-      // 既存ノート → 前回の列から理想列へ±1列移動
-      col = moveToward(prevCol, idealCol);
+      // 既存ノート → 前回の列から理想列へ±1列移動を試みる
+      const candidateCol = moveToward(prevCol, idealCol);
+      const myHeight = getHeight(note.id);
+
+      // 移動先の列にいるカードのうち、自分より高さが大きいカードがあるか確認
+      // そのカードが自分の移動によって押し出される（下にずれる）ことになる
+      const wouldDisplaceTaller = columns[candidateCol].some(
+        (existing) => getHeight(existing.id) > myHeight
+      );
+
+      col = wouldDisplaceTaller ? prevCol : candidateCol;
     }
     columns[col].push(note);
     assignment.set(note.id, col);
@@ -173,6 +190,21 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return sortByScore(updated);
   }, [notes, nowEpoch]);
 
+  // カードの高さマップ（ResizeObserver から更新される）
+  const [heightMap, setHeightMap] = useState<Map<string, number>>(
+    () => new Map()
+  );
+
+  // カードの高さが変わった時のコールバック
+  const handleHeightChange = useCallback((id: string, height: number) => {
+    setHeightMap((prev) => {
+      if (prev.get(id) === height) return prev;
+      const next = new Map(prev);
+      next.set(id, height);
+      return next;
+    });
+  }, []);
+
   // 列割り当て状態を「レンダー中の状態調整」パターンで管理
   // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
   const [columnState, setColumnState] = useState<{
@@ -180,27 +212,32 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     assignment: Map<string, number>;
     prevScoredNotes: CanvasNote[];
     prevColumnCount: number;
+    prevHeightMap: Map<string, number>;
   }>({
     columns: [],
     assignment: new Map(),
     prevScoredNotes: [],
     prevColumnCount: 0,
+    prevHeightMap: new Map(),
   });
 
   if (
     scoredNotes !== columnState.prevScoredNotes ||
-    columnCount !== columnState.prevColumnCount
+    columnCount !== columnState.prevColumnCount ||
+    heightMap !== columnState.prevHeightMap
   ) {
     const result = distributeToColumns(
       scoredNotes,
       columnCount,
-      columnState.assignment
+      columnState.assignment,
+      heightMap
     );
     setColumnState({
       columns: result.columns,
       assignment: result.assignment,
       prevScoredNotes: scoredNotes,
       prevColumnCount: columnCount,
+      prevHeightMap: heightMap,
     });
   }
 
@@ -298,6 +335,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                       <NoteCard
                         note={note}
                         profile={profiles.get(note.pubkey)}
+                        onHeightChange={handleHeightChange}
                       />
                     </motion.div>
                   ))}

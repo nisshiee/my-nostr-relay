@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef, useEffect } from "react";
 import Image from "next/image";
 import type { CanvasNote, NostrProfile } from "../lib/types";
 
@@ -30,15 +31,32 @@ function relativeTime(unixTimestamp: number): string {
 interface NoteCardProps {
   note: CanvasNote;
   profile?: NostrProfile;
+  onHeightChange?: (id: string, height: number) => void;
 }
 
-export function NoteCard({ note, profile }: NoteCardProps) {
+export function NoteCard({ note, profile, onHeightChange }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
   const avatarUrl = profile?.picture;
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  // ResizeObserver でカードの高さを測定して親に通知
+  useEffect(() => {
+    const el = cardRef.current;
+    if (!el || !onHeightChange) return;
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        onHeightChange(note.id, entry.borderBoxSize[0].blockSize);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [note.id, onHeightChange]);
 
   return (
     <div
+      ref={cardRef}
       className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 mb-3 hover:shadow-md dark:hover:shadow-gray-900/50"
     >
       {/* ヘッダー: アバター + 名前 + 時刻 */}

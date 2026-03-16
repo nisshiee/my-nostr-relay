@@ -21,3 +21,6 @@ export const MAX_NOTES = 200;
 
 /** 初回ノート取得時のlimit */
 export const INITIAL_NOTES_LIMIT = 500;
+
+/** 未測定カードのデフォルト高さ推定値（px） */
+export const DEFAULT_CARD_HEIGHT = 120;
