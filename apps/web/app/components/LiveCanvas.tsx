@@ -327,8 +327,21 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           );
         }
       } else {
-        // 新規なし（高さ変更のみ）→ 再配置
-        newLayout = buildInitialLayout(scoredNotes, columnCount, heightMap);
+        // 新規なし（高さ変更 or カード削除のみ）
+        // 列割り当てはそのまま維持、y座標だけ再計算
+        newLayout = new Map<string, CardPlacement>();
+        for (let col = 0; col < columnCount; col++) {
+          // この列のカードをスコア降順で取得（scoredNotes の順番を使う）
+          const colCards = scoredNotes.filter((n) => {
+            const p = layoutState.layout.get(n.id);
+            return p !== undefined && p.col === col;
+          });
+          let y = 0;
+          for (const note of colCards) {
+            newLayout.set(note.id, { col, y });
+            y += (heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+          }
+        }
       }
 
       // 削除されたカードをレイアウトから除去
