@@ -15,18 +15,6 @@ import { NoteCard } from "./NoteCard";
 /** カード間のギャップ（px）— mb-3 相当 */
 const GAP = 12;
 
-/**
- * ノート ID から決定論的に列インデックスを算出する（純粋関数）
- * FNV-1a 風の簡易ハッシュを使用
- */
-function idToColumn(id: string, columnCount: number): number {
-  let hash = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    hash ^= id.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return ((hash >>> 0) % columnCount);
-}
 
 interface LiveCanvasProps {
   notes: CanvasNote[];
@@ -107,11 +95,46 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     scoredNotes !== colAssignState.prevScoredNotes ||
     columnCount !== colAssignState.prevColumnCount
   ) {
+    const prevAssignment = colAssignState.assignment;
     const newAssignment = new Map<string, number>();
 
+    // 各列の先頭カードのスコアを追跡（新規カードの列選択に使う）
+    // scoredNotes はスコア降順なので、各列に最初に入ったカードが先頭
+    const topScore = new Array<number>(columnCount).fill(Infinity);
+
+    // まず既存カード（前回割り当てがあるもの）を同じ列に維持
     for (const note of scoredNotes) {
-      // ID ベースで決定論的に列を割り当て（列数が変わっても均等分配）
-      newAssignment.set(note.id, idToColumn(note.id, columnCount));
+      const prev = prevAssignment.get(note.id);
+      if (prev !== undefined && prev < columnCount) {
+        newAssignment.set(note.id, prev);
+      }
+    }
+
+    // 各列の先頭スコアを計算（scoredNotes はスコア降順）
+    for (const note of scoredNotes) {
+      const col = newAssignment.get(note.id);
+      if (col !== undefined && topScore[col] === Infinity) {
+        topScore[col] = note.score;
+      }
+    }
+
+    // 新規カード（前回割り当てがないもの）を「先頭スコアが最低の列」に配置
+    for (const note of scoredNotes) {
+      if (newAssignment.has(note.id)) continue;
+
+      // 先頭スコアが最も低い列を探す（空の列は Infinity なので優先される）
+      let bestCol = 0;
+      let bestScore = topScore[0];
+      for (let c = 1; c < columnCount; c++) {
+        if (topScore[c] < bestScore) {
+          bestScore = topScore[c];
+          bestCol = c;
+        }
+      }
+
+      newAssignment.set(note.id, bestCol);
+      // この新規カードが先頭に入るので、先頭スコアを更新
+      topScore[bestCol] = note.score;
     }
 
     setColAssignState({
