@@ -141,6 +141,13 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
       }
     }
 
+    // デバッグ: 列分配の状況を出力
+    const finalColCount = new Array<number>(columnCount).fill(0);
+    for (const col of newAssignment.values()) finalColCount[col]++;
+    console.log(
+      `[colAssign] total=${scoredNotes.length} existing=${newAssignment.size - newNotes.length} new=${newNotes.length} cols=${JSON.stringify(finalColCount)} topScores=${JSON.stringify(topScore.map((s) => s === -Infinity ? "-Inf" : s.toFixed(3)))}`
+    );
+
     setColAssignState({
       assignment: newAssignment,
       prevScoredNotes: scoredNotes,
