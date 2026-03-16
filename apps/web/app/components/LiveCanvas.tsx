@@ -119,8 +119,11 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     }
 
     // 新規カードを「先頭スコアが最低の列」に配置
-    // スコア降順（高い方から）で処理する
+    // スコア昇順（低い方から）で処理する
+    // 低スコアカードが各列に入ると topScore が低い値に設定され、
+    // 次のカード（より高スコア）は別の最低列に行く → 均等分配
     const newNotes = scoredNotes.filter((n) => !newAssignment.has(n.id));
+    newNotes.reverse(); // scoredNotes はスコア降順なので reverse で昇順に
 
     for (const note of newNotes) {
       // 先頭スコアが最も低い列を探す（カード数は判断に使わない）
@@ -132,9 +135,6 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
       }
 
       newAssignment.set(note.id, bestCol);
-      // 配置したカードのスコアで topScore を無条件更新
-      // 一括配置時: 最初のN枚(高スコア)が各列のトップを決める
-      // リアルタイム到着時: 新しいカードは最高スコアなので必ずトップになる
       topScore[bestCol] = note.score;
     }
 
