@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { CanvasNote, NostrProfile } from "../lib/types";
 import {
@@ -46,25 +46,58 @@ function centerOutOrder(columnCount: number): number[] {
 }
 
 /**
- * スコア降順のノートを中央優先で列に割り当てる
- * 高スコアノートが中央列に、低スコアが端列に配置される
+ * スコア降順のノートを列に割り当てる
+ *
+ * - 上位ノート（最初の columnCount 個）は中央優先で配置
+ * - それ以降のノートは前回の列を維持（横移動を抑制）
+ * - 前回の列情報がないノート（新規）は最も短い列に配置
  */
 function distributeToColumns(
   sortedNotes: CanvasNote[],
-  columnCount: number
-): CanvasNote[][] {
+  columnCount: number,
+  prevAssignment: Map<string, number>
+): { columns: CanvasNote[][]; assignment: Map<string, number> } {
   const columns: CanvasNote[][] = Array.from(
     { length: columnCount },
     () => []
   );
+  const assignment = new Map<string, number>();
   const order = centerOutOrder(columnCount);
 
-  sortedNotes.forEach((note, i) => {
-    const colIdx = order[i % columnCount];
+  // 上位ノート（各列に1つずつ）は中央優先配置
+  const topCount = Math.min(columnCount, sortedNotes.length);
+  for (let i = 0; i < topCount; i++) {
+    const note = sortedNotes[i];
+    const colIdx = order[i];
     columns[colIdx].push(note);
-  });
+    assignment.set(note.id, colIdx);
+  }
 
-  return columns;
+  // 残りのノートは列を維持
+  for (let i = topCount; i < sortedNotes.length; i++) {
+    const note = sortedNotes[i];
+    const prevCol = prevAssignment.get(note.id);
+
+    if (prevCol !== undefined && prevCol < columnCount) {
+      // 前回と同じ列に配置
+      columns[prevCol].push(note);
+      assignment.set(note.id, prevCol);
+    } else {
+      // 新規ノートまたは列数変更で前回の列がない → 最も短い列に
+      let minIdx = 0;
+      let minLen = columns[0].length;
+      for (let c = 1; c < columnCount; c++) {
+        if (columns[c].length < minLen) {
+          minLen = columns[c].length;
+          minIdx = c;
+        }
+      }
+      columns[minIdx].push(note);
+      assignment.set(note.id, minIdx);
+    }
+  }
+
+  return { columns, assignment };
 }
 
 export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
@@ -101,11 +134,19 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return sortByScore(updated);
   }, [notes, nowEpoch]);
 
-  // 列に分配
-  const columns = useMemo(
-    () => distributeToColumns(scoredNotes, columnCount),
-    [scoredNotes, columnCount]
-  );
+  // 列割り当ての前回状態を保持
+  const prevAssignmentRef = useRef<Map<string, number>>(new Map());
+
+  // 列に分配（上位は中央優先、それ以降は列を維持）
+  const columns = useMemo(() => {
+    const { columns: cols, assignment } = distributeToColumns(
+      scoredNotes,
+      columnCount,
+      prevAssignmentRef.current
+    );
+    prevAssignmentRef.current = assignment;
+    return cols;
+  }, [scoredNotes, columnCount]);
 
   // 接続状態インジケーター
   const statusIndicator = useCallback(() => {
