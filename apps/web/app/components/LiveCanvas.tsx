@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { CanvasNote, NostrProfile } from "../lib/types";
 import {
@@ -134,19 +134,38 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return sortByScore(updated);
   }, [notes, nowEpoch]);
 
-  // 列割り当ての前回状態を保持
-  const prevAssignmentRef = useRef<Map<string, number>>(new Map());
+  // 列割り当て状態を「レンダー中の状態調整」パターンで管理
+  // https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  const [columnState, setColumnState] = useState<{
+    columns: CanvasNote[][];
+    assignment: Map<string, number>;
+    prevScoredNotes: CanvasNote[];
+    prevColumnCount: number;
+  }>({
+    columns: [],
+    assignment: new Map(),
+    prevScoredNotes: [],
+    prevColumnCount: 0,
+  });
 
-  // 列に分配（上位は中央優先、それ以降は列を維持）
-  const columns = useMemo(() => {
-    const { columns: cols, assignment } = distributeToColumns(
+  if (
+    scoredNotes !== columnState.prevScoredNotes ||
+    columnCount !== columnState.prevColumnCount
+  ) {
+    const result = distributeToColumns(
       scoredNotes,
       columnCount,
-      prevAssignmentRef.current
+      columnState.assignment
     );
-    prevAssignmentRef.current = assignment;
-    return cols;
-  }, [scoredNotes, columnCount]);
+    setColumnState({
+      columns: result.columns,
+      assignment: result.assignment,
+      prevScoredNotes: scoredNotes,
+      prevColumnCount: columnCount,
+    });
+  }
+
+  const columns = columnState.columns;
 
   // 接続状態インジケーター
   const statusIndicator = useCallback(() => {
