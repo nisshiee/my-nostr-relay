@@ -73,9 +73,6 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
   useEffect(() => {
     if (!pubkey) {
-      setStatus("connecting");
-      setNotes([]);
-      setProfiles(new Map());
       return;
     }
 
@@ -187,10 +184,13 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
     connect();
 
-    // クリーンアップ
+    // クリーンアップ（pubkey変更時にステートもリセット）
     return () => {
       cancelled = true;
       closeRelay();
+      setStatus("connecting");
+      setNotes([]);
+      setProfiles(new Map());
     };
   }, [pubkey, addNote, upsertProfile]);
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import type { CanvasNote, NostrProfile } from "../lib/types";
 
 /** npubの省略表示を生成 */
@@ -52,10 +53,13 @@ export function NoteCard({ note, profile, fadingOut }: NoteCardProps) {
       <div className="flex items-center gap-3 mb-2">
         {/* アバター */}
         {avatarUrl ? (
-          <img
+          <Image
             src={avatarUrl}
             alt={displayName}
-            className="w-8 h-8 rounded-full object-cover flex-shrink-0"
+            width={32}
+            height={32}
+            className="h-8 w-8 shrink-0 rounded-full object-cover"
+            unoptimized
           />
         ) : (
           <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center flex-shrink-0">
