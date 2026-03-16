@@ -41,6 +41,21 @@ function displaceCard(
 ): void {
   const displacedHeight = heightMap.get(displacedId) ?? DEFAULT_CARD_HEIGHT;
 
+  // この位置にいるカードを1枚探す（自分の配置先と重なるカード）
+  let collidingId: string | null = null;
+  let collidingY = 0;
+
+  for (const [id, y] of columns[targetCol]) {
+    if (id === displacedId) continue;
+    if (movedInChain.has(id)) continue;
+    const h = heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
+    if (targetY < y + h + GAP && targetY + displacedHeight + GAP > y) {
+      collidingId = id;
+      collidingY = y;
+      break;
+    }
+  }
+
   // まず自分を配置（元の列から削除して新位置に）
   for (let c = 0; c < columnCount; c++) {
     columns[c].delete(displacedId);
@@ -49,56 +64,25 @@ function displaceCard(
   layout.set(displacedId, { col: targetCol, y: targetY });
   movedInChain.add(displacedId);
 
-  // 自分と衝突する全カードを収集
-  const colCards = columns[targetCol];
-  const collisions: { id: string; y: number }[] = [];
+  // 衝突なし → 終了
+  if (collidingId === null) return;
 
-  for (const [id, y] of colCards) {
-    if (id === displacedId) continue;
-    if (movedInChain.has(id)) continue;
-    const h = heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
-    if (targetY < y + h + GAP && targetY + displacedHeight + GAP > y) {
-      collisions.push({ id, y });
-    }
-  }
-
-  if (collisions.length === 0) return;
-
-  // 衝突するカードをy座標順に処理（上にあるものから）
-  collisions.sort((a, b) => a.y - b.y);
-
+  const collidingHeight = heightMap.get(collidingId) ?? DEFAULT_CARD_HEIGHT;
   const pushDownY = targetY + displacedHeight + GAP;
 
-  for (const { id: collidingId, y: collidingY } of collisions) {
-    // 既に別の衝突処理で移動済みならスキップ
-    if (movedInChain.has(collidingId)) continue;
-
-    const collidingHeight = heightMap.get(collidingId) ?? DEFAULT_CARD_HEIGHT;
-
-    // 横への押し出しを試みる
-    // 制約: 自分(displaced)より高さが大きいカードは横に押し出せない
-    let displaced = false;
-    if (collidingHeight <= displacedHeight) {
-      const candidates: { col: number; y: number }[] = [];
-
-      for (const nextCol of [targetCol - 1, targetCol + 1]) {
-        if (nextCol < 0 || nextCol >= columnCount) continue;
-        // 押し出し先のy は現在のy以上でなければならない（上には押し出されない）
-        candidates.push({ col: nextCol, y: collidingY });
-      }
-
-      if (candidates.length > 0) {
-        const best = candidates[0];
-        displaceCard(layout, columns, collidingId, best.col, best.y, heightMap, columnCount, movedInChain);
-        displaced = true;
-      }
-    }
-
-    if (!displaced) {
-      // 横に出せない → 下に押し出す
-      displaceCard(layout, columns, collidingId, targetCol, pushDownY, heightMap, columnCount, movedInChain);
+  // 横への押し出しを試みる
+  // 制約: 自分(displaced)より高さが大きいカードは横に押し出せない
+  if (collidingHeight <= displacedHeight) {
+    for (const nextCol of [targetCol - 1, targetCol + 1]) {
+      if (nextCol < 0 || nextCol >= columnCount) continue;
+      // 押し出し先のy は現在のy以上でなければならない（上には押し出されない）
+      displaceCard(layout, columns, collidingId, nextCol, collidingY, heightMap, columnCount, movedInChain);
+      return;
     }
   }
+
+  // 横に出せない → 下に押し出す（ドミノ式に連鎖する）
+  displaceCard(layout, columns, collidingId, targetCol, pushDownY, heightMap, columnCount, movedInChain);
 }
 
 /**
