@@ -45,11 +45,38 @@ function centerOutOrder(columnCount: number): number[] {
   return order;
 }
 
+/** 横移動を許可する上位行数 */
+const MOBILE_ROWS = 4;
+
+/**
+ * 目標列に向かって±1列ずつ移動する（隣の列までしか動かない）
+ */
+function moveToward(current: number, target: number): number {
+  if (target > current) return current + 1;
+  if (target < current) return current - 1;
+  return current;
+}
+
+/**
+ * 最も短い列のインデックスを返す
+ */
+function shortestColumn(columns: CanvasNote[][]): number {
+  let minIdx = 0;
+  let minLen = columns[0].length;
+  for (let c = 1; c < columns.length; c++) {
+    if (columns[c].length < minLen) {
+      minLen = columns[c].length;
+      minIdx = c;
+    }
+  }
+  return minIdx;
+}
+
 /**
  * スコア降順のノートを列に割り当てる
  *
- * - 上位ノート（最初の columnCount 個）は中央優先で配置
- * - それ以降のノートは前回の列を維持（横移動を抑制）
+ * - 上位ノート（MOBILE_ROWS 行分）は中央優先の理想列に向かって±1列ずつ移動
+ * - それ以降のノートは前回の列を維持（横移動なし）
  * - 前回の列情報がないノート（新規）は最も短い列に配置
  */
 function distributeToColumns(
@@ -64,36 +91,43 @@ function distributeToColumns(
   const assignment = new Map<string, number>();
   const order = centerOutOrder(columnCount);
 
-  // 上位ノート（各列に1つずつ）は中央優先配置
-  const topCount = Math.min(columnCount, sortedNotes.length);
-  for (let i = 0; i < topCount; i++) {
+  // 横移動可能な上位ノート数（MOBILE_ROWS 行 × 列数）
+  const mobileCount = Math.min(
+    MOBILE_ROWS * columnCount,
+    sortedNotes.length
+  );
+
+  // 上位ノート: 理想列に向かって±1列ずつ移動
+  for (let i = 0; i < mobileCount; i++) {
     const note = sortedNotes[i];
-    const colIdx = order[i];
-    columns[colIdx].push(note);
-    assignment.set(note.id, colIdx);
+    const idealCol = order[i % columnCount];
+    const prevCol = prevAssignment.get(note.id);
+
+    let col: number;
+    if (prevCol === undefined || prevCol >= columnCount) {
+      // 新規ノート → 理想列にそのまま配置
+      col = idealCol;
+    } else {
+      // 既存ノート → 前回の列から理想列へ±1列移動
+      col = moveToward(prevCol, idealCol);
+    }
+    columns[col].push(note);
+    assignment.set(note.id, col);
   }
 
-  // 残りのノートは列を維持
-  for (let i = topCount; i < sortedNotes.length; i++) {
+  // 下位ノート: 前回の列を維持
+  for (let i = mobileCount; i < sortedNotes.length; i++) {
     const note = sortedNotes[i];
     const prevCol = prevAssignment.get(note.id);
 
     if (prevCol !== undefined && prevCol < columnCount) {
-      // 前回と同じ列に配置
       columns[prevCol].push(note);
       assignment.set(note.id, prevCol);
     } else {
-      // 新規ノートまたは列数変更で前回の列がない → 最も短い列に
-      let minIdx = 0;
-      let minLen = columns[0].length;
-      for (let c = 1; c < columnCount; c++) {
-        if (columns[c].length < minLen) {
-          minLen = columns[c].length;
-          minIdx = c;
-        }
-      }
-      columns[minIdx].push(note);
-      assignment.set(note.id, minIdx);
+      // 新規 or 列数変更 → 最も短い列に
+      const col = shortestColumn(columns);
+      columns[col].push(note);
+      assignment.set(note.id, col);
     }
   }
 
