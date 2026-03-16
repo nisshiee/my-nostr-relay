@@ -29,60 +29,70 @@ interface CardPlacement {
  * 2. 横に押し出す場合、自分より高さが大きいカードは押し出せない
  * 3. 同じ連鎖内で既に移動したカードは押し出し対象外（循環防止）
  */
-function displaceCard(
+/**
+ * カードを指定位置に配置し、押し出されるカードをドミノ式に処理する
+ *
+ * 押し出しルール:
+ * - 新カードは列のトップ(y=0)に配置 → その列のトップにいた1枚が押し出される
+ * - 押し出されたカードの行き先は displace ロジックが決める（横 or 下）
+ * - 行き先にカードがいればさらに連鎖
+ *
+ * 制約:
+ * 1. 上には押し出されない（押し出し先の y >= 現在の y）
+ * 2. 横に押し出す場合、押し出すカードより高さが大きいカードは横に押し出せない
+ * 3. 同じ連鎖内で既に移動したカードは押し出し対象外（循環防止）
+ */
+function placeCard(
   layout: Map<string, CardPlacement>,
-  columns: Map<string, number>[],  // columns[colIdx] = Map<noteId, y>
-  displacedId: string,
+  /** 各列のカードリスト: columns[col] = [{id, y}...] yでソート済み */
+  columns: { id: string; y: number }[][],
+  cardId: string,
   targetCol: number,
   targetY: number,
   heightMap: Map<string, number>,
   columnCount: number,
   movedInChain: Set<string>,
 ): void {
-  const displacedHeight = heightMap.get(displacedId) ?? DEFAULT_CARD_HEIGHT;
+  const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
 
-  // この位置にいるカードを1枚探す（自分の配置先と重なるカード）
-  let collidingId: string | null = null;
-  let collidingY = 0;
+  // この位置にいるカードを探す（この列でtargetYの位置にいる1枚）
+  const colCards = columns[targetCol];
+  const victimIdx = colCards.findIndex(
+    (c) => c.id !== cardId && !movedInChain.has(c.id) && c.y === targetY,
+  );
 
-  for (const [id, y] of columns[targetCol]) {
-    if (id === displacedId) continue;
-    if (movedInChain.has(id)) continue;
-    const h = heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
-    if (targetY < y + h + GAP && targetY + displacedHeight + GAP > y) {
-      collidingId = id;
-      collidingY = y;
-      break;
-    }
-  }
-
-  // まず自分を配置（元の列から削除して新位置に）
+  // 自分を配置
+  // 元の列から削除
   for (let c = 0; c < columnCount; c++) {
-    columns[c].delete(displacedId);
+    columns[c] = columns[c].filter((card) => card.id !== cardId);
   }
-  columns[targetCol].set(displacedId, targetY);
-  layout.set(displacedId, { col: targetCol, y: targetY });
-  movedInChain.add(displacedId);
+  // 新位置に追加
+  colCards.push({ id: cardId, y: targetY });
+  layout.set(cardId, { col: targetCol, y: targetY });
+  movedInChain.add(cardId);
 
-  // 衝突なし → 終了
-  if (collidingId === null) return;
+  // 押し出す相手がいない → 終了
+  if (victimIdx === -1) return;
 
-  const collidingHeight = heightMap.get(collidingId) ?? DEFAULT_CARD_HEIGHT;
-  const pushDownY = targetY + displacedHeight + GAP;
+  const victim = colCards[victimIdx];
+  const victimId = victim.id;
+  const victimY = victim.y;
+  const victimHeight = heightMap.get(victimId) ?? DEFAULT_CARD_HEIGHT;
 
-  // 横への押し出しを試みる
-  // 制約: 自分(displaced)より高さが大きいカードは横に押し出せない
-  if (collidingHeight <= displacedHeight) {
+  // 押し出し先を決める
+  // 横への押し出しを試みる（制約: 自分より高さが大きいカードは横に押し出せない）
+  if (victimHeight <= cardHeight) {
     for (const nextCol of [targetCol - 1, targetCol + 1]) {
       if (nextCol < 0 || nextCol >= columnCount) continue;
-      // 押し出し先のy は現在のy以上でなければならない（上には押し出されない）
-      displaceCard(layout, columns, collidingId, nextCol, collidingY, heightMap, columnCount, movedInChain);
+      // 上には押し出されない: 押し出し先y >= 現在のy
+      placeCard(layout, columns, victimId, nextCol, victimY, heightMap, columnCount, movedInChain);
       return;
     }
   }
 
-  // 横に出せない → 下に押し出す（ドミノ式に連鎖する）
-  displaceCard(layout, columns, collidingId, targetCol, pushDownY, heightMap, columnCount, movedInChain);
+  // 横に出せない → 下に押し出す
+  const pushDownY = targetY + cardHeight + GAP;
+  placeCard(layout, columns, victimId, targetCol, pushDownY, heightMap, columnCount, movedInChain);
 }
 
 /**
@@ -138,15 +148,15 @@ function insertIntoLayout(
   heightMap: Map<string, number>,
 ): Map<string, CardPlacement> {
   const layout = new Map(prevLayout);
-  const columns: Map<string, number>[] = Array.from(
-    { length: columnCount },
-    () => new Map(),
-  );
 
-  // 既存レイアウトからcolumns を復元
+  // 既存レイアウトから columns を復元
+  const columns: { id: string; y: number }[][] = Array.from(
+    { length: columnCount },
+    () => [],
+  );
   for (const [id, placement] of layout) {
     if (placement.col < columnCount) {
-      columns[placement.col].set(id, placement.y);
+      columns[placement.col].push({ id, y: placement.y });
     }
   }
 
@@ -167,9 +177,9 @@ function insertIntoLayout(
     }
   }
 
-  // 列のトップ（y=0）に挿入してカスケード押し出し
+  // 列のトップ（y=0）に挿入 → トップにいたカードがドミノ式に押し出される
   const movedInChain = new Set<string>();
-  displaceCard(layout, columns, note.id, bestCol, 0, heightMap, columnCount, movedInChain);
+  placeCard(layout, columns, note.id, bestCol, 0, heightMap, columnCount, movedInChain);
 
   return layout;
 }
