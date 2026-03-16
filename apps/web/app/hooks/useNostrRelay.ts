@@ -9,7 +9,7 @@ import { RELAY_URL, MAX_NOTES, INITIAL_NOTES_LIMIT } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import type { CanvasNote, NostrProfile } from "../lib/types";
 
-type ConnectionStatus = "connecting" | "connected" | "error";
+type ConnectionStatus = "connecting" | "loading" | "connected" | "error";
 
 interface UseNostrRelayResult {
   notes: CanvasNote[];
@@ -205,7 +205,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
         const pool = new SimplePool();
         poolRef.current = pool;
-        setStatus("connected");
+        setStatus("loading");
 
         // ステップ4: フォロー中ユーザーのテキストノート（kind:1）をsubscribe
         // 初期ロード中はバッファに溜めて oneose でまとめて state に反映する
@@ -247,6 +247,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
                 const sorted = sortByScore(batchNotes);
                 setNotes(sorted.slice(0, MAX_NOTES));
               }
+              setStatus("connected");
               // 以降のイベントは addNote でリアルタイム処理
             },
           },

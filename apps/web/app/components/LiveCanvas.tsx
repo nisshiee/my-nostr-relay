@@ -19,7 +19,7 @@ const GAP = 12;
 interface LiveCanvasProps {
   notes: CanvasNote[];
   profiles: Map<string, NostrProfile>;
-  status: "connecting" | "connected" | "error";
+  status: "connecting" | "loading" | "connected" | "error";
 }
 
 /**
@@ -215,6 +215,13 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
             <span className="text-xs">接続中...</span>
           </div>
         );
+      case "loading":
+        return (
+          <div className="flex items-center gap-2 text-blue-500">
+            <div className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
+            <span className="text-xs">読み込み中...</span>
+          </div>
+        );
       case "connected":
         return (
           <div className="flex items-center gap-2 text-green-500">
@@ -251,6 +258,18 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
               <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-purple-400 border-t-transparent" />
               <p className="text-gray-500 dark:text-gray-400">
                 リレーに接続中...
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 初期ロード中の表示 */}
+        {status === "loading" && notes.length === 0 && (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-400 border-t-transparent" />
+              <p className="text-gray-500 dark:text-gray-400">
+                ノートを読み込み中...
               </p>
             </div>
           </div>
