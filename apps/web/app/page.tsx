@@ -1,42 +1,28 @@
 "use client";
 
+import { useRef } from "react";
 import { useAuth } from "./contexts/AuthContext";
 import { useNostrRelay } from "./hooks/useNostrRelay";
 import { LiveCanvas } from "./components/LiveCanvas";
 
-/** npubを省略表示する（例: npub1abc...xyz） */
-function truncateNpub(npub: string): string {
-  if (npub.length <= 20) return npub;
-  return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
-}
-
 export default function Home() {
   const { pubkey, npub, nip07Available, login, logout } = useAuth();
-  const { notes, profiles, status } = useNostrRelay(pubkey);
+  const publishedIdsRef = useRef<Set<string>>(new Set());
+  const { notes, profiles, status, publishEvent } = useNostrRelay(pubkey, publishedIdsRef);
 
   // 認証済み → LiveCanvas を全画面表示
   if (pubkey) {
     return (
-      <div className="relative h-screen">
-        {/* ログアウトボタン（LiveCanvasヘッダーの上にオーバーレイ） */}
-        <div className="absolute top-2 right-4 z-10 flex items-center gap-3">
-          {npub && (
-            <span
-              className="rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-              title={npub}
-            >
-              {truncateNpub(npub)}
-            </span>
-          )}
-          <button
-            onClick={logout}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-1 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-          >
-            ログアウト
-          </button>
-        </div>
-        <LiveCanvas notes={notes} profiles={profiles} status={status} />
-      </div>
+      <LiveCanvas
+        notes={notes}
+        profiles={profiles}
+        status={status}
+        pubkey={pubkey}
+        npub={npub}
+        publishEvent={publishEvent}
+        onLogout={logout}
+        publishedIdsRef={publishedIdsRef}
+      />
     );
   }
 
