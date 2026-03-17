@@ -31,10 +31,12 @@ function relativeTime(unixTimestamp: number): string {
 interface NoteCardProps {
   note: NoteCardType;
   profile?: NostrProfile;
+  /** リアクション集計（絵文字 → 件数） */
+  reactions?: Map<string, number>;
   onHeightChange?: (slotId: string, height: number) => void;
 }
 
-export function NoteCard({ note, profile, onHeightChange }: NoteCardProps) {
+export function NoteCard({ note, profile, reactions, onHeightChange }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
   const avatarUrl = profile?.picture;
@@ -94,6 +96,20 @@ export function NoteCard({ note, profile, onHeightChange }: NoteCardProps) {
       <p className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
         {note.content}
       </p>
+
+      {/* リアクションバッジ */}
+      {reactions && reactions.size > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {Array.from(reactions.entries()).map(([emoji, count]) => (
+            <span
+              key={emoji}
+              className="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-700"
+            >
+              {emoji} {count}
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

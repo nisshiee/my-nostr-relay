@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { Card, NoteCard as NoteCardType, NostrProfile } from "../lib/types";
+import type { Card, NoteCard as NoteCardType, NostrProfile, Reactions } from "../lib/types";
 import {
   COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
@@ -18,6 +18,8 @@ import { ComposeCard } from "./ComposeCard";
 interface LiveCanvasProps {
   notes: NoteCardType[];
   profiles: Map<string, NostrProfile>;
+  /** リアクション集計: eventId → (絵文字 → 件数) */
+  reactions: Reactions;
   status: "connecting" | "loading" | "connected" | "error";
   pubkey: string;
   npub: string | null;
@@ -37,7 +39,7 @@ function truncateNpub(npub: string): string {
   return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
 }
 
-export function LiveCanvas({ notes, profiles, status, pubkey, npub, publishEvent, onLogout, publishedIdsRef }: LiveCanvasProps) {
+export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, onLogout, publishedIdsRef }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [nowEpoch, setNowEpoch] = useState(() =>
     Math.floor(Date.now() / 1000),
@@ -285,6 +287,7 @@ export function LiveCanvas({ notes, profiles, status, pubkey, npub, publishEvent
                             <NoteCard
                               note={note}
                               profile={profiles.get(note.pubkey)}
+                              reactions={reactions.get(note.eventId)}
                               onHeightChange={handleHeightChange}
                             />
                           )}

@@ -8,7 +8,7 @@ import { LiveCanvas } from "./components/LiveCanvas";
 export default function Home() {
   const { pubkey, npub, nip07Available, autoLoading, login, logout } = useAuth();
   const publishedIdsRef = useRef<Set<string>>(new Set());
-  const { notes, profiles, status, publishEvent } = useNostrRelay(pubkey, publishedIdsRef);
+  const { notes, profiles, reactions, status, publishEvent } = useNostrRelay(pubkey, publishedIdsRef);
 
   // 認証済み → LiveCanvas を全画面表示
   if (pubkey) {
@@ -16,6 +16,7 @@ export default function Home() {
       <LiveCanvas
         notes={notes}
         profiles={profiles}
+        reactions={reactions}
         status={status}
         pubkey={pubkey}
         npub={npub}
