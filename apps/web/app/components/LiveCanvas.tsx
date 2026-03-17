@@ -94,6 +94,9 @@ function placeCard(
     columns[targetCol].push({ id: victimId, y: newY });
     layout.set(victimId, { col: targetCol, y: newY });
     movedInChain.add(victimId);
+    if (chainOrder) {
+      chainOrder.set(victimId, chainOrder.size);
+    }
     return;
   }
 
@@ -160,6 +163,9 @@ function placeCard(
     columns[targetCol].push({ id: victimId, y: newY });
     layout.set(victimId, { col: targetCol, y: newY });
     movedInChain.add(victimId);
+    if (chainOrder) {
+      chainOrder.set(victimId, chainOrder.size);
+    }
     return;
   }
 
