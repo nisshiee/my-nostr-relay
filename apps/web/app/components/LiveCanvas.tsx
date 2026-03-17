@@ -3,251 +3,21 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { CanvasNote, NostrProfile } from "../lib/types";
+import type { Grid, Placement } from "../lib/layoutTypes";
 import {
   COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
   FADEOUT_THRESHOLD,
   DEFAULT_CARD_HEIGHT,
 } from "../lib/constants";
+import { DOMINO_DELAY } from "../lib/layoutConstants";
+import {
+  buildInitialLayout,
+  insertCard,
+  reflow,
+} from "../lib/layoutEngine";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { NoteCard } from "./NoteCard";
-
-/** カード間のギャップ（px）— mb-3 相当 */
-const GAP = 12;
-
-/** カードの配置情報 */
-interface CardPlacement {
-  col: number;
-  y: number;
-}
-
-/**
- * カードを指定位置に配置し、押し出されるカードをドミノ式に処理する
- *
- * 押し出しルール:
- * 0. 押し出されるカードが列の一番下 → その列の最後尾に配置して終了
- * 1. 押し出し先候補のリストアップ:
- *    - 同じ列の、元位置の直下のカード
- *    - 左右の列で、元位置とy座標が1pxでも重なるカード（複数可）
- * 2. 別列の候補から除外:
- *    - 押し出されるカードより高さが大きいもの（同じ高さはOK）
- *    - topのy座標が押し出されるカードの元位置のtopより小さい（上にある）もの
- *    - 既にこの連鎖で押し出されたもの
- * 3. 残った候補のうちスコアが最も低いものの位置に移動 → 連鎖
- */
-/** ドミノアニメーションの1ステップあたりの遅延（秒） */
-const DOMINO_DELAY = 0.5;
-
-function placeCard(
-  layout: Map<string, CardPlacement>,
-  columns: { id: string; y: number }[][],
-  cardId: string,
-  targetCol: number,
-  targetY: number,
-  heightMap: Map<string, number>,
-  scoreMap: Map<string, number>,
-  columnCount: number,
-  movedInChain: Set<string>,
-  /** 各カードの連鎖順序を記録（アニメーション遅延に使用） */
-  chainOrder?: Map<string, number>,
-): void {
-  const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
-
-  // この位置にいるカードを探す
-  const colCards = columns[targetCol];
-  const victimIdx = colCards.findIndex(
-    (c) => c.id !== cardId && !movedInChain.has(c.id) && c.y === targetY,
-  );
-
-  // 自分を配置（元の列から削除して新位置に）
-  for (let c = 0; c < columnCount; c++) {
-    columns[c] = columns[c].filter((card) => card.id !== cardId);
-  }
-  columns[targetCol].push({ id: cardId, y: targetY });
-  layout.set(cardId, { col: targetCol, y: targetY });
-  movedInChain.add(cardId);
-  if (chainOrder) {
-    chainOrder.set(cardId, chainOrder.size);
-  }
-
-  // 押し出す相手がいない → 終了
-  if (victimIdx === -1) return;
-
-  // victimIdx は filter 前の colCards を参照しているので、
-  // filter 後の columns[targetCol] から victim を探し直す
-  const victim = columns[targetCol].find(
-    (c) => c.id !== cardId && c.y === targetY && !movedInChain.has(c.id),
-  );
-  if (!victim) return;
-
-  const victimId = victim.id;
-  const victimY = victim.y;
-  const victimHeight = heightMap.get(victimId) ?? DEFAULT_CARD_HEIGHT;
-
-  // --- ステップ0: 列の一番下のカードなら最後尾に配置して終了 ---
-  const sameColOthers = columns[targetCol].filter((c) => c.id !== victimId);
-  const isBottomOfColumn = sameColOthers.every((c) => c.y <= victimY);
-
-  if (isBottomOfColumn) {
-    const newY = targetY + cardHeight + GAP;
-    columns[targetCol] = columns[targetCol].filter((c) => c.id !== victimId);
-    columns[targetCol].push({ id: victimId, y: newY });
-    layout.set(victimId, { col: targetCol, y: newY });
-    movedInChain.add(victimId);
-    if (chainOrder) {
-      chainOrder.set(victimId, chainOrder.size);
-    }
-    return;
-  }
-
-  // --- ステップ1: 押し出し先候補のリストアップ ---
-  interface Candidate {
-    id: string;
-    col: number;
-    y: number;
-    score: number;
-  }
-  const candidates: Candidate[] = [];
-
-  // 1a. 同じ列の、元位置の直下のカード
-  const belowInCol = columns[targetCol]
-    .filter((c) => c.id !== victimId && c.y > victimY)
-    .sort((a, b) => a.y - b.y);
-  if (belowInCol.length > 0) {
-    const below = belowInCol[0];
-    candidates.push({
-      id: below.id,
-      col: targetCol,
-      y: below.y,
-      score: scoreMap.get(below.id) ?? 0,
-    });
-  }
-
-  // 1b. 左右の列で、元位置とy座標が1pxでも重なるカード
-  const victimBottom = victimY + victimHeight;
-  for (const adjCol of [targetCol - 1, targetCol + 1]) {
-    if (adjCol < 0 || adjCol >= columnCount) continue;
-    for (const card of columns[adjCol]) {
-      const cardH = heightMap.get(card.id) ?? DEFAULT_CARD_HEIGHT;
-      const cardBottom = card.y + cardH;
-      if (victimY < cardBottom && victimBottom > card.y) {
-        candidates.push({
-          id: card.id,
-          col: adjCol,
-          y: card.y,
-          score: scoreMap.get(card.id) ?? 0,
-        });
-      }
-    }
-  }
-
-  // --- ステップ2: 別列の候補から除外 ---
-  const filtered = candidates.filter((c) => {
-    // 同じ列の候補は除外対象外（常に残る）
-    if (c.col === targetCol) return true;
-
-    // topのy座標が押し出されるカードの元位置のtopより小さい（上にある）もの
-    if (c.y < victimY) return false;
-
-    // 既にこの連鎖で押し出されたもの
-    if (movedInChain.has(c.id)) return false;
-
-    return true;
-  });
-
-  // --- ステップ3: 最もスコアが低いものを押し出し先とする ---
-  if (filtered.length === 0) {
-    // 候補がない → 下に配置して終了
-    const newY = targetY + cardHeight + GAP;
-    columns[targetCol] = columns[targetCol].filter((c) => c.id !== victimId);
-    columns[targetCol].push({ id: victimId, y: newY });
-    layout.set(victimId, { col: targetCol, y: newY });
-    movedInChain.add(victimId);
-    if (chainOrder) {
-      chainOrder.set(victimId, chainOrder.size);
-    }
-    return;
-  }
-
-  const best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
-
-  // 押し出されるカードを best の位置に配置 → best が次に押し出される
-  placeCard(layout, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, movedInChain, chainOrder);
-}
-
-/**
- * 初期配置: スコア昇順で「先頭スコアが最低の列」に配置（単純積み上げ）
- */
-function buildInitialLayout(
-  sortedNotes: CanvasNote[],
-  columnCount: number,
-  heightMap: Map<string, number>,
-): Map<string, CardPlacement> {
-  const layout = new Map<string, CardPlacement>();
-
-  const colNotes: string[][] = Array.from({ length: columnCount }, () => []);
-
-  const notesAsc = [...sortedNotes].reverse();
-  const topScore = new Array<number>(columnCount).fill(-Infinity);
-
-  for (const note of notesAsc) {
-    let bestCol = 0;
-    for (let c = 1; c < columnCount; c++) {
-      if (topScore[c] < topScore[bestCol]) {
-        bestCol = c;
-      }
-    }
-    colNotes[bestCol].push(note.id);
-    topScore[bestCol] = note.score;
-  }
-
-  const scoreMap = new Map(sortedNotes.map((n) => [n.id, n.score]));
-  for (let col = 0; col < columnCount; col++) {
-    colNotes[col].sort((a, b) => (scoreMap.get(b) ?? 0) - (scoreMap.get(a) ?? 0));
-    let y = 0;
-    for (const id of colNotes[col]) {
-      layout.set(id, { col, y });
-      y += (heightMap.get(id) ?? DEFAULT_CARD_HEIGHT) + GAP;
-    }
-  }
-
-  return layout;
-}
-
-/**
- * 新規カード1枚を既存レイアウトに挿入
- */
-function insertIntoLayout(
-  prevLayout: Map<string, CardPlacement>,
-  note: CanvasNote,
-  allNotes: CanvasNote[],
-  columnCount: number,
-  heightMap: Map<string, number>,
-): { layout: Map<string, CardPlacement>; chainOrder: Map<string, number> } {
-  const layout = new Map(prevLayout);
-
-  const columns: { id: string; y: number }[][] = Array.from(
-    { length: columnCount },
-    () => [],
-  );
-  for (const [id, placement] of layout) {
-    if (placement.col < columnCount) {
-      columns[placement.col].push({ id, y: placement.y });
-    }
-  }
-
-  // スコアマップ
-  const scoreMap = new Map(allNotes.map((n) => [n.id, n.score]));
-
-  // リアルタイム到着は常に一番左の列（実験）
-  const bestCol = 0;
-
-  const movedInChain = new Set<string>();
-  const chainOrder = new Map<string, number>();
-  placeCard(layout, columns, note.id, bestCol, 0, heightMap, scoreMap, columnCount, movedInChain, chainOrder);
-
-  return { layout, chainOrder };
-}
 
 interface LiveCanvasProps {
   notes: CanvasNote[];
@@ -306,13 +76,13 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
 
   // レイアウト状態
   const [layoutState, setLayoutState] = useState<{
-    layout: Map<string, CardPlacement>;
+    grid: Grid;
     delayMap: Map<string, number>;
     prevNoteIds: Set<string>;
     prevColumnCount: number;
     prevHeightMap: Map<string, number>;
   }>({
-    layout: new Map(),
+    grid: new Map(),
     delayMap: new Map(),
     prevNoteIds: new Set(),
     prevColumnCount: 0,
@@ -329,70 +99,61 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     columnCount !== layoutState.prevColumnCount ||
     heightMap !== layoutState.prevHeightMap
   ) {
-    let newLayout: Map<string, CardPlacement>;
-    let newDelayMap: Map<string, number> = layoutState.delayMap;
+    let result: { grid: Grid; chain: { chainOrder: ReadonlyMap<string, number> } };
 
     if (
       columnCount !== layoutState.prevColumnCount ||
-      layoutState.layout.size === 0
+      layoutState.grid.size === 0
     ) {
-      newLayout = buildInitialLayout(scoredNotes, columnCount, heightMap);
-      newDelayMap = new Map(); // 初期配置はアニメーション遅延なし
+      // ── シナリオA: 初期配置 / カラム数変更 ──
+      result = buildInitialLayout(scoredNotes, columnCount, heightMap);
     } else {
       const newNotes = scoredNotes.filter(
         (n) => !layoutState.prevNoteIds.has(n.id),
       );
 
       if (newNotes.length > 0) {
-        newLayout = new Map(layoutState.layout);
-        newDelayMap = new Map();
+        // ── シナリオB: 新規カード挿入 ──
+        // 複数同時挿入時の chainOrder は最後の挿入の値が優先される
+        // （実運用では WebSocket で1件ずつ到着するため稀なケース）
+        let grid = layoutState.grid;
+        const mergedChainOrder = new Map<string, number>();
         for (const note of newNotes) {
-          const result = insertIntoLayout(
-            newLayout,
-            note,
-            scoredNotes,
-            columnCount,
-            heightMap,
-          );
-          newLayout = result.layout;
-          // chainOrder をアニメーション遅延に変換
-          for (const [id, order] of result.chainOrder) {
-            newDelayMap.set(id, order * DOMINO_DELAY);
+          const r = insertCard(grid, note, scoredNotes, columnCount, heightMap);
+          grid = r.grid;
+          for (const [id, order] of r.chain.chainOrder) {
+            mergedChainOrder.set(id, order);
           }
         }
+        result = { grid, chain: { chainOrder: mergedChainOrder } };
       } else {
-        // 高さ変更 or カード削除のみ → 列割り当て維持、y座標再計算
-        newLayout = new Map<string, CardPlacement>();
-        for (let col = 0; col < columnCount; col++) {
-          const colCards = scoredNotes.filter((n) => {
-            const p = layoutState.layout.get(n.id);
-            return p !== undefined && p.col === col;
-          });
-          let y = 0;
-          for (const note of colCards) {
-            newLayout.set(note.id, { col, y });
-            y += (heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
-          }
-        }
-      }
-
-      for (const id of newLayout.keys()) {
-        if (!currentNoteIds.has(id)) {
-          newLayout.delete(id);
-        }
+        // ── シナリオC: 高さ変更 / カード削除 ──
+        result = reflow(layoutState.grid, scoredNotes, columnCount, heightMap);
       }
     }
 
+    // delayMap 変換: chainOrder × DOMINO_DELAY
+    const delayMap = new Map<string, number>();
+    for (const [id, order] of result.chain.chainOrder) {
+      delayMap.set(id, order * DOMINO_DELAY);
+    }
+
+    // grid から削除済みカードを除去
+    const cleanGrid = new Map<string, Placement>();
+    for (const [id, p] of result.grid) {
+      if (currentNoteIds.has(id)) cleanGrid.set(id, p);
+    }
+
     setLayoutState({
-      layout: newLayout,
-      delayMap: newDelayMap,
+      grid: cleanGrid,
+      delayMap,
       prevNoteIds: currentNoteIds,
       prevColumnCount: columnCount,
       prevHeightMap: heightMap,
     });
   }
 
-  const cardLayout = layoutState.layout;
+  const cardLayout = layoutState.grid;
   const delayMap = layoutState.delayMap;
 
   function computeColumnHeight(colIdx: number): number {
