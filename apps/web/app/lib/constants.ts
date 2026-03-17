@@ -7,8 +7,8 @@ export const BOOTSTRAP_RELAYS = [
   "wss://relay.damus.io",             // Damus公式リレー
 ];
 
-/** EOSEタイムアウト（ms）。リレーからEOSEが返らない場合にこの時間で打ち切る */
-export const EOSE_TIMEOUT = 4000;
+/** ブートストラップ用EOSEタイムアウト（ms）。リレーからEOSEが返らない場合にこの時間で打ち切る */
+export const BOOTSTRAP_EOSE_TIMEOUT = 3000;
 
 /** Masonryグリッドの1列幅目安（px） */
 export const COLUMN_WIDTH = 320;
