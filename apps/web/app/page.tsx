@@ -6,7 +6,7 @@ import { useNostrRelay } from "./hooks/useNostrRelay";
 import { LiveCanvas } from "./components/LiveCanvas";
 
 export default function Home() {
-  const { pubkey, npub, nip07Available, login, logout } = useAuth();
+  const { pubkey, npub, nip07Available, autoLoading, login, logout } = useAuth();
   const publishedIdsRef = useRef<Set<string>>(new Set());
   const { notes, profiles, status, publishEvent } = useNostrRelay(pubkey, publishedIdsRef);
 
@@ -34,8 +34,18 @@ export default function Home() {
           Nostr Relay
         </h1>
 
+        {/* 自動ログイン中 */}
+        {autoLoading && (
+          <div className="flex flex-col items-center gap-4 py-8">
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-zinc-300 border-t-purple-500 dark:border-zinc-600 dark:border-t-purple-400" />
+            <p className="text-sm text-zinc-500 dark:text-zinc-400">
+              自動ログイン中...
+            </p>
+          </div>
+        )}
+
         {/* 検出中 */}
-        {nip07Available === null && (
+        {!autoLoading && nip07Available === null && (
           <div className="flex flex-col items-center gap-4 py-8">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-zinc-300 border-t-purple-500 dark:border-zinc-600 dark:border-t-purple-400" />
             <p className="text-sm text-zinc-500 dark:text-zinc-400">
@@ -45,7 +55,7 @@ export default function Home() {
         )}
 
         {/* 未認証 + NIP-07あり */}
-        {nip07Available === true && (
+        {!autoLoading && nip07Available === true && (
           <div className="flex flex-col items-center gap-4 py-8">
             <p className="text-sm text-zinc-600 dark:text-zinc-400">
               NIP-07拡張が検出されました
@@ -60,7 +70,7 @@ export default function Home() {
         )}
 
         {/* 未認証 + NIP-07なし */}
-        {nip07Available === false && (
+        {!autoLoading && nip07Available === false && (
           <div className="flex flex-col items-center gap-4 py-8">
             <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
               NIP-07対応のブラウザ拡張が必要です。
