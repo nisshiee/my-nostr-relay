@@ -133,7 +133,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
       try {
         // 自分のリレーに接続してメタデータを取得
-        const relay = await Relay.connect(RELAY_URL);
+        const relay = await Relay.connect(RELAY_URL, { enableReconnect: true });
         if (cancelled) {
           relay.close();
           return;
@@ -203,7 +203,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
         console.log("接続リレー一覧:", allRelays);
 
-        const pool = new SimplePool();
+        const pool = new SimplePool({ enableReconnect: true });
         poolRef.current = pool;
         setStatus("loading");
 
