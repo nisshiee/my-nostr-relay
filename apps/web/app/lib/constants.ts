@@ -1,5 +1,10 @@
-/** リレーのWebSocket URL */
-export const RELAY_URL = "wss://relay.nostr.nisshiee.org";
+/** ブートストラップリレー群（kind:10002/kind:3取得用） */
+export const BOOTSTRAP_RELAYS = [
+  "wss://relay.nostr.nisshiee.org",  // 自分のリレー（最優先）
+  "wss://yabu.me",                    // 日本アグリゲーター
+  "wss://relay.nostr.band",           // 海外アグリゲーター（スパム少）
+  "wss://nos.lol",                    // 海外大手
+];
 
 /** Masonryグリッドの1列幅目安（px） */
 export const COLUMN_WIDTH = 320;
