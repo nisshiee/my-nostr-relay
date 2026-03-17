@@ -10,6 +10,9 @@ export const BOOTSTRAP_RELAYS = [
 /** ブートストラップ用EOSEタイムアウト（ms）。リレーからEOSEが返らない場合にこの時間で打ち切る */
 export const BOOTSTRAP_EOSE_TIMEOUT = 3000;
 
+/** WebSocket接続確立のタイムアウト（ms）。この時間内に接続できないリレーは諦める */
+export const MAX_WAIT_FOR_CONNECTION = 1000;
+
 /** Masonryグリッドの1列幅目安（px） */
 export const COLUMN_WIDTH = 320;
 

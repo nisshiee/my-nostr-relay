@@ -7,6 +7,7 @@ import type { SubCloser } from "nostr-tools/abstract-pool";
 import {
   BOOTSTRAP_RELAYS,
   BOOTSTRAP_EOSE_TIMEOUT,
+  MAX_WAIT_FOR_CONNECTION,
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
   REACTION_POLL_INTERVAL,
@@ -194,7 +195,11 @@ export function useNostrRelay(
 
       try {
         // SimplePoolを作成（ブートストラップ取得とメインfeedで使い回す）
-        const pool = new SimplePool({ enableReconnect: true });
+        const pool = new SimplePool({
+          enableReconnect: true,
+          enablePing: true,
+        });
+        pool.maxWaitForConnection = MAX_WAIT_FOR_CONNECTION;
         poolRef.current = pool;
 
         // ステップ1: kind:10002（リレーリスト）とkind:3（フォローリスト）を1リクエストで取得
