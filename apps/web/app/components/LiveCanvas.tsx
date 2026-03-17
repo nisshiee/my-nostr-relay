@@ -239,22 +239,8 @@ function insertIntoLayout(
   // スコアマップ
   const scoreMap = new Map(allNotes.map((n) => [n.id, n.score]));
 
-  // 先頭スコアが最低の列を探す
-  const topScore = new Array<number>(columnCount).fill(-Infinity);
-  for (const n of allNotes) {
-    const p = layout.get(n.id);
-    if (!p) continue;
-    if (n.score > topScore[p.col]) {
-      topScore[p.col] = n.score;
-    }
-  }
-
-  let bestCol = 0;
-  for (let c = 1; c < columnCount; c++) {
-    if (topScore[c] < topScore[bestCol]) {
-      bestCol = c;
-    }
-  }
+  // リアルタイム到着は常に一番左の列（実験）
+  const bestCol = 0;
 
   const movedInChain = new Set<string>();
   const chainOrder = new Map<string, number>();
