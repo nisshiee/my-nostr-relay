@@ -26,6 +26,9 @@ export interface ComposeCard extends CardBase {
 /** キャンバス上に配置されるカード（Discriminated Union） */
 export type Card = NoteCard | ComposeCard;
 
+/** リアクション集計: eventId → (絵文字 → 件数) のマッピング */
+export type Reactions = Map<string, Map<string, number>>;
+
 /** プロフィール情報 */
 export interface NostrProfile {
   name?: string;

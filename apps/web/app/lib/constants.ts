@@ -38,3 +38,9 @@ export const COLUMN_GAP = 16;
 
 /** ドミノアニメーションの1ステップあたりの遅延（秒） */
 export const DOMINO_DELAY = 0.1;
+
+/** リアクション再subscribe間隔（ms） */
+export const REACTION_POLL_INTERVAL = 30_000;
+
+/** リアクションsubscribeのsince安全マージン（秒） */
+export const REACTION_SINCE_SAFETY_MARGIN = 10;

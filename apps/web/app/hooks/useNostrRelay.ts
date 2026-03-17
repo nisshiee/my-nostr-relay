@@ -4,15 +4,22 @@ import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import type { SubCloser } from "nostr-tools/abstract-pool";
-import { BOOTSTRAP_RELAYS, MAX_NOTES, INITIAL_NOTES_LIMIT } from "../lib/constants";
+import {
+  BOOTSTRAP_RELAYS,
+  MAX_NOTES,
+  INITIAL_NOTES_LIMIT,
+  REACTION_POLL_INTERVAL,
+  REACTION_SINCE_SAFETY_MARGIN,
+} from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
-import type { NoteCard, NostrProfile } from "../lib/types";
+import type { NoteCard, NostrProfile, Reactions } from "../lib/types";
 
 type ConnectionStatus = "connecting" | "loading" | "connected" | "error";
 
 interface UseNostrRelayResult {
   notes: NoteCard[];
   profiles: Map<string, NostrProfile>;
+  reactions: Reactions;
   status: ConnectionStatus;
   relayUrls: string[];
   publishEvent: (event: NostrEvent) => Promise<void>;
@@ -36,13 +43,70 @@ export function useNostrRelay(
   );
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [relayUrls, setRelayUrls] = useState<string[]>([]);
+  const [reactions, setReactions] = useState<Reactions>(new Map());
 
   // クリーンアップ用のref
   const poolRef = useRef<SimplePool | null>(null);
   const poolSubsRef = useRef<SubCloser[]>([]);
 
+  // リアクション定期再subscribe用のref
+  const reactionSubRef = useRef<SubCloser | null>(null);
+  const reactionIntervalRef = useRef<number | null>(null);
+  const lastReactionSubClosedAtRef = useRef<number | undefined>(undefined);
+  const newNotesMinCreatedAtRef = useRef<number | undefined>(undefined);
+  const seenReactionIdsRef = useRef<Set<string>>(new Set());
+  const notesRef = useRef<NoteCard[]>([]);
+
+  /** リアクションのcontentを正規化する。カスタム絵文字（:shortcode:）はnullを返す */
+  const normalizeReactionContent = useCallback((content: string): string | null => {
+    // "+" または空文字 → 👍
+    if (content === "+" || content === "") return "👍";
+    // "-" → 👎
+    if (content === "-") return "👎";
+    // NIP-30カスタム絵文字（:shortcode: 形式）→ 無視
+    if (content.startsWith(":") && content.endsWith(":") && content.length > 2) return null;
+    // 通常の絵文字はそのまま
+    return content;
+  }, []);
+
+  /** kind:7リアクションイベントを集計に追加する */
+  const addReaction = useCallback((event: Event) => {
+    // 受信済みリアクションの重複排除
+    if (seenReactionIdsRef.current.has(event.id)) return;
+    seenReactionIdsRef.current.add(event.id);
+
+    // リアクション対象のeventIdを "e" タグから取得（最後の "e" タグが対象）
+    const eTags = event.tags.filter((tag) => tag[0] === "e" && tag[1]);
+    if (eTags.length === 0) return;
+    const targetEventId = eTags[eTags.length - 1]![1]!;
+
+    const emoji = normalizeReactionContent(event.content);
+    if (emoji === null) return; // カスタム絵文字は無視
+
+    setReactions((prev) => {
+      const next = new Map(prev);
+      const eventReactions = next.get(targetEventId);
+      if (eventReactions) {
+        const updated = new Map(eventReactions);
+        updated.set(emoji, (updated.get(emoji) ?? 0) + 1);
+        next.set(targetEventId, updated);
+      } else {
+        next.set(targetEventId, new Map([[emoji, 1]]));
+      }
+      return next;
+    });
+  }, [normalizeReactionContent]);
+
   /** ノートを追加（重複排除・スコア計算・prune込み） */
   const addNote = useCallback((event: Event) => {
+    // 新規ノートのcreated_atを追跡（リアクション再subscribe時のsince計算用）
+    if (
+      newNotesMinCreatedAtRef.current === undefined ||
+      event.created_at < newNotesMinCreatedAtRef.current
+    ) {
+      newNotesMinCreatedAtRef.current = event.created_at;
+    }
+
     setNotes((prev) => {
       // eventIDで重複チェック
       if (prev.some((n) => n.eventId === event.id)) return prev;
@@ -86,6 +150,11 @@ export function useNostrRelay(
       // JSONパース失敗は無視
     }
   }, []);
+
+  // notesの最新値をrefで同期（タイマーコールバックからアクセスするため）
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
 
   useEffect(() => {
     if (!pubkey) {
@@ -194,7 +263,6 @@ export function useNostrRelay(
           ? [...new Set([...BOOTSTRAP_RELAYS, ...relayUrls])]
           : [...BOOTSTRAP_RELAYS];
 
-        console.log("接続リレー一覧:", allRelays);
         setRelayUrls(allRelays);
 
         setStatus("loading");
@@ -220,6 +288,7 @@ export function useNostrRelay(
               if (cancelled) return;
               initialLoading = false;
               // バッファを一括で state に反映
+              let displayedNotes: NoteCard[] = [];
               if (initialBuffer.length > 0) {
                 const now = Math.floor(Date.now() / 1000);
                 const seen = new Set<string>();
@@ -238,10 +307,103 @@ export function useNostrRelay(
                     fadingOut: false,
                   });
                 }
-                const sorted = sortByScore(batchNotes);
-                setNotes(sorted.slice(0, MAX_NOTES));
+                displayedNotes = sortByScore(batchNotes).slice(0, MAX_NOTES);
+                setNotes(displayedNotes);
               }
               setStatus("connected");
+
+              // ステップ4b: 表示中ノートのリアクション（kind:7）をsubscribe
+              const eventIds = displayedNotes.map((n) => n.eventId);
+              if (eventIds.length > 0) {
+                // リアクション初期ロード用バッファ（oneoseでまとめてstateに反映する）
+                const reactionBuffer: Event[] = [];
+                let reactionInitialLoading = true;
+                const reactionSub = pool.subscribeMany(
+                  allRelays,
+                  { kinds: [7], "#e": eventIds },
+                  {
+                    onevent(event: Event) {
+                      if (cancelled) return;
+                      if (reactionInitialLoading) {
+                        reactionBuffer.push(event);
+                      } else {
+                        addReaction(event);
+                      }
+                    },
+                    oneose() {
+                      reactionInitialLoading = false;
+                      // バッファを一括でstateに反映
+                      if (reactionBuffer.length > 0) {
+                        const batchReactions: Reactions = new Map();
+                        for (const evt of reactionBuffer) {
+                          if (seenReactionIdsRef.current.has(evt.id)) continue;
+                          seenReactionIdsRef.current.add(evt.id);
+                          const eTags = evt.tags.filter((tag) => tag[0] === "e" && tag[1]);
+                          if (eTags.length === 0) continue;
+                          const targetId = eTags[eTags.length - 1]![1]!;
+                          const emoji = normalizeReactionContent(evt.content);
+                          if (emoji === null) continue;
+                          const eventReactions = batchReactions.get(targetId);
+                          if (eventReactions) {
+                            eventReactions.set(emoji, (eventReactions.get(emoji) ?? 0) + 1);
+                          } else {
+                            batchReactions.set(targetId, new Map([[emoji, 1]]));
+                          }
+                        }
+                        setReactions(batchReactions);
+                      }
+                      // リアクション初期ロード完了 — 定期再subscribeタイマーを開始
+                      lastReactionSubClosedAtRef.current = Math.floor(Date.now() / 1000);
+                      reactionIntervalRef.current = window.setInterval(() => {
+                        if (cancelled) return;
+
+                        // 1. 現在のリアクションsubを閉じる & poolSubsRefから除去
+                        if (reactionSubRef.current) {
+                          const closingSub = reactionSubRef.current;
+                          closingSub.close();
+                          poolSubsRef.current = poolSubsRef.current.filter((s) => s !== closingSub);
+                          reactionSubRef.current = null;
+                        }
+
+                        // 2. sinceを計算（前回の閉じた時刻ベース）
+                        let since = (lastReactionSubClosedAtRef.current ?? Math.floor(Date.now() / 1000)) - REACTION_SINCE_SAFETY_MARGIN;
+                        if (newNotesMinCreatedAtRef.current !== undefined) {
+                          since = Math.min(since, newNotesMinCreatedAtRef.current);
+                        }
+
+                        // 3. 閉じた時刻を記録（since計算の後に更新）
+                        lastReactionSubClosedAtRef.current = Math.floor(Date.now() / 1000);
+
+                        // 4. newNotesMinCreatedAtRefをリセット
+                        newNotesMinCreatedAtRef.current = undefined;
+
+                        // 5. 現在のnotesからeventIdを収集
+                        const currentEventIds = notesRef.current.map((n) => n.eventId);
+                        if (currentEventIds.length === 0) return;
+
+                        // 6. 新しいリアクションsubscriptionを発行
+                        const newReactionSub = pool.subscribeMany(
+                          allRelays,
+                          { kinds: [7], "#e": currentEventIds, since },
+                          {
+                            onevent(event: Event) {
+                              if (!cancelled) addReaction(event);
+                            },
+                            oneose() {
+                              // リアクション再subscribe完了
+                            },
+                          },
+                        );
+                        reactionSubRef.current = newReactionSub;
+                        poolSubsRef.current.push(newReactionSub);
+                      }, REACTION_POLL_INTERVAL);
+                    },
+                  },
+                );
+                reactionSubRef.current = reactionSub;
+                poolSubsRef.current.push(reactionSub);
+              }
+
               // 以降のイベントは addNote でリアルタイム処理
             },
           },
@@ -273,15 +435,25 @@ export function useNostrRelay(
 
     connect();
 
+    // クリーンアップ用にrefの値をキャプチャ
+    const seenReactionIds = seenReactionIdsRef.current;
+
     // クリーンアップ（pubkey変更時にステートもリセット）
     return () => {
       cancelled = true;
+      // リアクション定期再subscribeタイマーを停止
+      if (reactionIntervalRef.current !== null) {
+        clearInterval(reactionIntervalRef.current);
+        reactionIntervalRef.current = null;
+      }
+      seenReactionIds.clear();
       closeAll();
       setStatus("connecting");
       setNotes([]);
       setProfiles(new Map());
+      setReactions(new Map());
     };
-  }, [pubkey, addNote, upsertProfile]);
+  }, [pubkey, addNote, addReaction, upsertProfile, normalizeReactionContent]);
 
   /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
   const publishEvent = useCallback(
@@ -301,5 +473,5 @@ export function useNostrRelay(
     [relayUrls],
   );
 
-  return { notes, profiles, status, relayUrls, publishEvent };
+  return { notes, profiles, reactions, status, relayUrls, publishEvent };
 }
