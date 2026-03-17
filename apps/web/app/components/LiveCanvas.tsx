@@ -513,6 +513,8 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                       const placement = cardLayout.get(note.id);
                       const y = placement?.y ?? 0;
                       const delay = delayMap.get(note.id) ?? 0;
+                      // スコア降順のインデックス → 高スコアほど高い z-index
+                      const zIndex = colNotes.length - colNotes.indexOf(note);
                       return (
                         <motion.div
                           key={note.id}
@@ -542,6 +544,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                             top: 0,
                             left: 0,
                             width: "100%",
+                            zIndex,
                           }}
                         >
                           <NoteCard
