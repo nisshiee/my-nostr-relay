@@ -10,7 +10,7 @@ import {
   FADEOUT_THRESHOLD,
   DEFAULT_CARD_HEIGHT,
 } from "../lib/constants";
-import { DOMINO_DELAY } from "../lib/layoutConstants";
+import { DOMINO_DELAY, COLUMN_GAP } from "../lib/layoutConstants";
 import {
   buildInitialLayout,
   insertCard,
@@ -256,43 +256,48 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           </div>
         )}
 
-        {notes.length > 0 && (
-          <div className="flex justify-center gap-4">
-            {Array.from({ length: columnCount }, (_, colIdx) => {
-              const colNotes = scoredNotes.filter((n) => {
-                const p = cardLayout.get(n.id);
-                return p !== undefined && p.col === colIdx;
-              });
-              const columnHeight = computeColumnHeight(colIdx);
-
-              return (
-                <div
-                  key={colIdx}
-                  className="relative"
-                  style={{
-                    width: `${COLUMN_WIDTH}px`,
-                    maxWidth: `${COLUMN_WIDTH}px`,
-                    height: columnHeight,
-                  }}
-                >
-                  <AnimatePresence>
-                    {colNotes.map((note) => {
-                      const placement = cardLayout.get(note.id);
-                      const y = placement?.y ?? 0;
+        {notes.length > 0 && (() => {
+          const containerHeight = Math.max(
+            ...Array.from({ length: columnCount }, (_, i) => computeColumnHeight(i)),
+            0,
+          );
+          return (
+            <div className="flex justify-center">
+              <div
+                className="relative"
+                style={{
+                  width: columnCount * COLUMN_WIDTH + (columnCount - 1) * COLUMN_GAP,
+                  height: containerHeight,
+                }}
+              >
+                <AnimatePresence>
+                  {scoredNotes
+                    .filter((n) => cardLayout.has(n.id))
+                    .map((note, idx, arr) => {
+                      const placement = cardLayout.get(note.id)!;
+                      const x = placement.col * (COLUMN_WIDTH + COLUMN_GAP);
+                      const y = placement.y;
                       const delay = delayMap.get(note.id) ?? 0;
-                      // スコア降順のインデックス → 高スコアほど高い z-index
-                      const zIndex = colNotes.length - colNotes.indexOf(note);
+                      const zIndex = arr.length - idx;
                       return (
                         <motion.div
                           key={note.id}
-                          initial={{ opacity: 0, scale: 0.8 }}
+                          layout={false}
+                          initial={{ opacity: 0, scale: 0.8, x, y }}
                           animate={{
                             opacity: note.fadingOut ? 0 : 1,
                             scale: note.fadingOut ? 0.95 : 1,
+                            x,
                             y,
                           }}
                           exit={{ opacity: 0, scale: 0.8 }}
                           transition={{
+                            x: {
+                              type: "spring",
+                              stiffness: 300,
+                              damping: 30,
+                              delay,
+                            },
                             y: {
                               type: "spring",
                               stiffness: 300,
@@ -310,7 +315,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                             position: "absolute",
                             top: 0,
                             left: 0,
-                            width: "100%",
+                            width: COLUMN_WIDTH,
                             zIndex,
                           }}
                         >
@@ -322,12 +327,11 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                         </motion.div>
                       );
                     })}
-                  </AnimatePresence>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                </AnimatePresence>
+              </div>
+            </div>
+          );
+        })()}
       </main>
     </div>
   );
