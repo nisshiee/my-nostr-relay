@@ -133,9 +133,22 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     }
 
     // delayMap 変換: chainOrder × DOMINO_DELAY
-    const delayMap = new Map<string, number>();
-    for (const [id, order] of result.chain.chainOrder) {
-      delayMap.set(id, order * DOMINO_DELAY);
+    // シナリオC（reflow）では chainOrder が空なので、前回の delayMap を維持する
+    let delayMap: Map<string, number>;
+    if (result.chain.chainOrder.size > 0) {
+      delayMap = new Map<string, number>();
+      for (const [id, order] of result.chain.chainOrder) {
+        delayMap.set(id, order * DOMINO_DELAY);
+      }
+    } else if (
+      columnCount !== layoutState.prevColumnCount ||
+      layoutState.grid.size === 0
+    ) {
+      // シナリオA: 初期配置 / カラム数変更 → delayMap リセット
+      delayMap = new Map<string, number>();
+    } else {
+      // シナリオC: 高さ変更 / カード削除 → 前回の delayMap を維持
+      delayMap = layoutState.delayMap;
     }
 
     // grid から削除済みカードを除去
