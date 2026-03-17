@@ -344,14 +344,14 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     heightMap !== layoutState.prevHeightMap
   ) {
     let newLayout: Map<string, CardPlacement>;
-    const newDelayMap = new Map<string, number>();
+    let newDelayMap: Map<string, number> = layoutState.delayMap;
 
     if (
       columnCount !== layoutState.prevColumnCount ||
       layoutState.layout.size === 0
     ) {
       newLayout = buildInitialLayout(scoredNotes, columnCount, heightMap);
-      // 初期配置はアニメーション遅延なし
+      newDelayMap = new Map(); // 初期配置はアニメーション遅延なし
     } else {
       const newNotes = scoredNotes.filter(
         (n) => !layoutState.prevNoteIds.has(n.id),
@@ -359,6 +359,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
 
       if (newNotes.length > 0) {
         newLayout = new Map(layoutState.layout);
+        newDelayMap = new Map();
         for (const note of newNotes) {
           const result = insertIntoLayout(
             newLayout,
