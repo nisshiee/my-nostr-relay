@@ -1,3 +1,4 @@
+import type React from "react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Relay } from "nostr-tools/relay";
 import { SimplePool } from "nostr-tools/pool";
@@ -7,14 +8,16 @@ import type { Subscription } from "nostr-tools/abstract-relay";
 import type { SubCloser } from "nostr-tools/abstract-pool";
 import { RELAY_URL, MAX_NOTES, INITIAL_NOTES_LIMIT } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
-import type { CanvasNote, NostrProfile } from "../lib/types";
+import type { NoteCard, NostrProfile } from "../lib/types";
 
 type ConnectionStatus = "connecting" | "loading" | "connected" | "error";
 
 interface UseNostrRelayResult {
-  notes: CanvasNote[];
+  notes: NoteCard[];
   profiles: Map<string, NostrProfile>;
   status: ConnectionStatus;
+  relayUrls: string[];
+  publishEvent: (event: NostrEvent) => Promise<void>;
 }
 
 /**
@@ -25,12 +28,16 @@ interface UseNostrRelayResult {
  * 2. 取得したリレーリスト全体にSimplePoolで接続
  * 3. フォロー中ユーザーのkind:1（ノート）とkind:0（プロフィール）をsubscribe
  */
-export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
-  const [notes, setNotes] = useState<CanvasNote[]>([]);
+export function useNostrRelay(
+  pubkey: string | null,
+  publishedIdsRef?: React.RefObject<Set<string>>,
+): UseNostrRelayResult {
+  const [notes, setNotes] = useState<NoteCard[]>([]);
   const [profiles, setProfiles] = useState<Map<string, NostrProfile>>(
     new Map(),
   );
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
+  const [relayUrls, setRelayUrls] = useState<string[]>([]);
 
   // クリーンアップ用のref
   const relayRef = useRef<Relay | null>(null);
@@ -41,12 +48,16 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
   /** ノートを追加（重複排除・スコア計算・prune込み） */
   const addNote = useCallback((event: Event) => {
     setNotes((prev) => {
-      // 重複チェック
-      if (prev.some((n) => n.id === event.id)) return prev;
+      // eventIDで重複チェック
+      if (prev.some((n) => n.eventId === event.id)) return prev;
+      // Publish済みノートはスキップ（二重追加防止）
+      if (publishedIdsRef?.current?.has(event.id)) return prev;
 
       const now = Math.floor(Date.now() / 1000);
-      const newNote: CanvasNote = {
-        id: event.id,
+      const newNote: NoteCard = {
+        type: "note",
+        slotId: crypto.randomUUID(),
+        eventId: event.id,
         pubkey: event.pubkey,
         content: event.content,
         created_at: event.created_at,
@@ -64,7 +75,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
 
       return updated;
     });
-  }, []);
+  }, [publishedIdsRef]);
 
   /** プロフィールを追加・更新（kind:0イベントから） */
   const upsertProfile = useCallback((event: Event) => {
@@ -202,6 +213,7 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
           : [RELAY_URL];
 
         console.log("接続リレー一覧:", allRelays);
+        setRelayUrls(allRelays);
 
         const pool = new SimplePool({ enableReconnect: true });
         poolRef.current = pool;
@@ -231,12 +243,14 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
               if (initialBuffer.length > 0) {
                 const now = Math.floor(Date.now() / 1000);
                 const seen = new Set<string>();
-                const batchNotes: CanvasNote[] = [];
+                const batchNotes: NoteCard[] = [];
                 for (const event of initialBuffer) {
                   if (seen.has(event.id)) continue;
                   seen.add(event.id);
                   batchNotes.push({
-                    id: event.id,
+                    type: "note",
+                    slotId: crypto.randomUUID(),
+                    eventId: event.id,
                     pubkey: event.pubkey,
                     content: event.content,
                     created_at: event.created_at,
@@ -289,5 +303,23 @@ export function useNostrRelay(pubkey: string | null): UseNostrRelayResult {
     };
   }, [pubkey, addNote, upsertProfile]);
 
-  return { notes, profiles, status };
+  /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
+  const publishEvent = useCallback(
+    async (event: NostrEvent) => {
+      const pool = poolRef.current;
+      if (!pool || relayUrls.length === 0) {
+        throw new Error("リレーに接続されていません");
+      }
+      const results = await Promise.allSettled(
+        pool.publish(relayUrls, event as Event),
+      );
+      const hasSuccess = results.some((r) => r.status === "fulfilled");
+      if (!hasSuccess) {
+        throw new Error("すべてのリレーへの送信に失敗しました");
+      }
+    },
+    [relayUrls],
+  );
+
+  return { notes, profiles, status, relayUrls, publishEvent };
 }

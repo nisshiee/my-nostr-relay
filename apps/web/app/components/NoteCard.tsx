@@ -2,7 +2,7 @@
 
 import { useRef, useEffect } from "react";
 import Image from "next/image";
-import type { CanvasNote, NostrProfile } from "../lib/types";
+import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -29,9 +29,9 @@ function relativeTime(unixTimestamp: number): string {
 }
 
 interface NoteCardProps {
-  note: CanvasNote;
+  note: NoteCardType;
   profile?: NostrProfile;
-  onHeightChange?: (id: string, height: number) => void;
+  onHeightChange?: (slotId: string, height: number) => void;
 }
 
 export function NoteCard({ note, profile, onHeightChange }: NoteCardProps) {
@@ -47,12 +47,12 @@ export function NoteCard({ note, profile, onHeightChange }: NoteCardProps) {
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        onHeightChange(note.id, entry.borderBoxSize[0].blockSize);
+        onHeightChange(note.slotId, entry.borderBoxSize[0].blockSize);
       }
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [note.id, onHeightChange]);
+  }, [note.slotId, onHeightChange]);
 
   return (
     <div

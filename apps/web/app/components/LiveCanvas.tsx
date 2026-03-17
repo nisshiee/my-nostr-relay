@@ -2,34 +2,42 @@
 
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { CanvasNote, NostrProfile } from "../lib/types";
-import type { Grid, Placement } from "../lib/layoutTypes";
+import type { Card, NoteCard as NoteCardType, NostrProfile } from "../lib/types";
 import {
   COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
   FADEOUT_THRESHOLD,
-  DEFAULT_CARD_HEIGHT,
+  COLUMN_GAP,
 } from "../lib/constants";
-import { DOMINO_DELAY, COLUMN_GAP } from "../lib/layoutConstants";
-import {
-  buildInitialLayout,
-  insertCard,
-  reflow,
-} from "../lib/layoutEngine";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
+import { useDraftNotes } from "../hooks/useDraftNotes";
+import { useCardLayout } from "../hooks/useCardLayout";
 import { NoteCard } from "./NoteCard";
+import { ComposeCard } from "./ComposeCard";
 
 interface LiveCanvasProps {
-  notes: CanvasNote[];
+  notes: NoteCardType[];
   profiles: Map<string, NostrProfile>;
   status: "connecting" | "loading" | "connected" | "error";
+  pubkey: string;
+  npub: string | null;
+  publishEvent: (event: NostrEvent) => Promise<void>;
+  onLogout: () => void;
+  /** Publish済みイベントIDのSet。addNoteでスキップ判定に使用 */
+  publishedIdsRef: React.RefObject<Set<string>>;
 }
 
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
+/** npubを省略表示する */
+function truncateNpub(npub: string): string {
+  if (npub.length <= 20) return npub;
+  return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
+}
+
+export function LiveCanvas({ notes, profiles, status, pubkey, npub, publishEvent, onLogout, publishedIdsRef }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [nowEpoch, setNowEpoch] = useState(() =>
     Math.floor(Date.now() / 1000),
@@ -49,8 +57,23 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
     return () => clearInterval(timer);
   }, []);
 
-  const scoredNotes = useMemo(() => {
-    const updated = notes.map((note) => {
+  // 下書き・Publish管理
+  const {
+    draftNotes,
+    publishedNotes,
+    addDraft,
+    handleDraftInput,
+    handleDraftClose,
+    handleDraftPublish,
+  } = useDraftNotes({ pubkey, notes, publishedIdsRef });
+
+  const scoredCards = useMemo((): Card[] => {
+    // notes + publishedNotes をマージ（eventIdで重複排除）
+    const noteEventIds = new Set(notes.map((n) => n.eventId));
+    const uniquePublished = publishedNotes.filter((n) => !noteEventIds.has(n.eventId));
+    const allNotes = [...notes, ...uniquePublished];
+
+    const updatedNotes: Card[] = allNotes.map((note) => {
       const score = calcFreshnessScore(note.created_at, nowEpoch);
       return {
         ...note,
@@ -58,127 +81,27 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
         fadingOut: note.fadingOut || score <= FADEOUT_THRESHOLD,
       };
     });
-    return sortByScore(updated);
-  }, [notes, nowEpoch]);
 
-  const [heightMap, setHeightMap] = useState<Map<string, number>>(
-    () => new Map(),
-  );
-
-  const handleHeightChange = useCallback((id: string, height: number) => {
-    setHeightMap((prev) => {
-      if (prev.get(id) === height) return prev;
-      const next = new Map(prev);
-      next.set(id, height);
-      return next;
+    // draftNotes にスコアを再計算
+    const scoredDrafts: Card[] = draftNotes.map((d) => {
+      const score = calcFreshnessScore(d.created_at, nowEpoch);
+      return {
+        ...d,
+        score,
+        fadingOut: score <= FADEOUT_THRESHOLD,
+      };
     });
-  }, []);
 
-  // レイアウト状態
-  const [layoutState, setLayoutState] = useState<{
-    grid: Grid;
-    delayMap: Map<string, number>;
-    prevNoteIds: Set<string>;
-    prevColumnCount: number;
-    prevHeightMap: Map<string, number>;
-  }>({
-    grid: new Map(),
-    delayMap: new Map(),
-    prevNoteIds: new Set(),
-    prevColumnCount: 0,
-    prevHeightMap: new Map(),
-  });
+    return sortByScore([...scoredDrafts, ...updatedNotes]);
+  }, [notes, publishedNotes, draftNotes, nowEpoch]);
 
-  const currentNoteIds = useMemo(
-    () => new Set(scoredNotes.map((n) => n.id)),
-    [scoredNotes],
-  );
-
-  if (
-    currentNoteIds !== layoutState.prevNoteIds ||
-    columnCount !== layoutState.prevColumnCount ||
-    heightMap !== layoutState.prevHeightMap
-  ) {
-    let result: { grid: Grid; chain: { chainOrder: ReadonlyMap<string, number> } };
-
-    if (
-      columnCount !== layoutState.prevColumnCount ||
-      layoutState.grid.size === 0
-    ) {
-      // ── シナリオA: 初期配置 / カラム数変更 ──
-      result = buildInitialLayout(scoredNotes, columnCount, heightMap);
-    } else {
-      const newNotes = scoredNotes.filter(
-        (n) => !layoutState.prevNoteIds.has(n.id),
-      );
-
-      if (newNotes.length > 0) {
-        // ── シナリオB: 新規カード挿入 ──
-        // 複数同時挿入時の chainOrder は最後の挿入の値が優先される
-        // （実運用では WebSocket で1件ずつ到着するため稀なケース）
-        let grid = layoutState.grid;
-        const mergedChainOrder = new Map<string, number>();
-        for (const note of newNotes) {
-          const r = insertCard(grid, note, scoredNotes, columnCount, heightMap);
-          grid = r.grid;
-          for (const [id, order] of r.chain.chainOrder) {
-            mergedChainOrder.set(id, order);
-          }
-        }
-        result = { grid, chain: { chainOrder: mergedChainOrder } };
-      } else {
-        // ── シナリオC: 高さ変更 / カード削除 ──
-        result = reflow(layoutState.grid, scoredNotes, columnCount, heightMap);
-      }
-    }
-
-    // delayMap 変換: chainOrder × DOMINO_DELAY
-    // シナリオC（reflow）では chainOrder が空なので、前回の delayMap を維持する
-    let delayMap: Map<string, number>;
-    if (result.chain.chainOrder.size > 0) {
-      delayMap = new Map<string, number>();
-      for (const [id, order] of result.chain.chainOrder) {
-        delayMap.set(id, order * DOMINO_DELAY);
-      }
-    } else if (
-      columnCount !== layoutState.prevColumnCount ||
-      layoutState.grid.size === 0
-    ) {
-      // シナリオA: 初期配置 / カラム数変更 → delayMap リセット
-      delayMap = new Map<string, number>();
-    } else {
-      // シナリオC: 高さ変更 / カード削除 → 前回の delayMap を維持
-      delayMap = layoutState.delayMap;
-    }
-
-    // grid から削除済みカードを除去
-    const cleanGrid = new Map<string, Placement>();
-    for (const [id, p] of result.grid) {
-      if (currentNoteIds.has(id)) cleanGrid.set(id, p);
-    }
-
-    setLayoutState({
-      grid: cleanGrid,
-      delayMap,
-      prevNoteIds: currentNoteIds,
-      prevColumnCount: columnCount,
-      prevHeightMap: heightMap,
-    });
-  }
-
-  const cardLayout = layoutState.grid;
-  const delayMap = layoutState.delayMap;
-
-  function computeColumnHeight(colIdx: number): number {
-    let maxBottom = 0;
-    for (const [id, placement] of cardLayout) {
-      if (placement.col !== colIdx) continue;
-      const h = heightMap.get(id) ?? DEFAULT_CARD_HEIGHT;
-      const bottom = placement.y + h;
-      if (bottom > maxBottom) maxBottom = bottom;
-    }
-    return maxBottom;
-  }
+  // レイアウト計算
+  const {
+    handleHeightChange,
+    cardLayout,
+    delayMap,
+    computeColumnHeight,
+  } = useCardLayout(scoredCards, columnCount);
 
   const statusIndicator = useCallback(() => {
     switch (status) {
@@ -216,10 +139,37 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
       <header className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-900">
-        <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-          Nostr Live Canvas
-        </h1>
-        {statusIndicator()}
+        <div className="flex items-center gap-4">
+          <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">
+            Nostr Live Canvas
+          </h1>
+          {statusIndicator()}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={addDraft}
+            className="rounded-lg bg-purple-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-600 transition-colors"
+            title="新規投稿 (n)"
+          >
+            ✏️ 投稿
+          </button>
+          {npub && (
+            <span
+              className="rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400"
+              title={npub}
+            >
+              {truncateNpub(npub)}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+          >
+            ログアウト
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 overflow-y-auto p-4">
@@ -256,7 +206,7 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
           </div>
         )}
 
-        {notes.length > 0 && (() => {
+        {scoredCards.length > 0 && (() => {
           const containerHeight = Math.max(
             ...Array.from({ length: columnCount }, (_, i) => computeColumnHeight(i)),
             0,
@@ -271,17 +221,17 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                 }}
               >
                 <AnimatePresence>
-                  {scoredNotes
-                    .filter((n) => cardLayout.has(n.id))
+                  {scoredCards
+                    .filter((n) => cardLayout.has(n.slotId))
                     .map((note, idx, arr) => {
-                      const placement = cardLayout.get(note.id)!;
+                      const placement = cardLayout.get(note.slotId)!;
                       const x = placement.col * (COLUMN_WIDTH + COLUMN_GAP);
                       const y = placement.y;
-                      const delay = delayMap.get(note.id) ?? 0;
+                      const delay = delayMap.get(note.slotId) ?? 0;
                       const zIndex = arr.length - idx;
                       return (
                         <motion.div
-                          key={note.id}
+                          key={note.slotId}
                           layout={false}
                           initial={{ opacity: 0, scale: 0.8, x, y }}
                           animate={{
@@ -319,11 +269,25 @@ export function LiveCanvas({ notes, profiles, status }: LiveCanvasProps) {
                             zIndex,
                           }}
                         >
-                          <NoteCard
-                            note={note}
-                            profile={profiles.get(note.pubkey)}
-                            onHeightChange={handleHeightChange}
-                          />
+                          {note.type === "compose" ? (
+                            <ComposeCard
+                              slotId={note.slotId}
+                              pubkey={note.pubkey}
+                              profile={profiles.get(note.pubkey)}
+                              onHeightChange={handleHeightChange}
+                              onPublish={handleDraftPublish}
+                              onInput={handleDraftInput}
+                              onClose={handleDraftClose}
+                              publishEvent={publishEvent}
+                              autoFocus
+                            />
+                          ) : (
+                            <NoteCard
+                              note={note}
+                              profile={profiles.get(note.pubkey)}
+                              onHeightChange={handleHeightChange}
+                            />
+                          )}
                         </motion.div>
                       );
                     })}

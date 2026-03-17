@@ -1,4 +1,4 @@
-import type { CanvasNote } from "./types";
+import type { Card } from "./types";
 import type {
   Grid,
   ColumnSlots,
@@ -6,7 +6,7 @@ import type {
   Placement,
 } from "./layoutTypes";
 import { DEFAULT_CARD_HEIGHT } from "./constants";
-import { GAP } from "./layoutConstants";
+import { GAP } from "./constants";
 
 // ── 内部型（エクスポートしない） ──
 
@@ -198,7 +198,7 @@ export function placeCard(
  *   - columnCount が変更されたとき
  */
 export function buildInitialLayout(
-  sortedNotes: readonly CanvasNote[],
+  sortedNotes: readonly Card[],
   columnCount: number,
   heightMap: ReadonlyMap<string, number>,
 ): LayoutResult {
@@ -216,11 +216,11 @@ export function buildInitialLayout(
         bestCol = c;
       }
     }
-    colNotes[bestCol].push(note.id);
+    colNotes[bestCol].push(note.slotId);
     topScore[bestCol] = note.score;
   }
 
-  const scoreMap = new Map(sortedNotes.map((n) => [n.id, n.score]));
+  const scoreMap = new Map(sortedNotes.map((n) => [n.slotId, n.score]));
   for (let col = 0; col < columnCount; col++) {
     colNotes[col].sort((a, b) => (scoreMap.get(b) ?? 0) - (scoreMap.get(a) ?? 0));
     let y = 0;
@@ -250,8 +250,8 @@ export function buildInitialLayout(
  */
 export function insertCard(
   prevGrid: Grid,
-  note: CanvasNote,
-  allNotes: readonly CanvasNote[],
+  note: Card,
+  allNotes: readonly Card[],
   columnCount: number,
   heightMap: ReadonlyMap<string, number>,
 ): LayoutResult {
@@ -261,13 +261,13 @@ export function insertCard(
   const columns = gridToColumns(grid, columnCount);
 
   // スコアマップ
-  const scoreMap = new Map(allNotes.map((n) => [n.id, n.score]));
+  const scoreMap = new Map(allNotes.map((n) => [n.slotId, n.score]));
 
   // リアルタイム到着は常に一番左の列
   const bestCol = 0;
 
   const chain = { movedIds: new Set<string>(), chainOrder: new Map<string, number>() };
-  placeCard(grid, columns, note.id, bestCol, 0, heightMap, scoreMap, columnCount, chain);
+  placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain);
 
   return { grid, chain };
 }
@@ -281,9 +281,12 @@ export function insertCard(
  * 内部で prevGrid を参照するのみで、変更はしない（新しい Grid を構築する）。
  *
  * 前提条件:
- *   - activeNotes はスコア降順でソート済みであること（列内の積み上げ順序に影響する）
  *   - prevGrid に存在し activeNotes に含まれないカードは結果の Grid から除外される
  *   - prevGrid に存在しないカードは無視される（insertCard で対応すべきケース）
+ *
+ * 列内の順序は前回のy座標順を維持する（スコア順でソートしない）。
+ * スコアの役割は初回配置（buildInitialLayout）、新規挿入（insertCard）の
+ * 位置決めとフェードアウト判定に限定される。
  *
  * 使用場面:
  *   - heightMap が変更されたとき
@@ -291,20 +294,27 @@ export function insertCard(
  */
 export function reflow(
   prevGrid: Grid,
-  activeNotes: readonly CanvasNote[],
+  activeNotes: readonly Card[],
   columnCount: number,
   heightMap: ReadonlyMap<string, number>,
 ): LayoutResult {
   const grid = new Map<string, Placement>();
   for (let col = 0; col < columnCount; col++) {
-    const colCards = activeNotes.filter((n) => {
-      const p = prevGrid.get(n.id);
-      return p !== undefined && p.col === col;
-    });
+    // 前回のy座標順を維持して積み上げ直す
+    const colCards = activeNotes
+      .filter((n) => {
+        const p = prevGrid.get(n.slotId);
+        return p !== undefined && p.col === col;
+      })
+      .sort((a, b) => {
+        const pa = prevGrid.get(a.slotId)!;
+        const pb = prevGrid.get(b.slotId)!;
+        return pa.y - pb.y;
+      });
     let y = 0;
     for (const note of colCards) {
-      grid.set(note.id, { col, y });
-      y += (heightMap.get(note.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+      grid.set(note.slotId, { col, y });
+      y += (heightMap.get(note.slotId) ?? DEFAULT_CARD_HEIGHT) + GAP;
     }
   }
 

@@ -1,13 +1,30 @@
-/** キャンバス上に表示するノートの型 */
-export interface CanvasNote {
-  id: string;
+/** カード共通フィールド */
+interface CardBase {
+  /** カードの配置スロットID（UUID）。レイアウト・heightMap等はこのIDで管理する */
+  slotId: string;
   pubkey: string;
-  content: string;
-  created_at: number; // Unix timestamp
   score: number;
   /** フェードアウト中かどうか */
   fadingOut: boolean;
+  /** スコア計算用のタイムスタンプ（Unix timestamp、秒） */
+  created_at: number;
 }
+
+/** リレーから届いたノートカード */
+export interface NoteCard extends CardBase {
+  type: "note";
+  /** NostrイベントID */
+  eventId: string;
+  content: string;
+}
+
+/** 投稿カード（下書き） */
+export interface ComposeCard extends CardBase {
+  type: "compose";
+}
+
+/** キャンバス上に配置されるカード（Discriminated Union） */
+export type Card = NoteCard | ComposeCard;
 
 /** プロフィール情報 */
 export interface NostrProfile {
