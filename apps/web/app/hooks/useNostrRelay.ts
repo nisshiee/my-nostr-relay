@@ -6,6 +6,8 @@ import type { Filter } from "nostr-tools/filter";
 import type { SubCloser } from "nostr-tools/abstract-pool";
 import {
   BOOTSTRAP_RELAYS,
+  BOOTSTRAP_EOSE_TIMEOUT,
+  MAX_WAIT_FOR_CONNECTION,
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
   REACTION_POLL_INTERVAL,
@@ -193,31 +195,27 @@ export function useNostrRelay(
 
       try {
         // SimplePoolを作成（ブートストラップ取得とメインfeedで使い回す）
-        const pool = new SimplePool({ enableReconnect: true });
+        const pool = new SimplePool({
+          enableReconnect: true,
+          enablePing: true,
+        });
+        pool.maxWaitForConnection = MAX_WAIT_FOR_CONNECTION;
         poolRef.current = pool;
 
-        // ステップ1: BOOTSTRAP_RELAYSからRelay List Metadata（NIP-65, kind:10002）を取得
-        const relayListEvent = await new Promise<Event | null>((resolve) => {
-          let latest: Event | null = null;
-          const sub = pool.subscribeMany(
-            BOOTSTRAP_RELAYS,
-            { kinds: [10002], authors: [pubkey], limit: 1 } as Filter,
-            {
-              onevent(event: Event) {
-                // 複数リレーから返ってくる可能性があるので最新を保持
-                if (!latest || event.created_at > latest.created_at) {
-                  latest = event;
-                }
-              },
-              oneose() {
-                sub.close();
-                resolve(latest);
-              },
-            },
-          );
-        });
+        // ステップ1: kind:10002（リレーリスト）とkind:3（フォローリスト）を1リクエストで取得
+        // querySync + maxWait でEOSEタイムアウトをnostr-tools側に委譲
+        const bootstrapEvents = await pool.querySync(
+          BOOTSTRAP_RELAYS,
+          { kinds: [10002, 3], authors: [pubkey], limit: 2 } as Filter,
+          { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+        );
 
         if (cancelled) return;
+
+        // 最新のkind:10002イベントを取得（created_atが最大のもの）
+        const relayListEvent = bootstrapEvents
+          .filter((e) => e.kind === 10002)
+          .reduce<Event | null>((a, b) => (!a || b.created_at > a.created_at ? b : a), null);
 
         // kind:10002から"r"タグのリレーURLを抽出
         const relayUrls = relayListEvent
@@ -226,28 +224,10 @@ export function useNostrRelay(
               .map((tag) => tag[1]!)
           : [];
 
-        // ステップ2: BOOTSTRAP_RELAYSからContact List（kind:3）を取得してフォローリストを抽出
-        const contactEvent = await new Promise<Event | null>((resolve) => {
-          let latest: Event | null = null;
-          const sub = pool.subscribeMany(
-            BOOTSTRAP_RELAYS,
-            { kinds: [3], authors: [pubkey], limit: 1 } as Filter,
-            {
-              onevent(event: Event) {
-                // 複数リレーから返ってくる可能性があるので最新を保持
-                if (!latest || event.created_at > latest.created_at) {
-                  latest = event;
-                }
-              },
-              oneose() {
-                sub.close();
-                resolve(latest);
-              },
-            },
-          );
-        });
-
-        if (cancelled) return;
+        // 最新のkind:3イベントを取得（created_atが最大のもの）
+        const contactEvent = bootstrapEvents
+          .filter((e) => e.kind === 3)
+          .reduce<Event | null>((a, b) => (!a || b.created_at > a.created_at ? b : a), null);
 
         // "p"タグからフォロー中のpubkeyを抽出
         const followPubkeys = contactEvent
