@@ -1,12 +1,10 @@
 import type React from "react";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Relay } from "nostr-tools/relay";
 import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
-import type { Subscription } from "nostr-tools/abstract-relay";
 import type { SubCloser } from "nostr-tools/abstract-pool";
-import { RELAY_URL, MAX_NOTES, INITIAL_NOTES_LIMIT } from "../lib/constants";
+import { BOOTSTRAP_RELAYS, MAX_NOTES, INITIAL_NOTES_LIMIT } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import type { NoteCard, NostrProfile } from "../lib/types";
 
@@ -24,8 +22,8 @@ interface UseNostrRelayResult {
  * Nostrリレーに接続し、フォロー中ユーザーのノートとプロフィールを取得するhook
  *
  * 接続フロー:
- * 1. 自分のリレーに接続してkind:10002（NIP-65リレーリスト）とkind:3（フォローリスト）を取得
- * 2. 取得したリレーリスト全体にSimplePoolで接続
+ * 1. BOOTSTRAP_RELAYSにSimplePoolで接続してkind:10002（NIP-65リレーリスト）とkind:3（フォローリスト）を取得
+ * 2. 取得したリレーリスト（またはBOOTSTRAP_RELAYSフォールバック）で接続
  * 3. フォロー中ユーザーのkind:1（ノート）とkind:0（プロフィール）をsubscribe
  */
 export function useNostrRelay(
@@ -40,9 +38,7 @@ export function useNostrRelay(
   const [relayUrls, setRelayUrls] = useState<string[]>([]);
 
   // クリーンアップ用のref
-  const relayRef = useRef<Relay | null>(null);
   const poolRef = useRef<SimplePool | null>(null);
-  const subsRef = useRef<Subscription[]>([]);
   const poolSubsRef = useRef<SubCloser[]>([]);
 
   /** ノートを追加（重複排除・スコア計算・prune込み） */
@@ -100,14 +96,6 @@ export function useNostrRelay(
 
     /** 全subscriptionを閉じる */
     const closeSubs = () => {
-      for (const sub of subsRef.current) {
-        try {
-          sub.close();
-        } catch {
-          // 既に閉じている場合は無視
-        }
-      }
-      subsRef.current = [];
       for (const sub of poolSubsRef.current) {
         try {
           sub.close();
@@ -121,17 +109,9 @@ export function useNostrRelay(
     /** リレー接続を閉じる */
     const closeAll = () => {
       closeSubs();
-      if (relayRef.current) {
-        try {
-          relayRef.current.close();
-        } catch {
-          // 既に閉じている場合は無視
-        }
-        relayRef.current = null;
-      }
       if (poolRef.current) {
         try {
-          poolRef.current.close([]);
+          poolRef.current.destroy();
         } catch {
           // 既に閉じている場合は無視
         }
@@ -143,90 +123,90 @@ export function useNostrRelay(
       setStatus("connecting");
 
       try {
-        // 自分のリレーに接続してメタデータを取得
-        const relay = await Relay.connect(RELAY_URL, { enableReconnect: true });
-        if (cancelled) {
-          relay.close();
-          return;
-        }
-        relayRef.current = relay;
+        // SimplePoolを作成（ブートストラップ取得とメインfeedで使い回す）
+        const pool = new SimplePool({ enableReconnect: true });
+        poolRef.current = pool;
 
-        // ステップ1: Relay List Metadata（NIP-65, kind:10002）を取得
-        const relayUrls = await new Promise<string[]>(
-          (resolve) => {
-            let found = false;
-            const sub = relay.subscribe(
-              [{ kinds: [10002], authors: [pubkey], limit: 1 } as Filter],
-              {
-                onevent(event: Event) {
-                  if (found) return;
-                  found = true;
-                  // "r"タグからリレーURLを抽出（read/write問わず）
-                  const urls = event.tags
-                    .filter((tag) => tag[0] === "r" && tag[1])
-                    .map((tag) => tag[1]!);
-                  resolve(urls);
-                },
-                oneose() {
-                  if (!found) resolve([]);
-                },
+        // ステップ1: BOOTSTRAP_RELAYSからRelay List Metadata（NIP-65, kind:10002）を取得
+        const relayListEvent = await new Promise<Event | null>((resolve) => {
+          let latest: Event | null = null;
+          const sub = pool.subscribeMany(
+            BOOTSTRAP_RELAYS,
+            { kinds: [10002], authors: [pubkey], limit: 1 } as Filter,
+            {
+              onevent(event: Event) {
+                // 複数リレーから返ってくる可能性があるので最新を保持
+                if (!latest || event.created_at > latest.created_at) {
+                  latest = event;
+                }
               },
-            );
-            subsRef.current.push(sub);
-          },
-        );
+              oneose() {
+                sub.close();
+                resolve(latest);
+              },
+            },
+          );
+        });
 
         if (cancelled) return;
 
-        // ステップ2: Contact List（kind:3）を取得してフォローリストを抽出
-        const followPubkeys = await new Promise<string[]>(
-          (resolve) => {
-            let found = false;
-            const sub = relay.subscribe(
-              [{ kinds: [3], authors: [pubkey], limit: 1 } as Filter],
-              {
-                onevent(event: Event) {
-                  if (found) return;
-                  found = true;
-                  // "p"タグからフォロー中のpubkeyを抽出
-                  const pks = event.tags
-                    .filter((tag) => tag[0] === "p" && tag[1])
-                    .map((tag) => tag[1]!);
-                  resolve(pks);
-                },
-                oneose() {
-                  // kind:3が見つからなかった場合は空配列
-                  if (!found) resolve([]);
-                },
+        // kind:10002から"r"タグのリレーURLを抽出
+        const relayUrls = relayListEvent
+          ? relayListEvent.tags
+              .filter((tag) => tag[0] === "r" && tag[1])
+              .map((tag) => tag[1]!)
+          : [];
+
+        // ステップ2: BOOTSTRAP_RELAYSからContact List（kind:3）を取得してフォローリストを抽出
+        const contactEvent = await new Promise<Event | null>((resolve) => {
+          let latest: Event | null = null;
+          const sub = pool.subscribeMany(
+            BOOTSTRAP_RELAYS,
+            { kinds: [3], authors: [pubkey], limit: 1 } as Filter,
+            {
+              onevent(event: Event) {
+                // 複数リレーから返ってくる可能性があるので最新を保持
+                if (!latest || event.created_at > latest.created_at) {
+                  latest = event;
+                }
               },
-            );
-            subsRef.current.push(sub);
-          },
-        );
+              oneose() {
+                sub.close();
+                resolve(latest);
+              },
+            },
+          );
+        });
 
-        if (cancelled || followPubkeys.length === 0) return;
+        if (cancelled) return;
 
-        // ステップ3: リレーリストを使ってSimplePoolで複数リレーに接続
-        // 自分のリレーも含める（重複はSimplePoolが処理）
+        // "p"タグからフォロー中のpubkeyを抽出
+        const followPubkeys = contactEvent
+          ? contactEvent.tags
+              .filter((tag) => tag[0] === "p" && tag[1])
+              .map((tag) => tag[1]!)
+          : [];
+
+        if (followPubkeys.length === 0) return;
+
+        // ステップ3: リレーリスト決定（kind:10002から取得 or BOOTSTRAP_RELAYSフォールバック）
         const allRelays = relayUrls.length > 0
-          ? [...new Set([RELAY_URL, ...relayUrls])]
-          : [RELAY_URL];
+          ? [...new Set([...BOOTSTRAP_RELAYS, ...relayUrls])]
+          : [...BOOTSTRAP_RELAYS];
 
         console.log("接続リレー一覧:", allRelays);
         setRelayUrls(allRelays);
 
-        const pool = new SimplePool({ enableReconnect: true });
-        poolRef.current = pool;
         setStatus("loading");
 
-        // ステップ4: フォロー中ユーザーのテキストノート（kind:1）をsubscribe
+        // ステップ4: フォロー中ユーザーのテキストノート（kind:1）を決定したリレーでsubscribe
         // 初期ロード中はバッファに溜めて oneose でまとめて state に反映する
         const initialBuffer: Event[] = [];
         let initialLoading = true;
 
         const notesSub = pool.subscribeMany(
           allRelays,
-          { kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT },
+          { kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter,
           {
             onevent(event: Event) {
               if (cancelled) return;
@@ -271,7 +251,7 @@ export function useNostrRelay(
         // ステップ5: フォロー中ユーザーのプロフィール（kind:0）を取得
         const profileSub = pool.subscribeMany(
           allRelays,
-          { kinds: [0], authors: followPubkeys },
+          { kinds: [0], authors: followPubkeys } as Filter,
           {
             onevent(event: Event) {
               if (!cancelled) {
