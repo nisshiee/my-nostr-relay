@@ -6,6 +6,7 @@ import type { Filter } from "nostr-tools/filter";
 import type { SubCloser } from "nostr-tools/abstract-pool";
 import {
   BOOTSTRAP_RELAYS,
+  EOSE_TIMEOUT,
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
   REACTION_POLL_INTERVAL,
@@ -188,6 +189,51 @@ export function useNostrRelay(
       }
     };
 
+    /** pool.subscribeManyをPromise化し、EOSEまたはタイムアウトで解決するヘルパー */
+    function subscribeWithTimeout(
+      pool: SimplePool,
+      relays: string[],
+      filters: Filter[],
+      timeoutMs: number,
+    ): Promise<Event[]> {
+      return new Promise<Event[]>((resolve) => {
+        let resolved = false;
+        const events: Event[] = [];
+        const subs: { close: () => void }[] = [];
+
+        let eoseCount = 0;
+        const onEose = () => {
+          eoseCount++;
+          if (eoseCount < filters.length) return;
+          if (resolved) return;
+          resolved = true;
+          clearTimeout(timer);
+          for (const s of subs) s.close();
+          resolve(events);
+        };
+
+        for (const filter of filters) {
+          const sub = pool.subscribeMany(relays, filter, {
+            onevent(event: Event) {
+              events.push(event);
+            },
+            oneose() {
+              onEose();
+            },
+          });
+          subs.push(sub);
+        }
+
+        // タイムアウト時はそれまでに受信したイベントで解決する
+        const timer = setTimeout(() => {
+          if (resolved) return;
+          resolved = true;
+          for (const s of subs) s.close();
+          resolve(events);
+        }, timeoutMs);
+      });
+    }
+
     const connect = async () => {
       setStatus("connecting");
 
@@ -196,28 +242,18 @@ export function useNostrRelay(
         const pool = new SimplePool({ enableReconnect: true });
         poolRef.current = pool;
 
-        // ステップ1: BOOTSTRAP_RELAYSからRelay List Metadata（NIP-65, kind:10002）を取得
-        const relayListEvent = await new Promise<Event | null>((resolve) => {
-          let latest: Event | null = null;
-          const sub = pool.subscribeMany(
-            BOOTSTRAP_RELAYS,
-            { kinds: [10002], authors: [pubkey], limit: 1 } as Filter,
-            {
-              onevent(event: Event) {
-                // 複数リレーから返ってくる可能性があるので最新を保持
-                if (!latest || event.created_at > latest.created_at) {
-                  latest = event;
-                }
-              },
-              oneose() {
-                sub.close();
-                resolve(latest);
-              },
-            },
-          );
-        });
+        // ステップ1&2: kind:10002（リレーリスト）とkind:3（フォローリスト）を並列取得
+        const [relayListEvents, contactEvents] = await Promise.all([
+          subscribeWithTimeout(pool, BOOTSTRAP_RELAYS, [{ kinds: [10002], authors: [pubkey], limit: 1 } as Filter], EOSE_TIMEOUT),
+          subscribeWithTimeout(pool, BOOTSTRAP_RELAYS, [{ kinds: [3], authors: [pubkey], limit: 1 } as Filter], EOSE_TIMEOUT),
+        ]);
 
         if (cancelled) return;
+
+        // 最新のkind:10002イベントを取得（created_atが最大のもの）
+        const relayListEvent = relayListEvents.length > 0
+          ? relayListEvents.reduce((a, b) => (a.created_at >= b.created_at ? a : b))
+          : null;
 
         // kind:10002から"r"タグのリレーURLを抽出
         const relayUrls = relayListEvent
@@ -226,28 +262,10 @@ export function useNostrRelay(
               .map((tag) => tag[1]!)
           : [];
 
-        // ステップ2: BOOTSTRAP_RELAYSからContact List（kind:3）を取得してフォローリストを抽出
-        const contactEvent = await new Promise<Event | null>((resolve) => {
-          let latest: Event | null = null;
-          const sub = pool.subscribeMany(
-            BOOTSTRAP_RELAYS,
-            { kinds: [3], authors: [pubkey], limit: 1 } as Filter,
-            {
-              onevent(event: Event) {
-                // 複数リレーから返ってくる可能性があるので最新を保持
-                if (!latest || event.created_at > latest.created_at) {
-                  latest = event;
-                }
-              },
-              oneose() {
-                sub.close();
-                resolve(latest);
-              },
-            },
-          );
-        });
-
-        if (cancelled) return;
+        // 最新のkind:3イベントを取得（created_atが最大のもの）
+        const contactEvent = contactEvents.length > 0
+          ? contactEvents.reduce((a, b) => (a.created_at >= b.created_at ? a : b))
+          : null;
 
         // "p"タグからフォロー中のpubkeyを抽出
         const followPubkeys = contactEvent
