@@ -36,7 +36,7 @@ interface CardPlacement {
  * 3. 残った候補のうちスコアが最も低いものの位置に移動 → 連鎖
  */
 /** ドミノアニメーションの1ステップあたりの遅延（秒） */
-const DOMINO_DELAY = 0.08;
+const DOMINO_DELAY = 0.5;
 
 function placeCard(
   layout: Map<string, CardPlacement>,
