@@ -5,15 +5,15 @@
 interface ActionBarProps {
   /** アクションバーの開閉状態 */
   isOpen: boolean;
-  /** 「+」ボタンクリック時のハンドラ */
-  onAddReaction: () => void;
+  /** 「👍」ボタンクリック時のハンドラ（Nostrプロトコル上は「+」として送信） */
+  onThumbsUp: () => void | Promise<void>;
   /** 自分が既に「👍」リアクション済みかどうか */
   isAlreadyReacted: boolean;
 }
 
 export function ActionBar({
   isOpen,
-  onAddReaction,
+  onThumbsUp,
   isAlreadyReacted,
 }: ActionBarProps) {
   return (
@@ -35,7 +35,7 @@ export function ActionBar({
           disabled={isAlreadyReacted}
           onClick={(e) => {
             e.stopPropagation();
-            onAddReaction();
+            onThumbsUp();
           }}
           className={`text-lg leading-none p-1 rounded transition-colors ${
             isAlreadyReacted

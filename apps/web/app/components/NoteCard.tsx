@@ -219,19 +219,19 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
       {/* アクションバー */}
       <ActionBar
         isOpen={isActionBarOpen}
-        onAddReaction={() => {
+        onThumbsUp={async () => {
           try {
             if (onReaction) {
-              onReaction("+");
+              await onReaction("+"); // Nostrプロトコル上の「👍」相当（NIP-25）
             }
           } catch (e) {
             console.error(e);
           } finally {
-            setIsActionBarOpen(false);
+            setIsActionBarOpen(false); // エラー発生時も必ず閉じる
             onRelease?.();
           }
         }}
-        isAlreadyReacted={!!(myPubkey && reactions?.get("👍")?.pubkeys?.has(myPubkey))}
+        isAlreadyReacted={!!(myPubkey && reactions?.get("+")?.pubkeys?.has(myPubkey))}
       />
     </div>
   );
