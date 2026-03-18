@@ -313,6 +313,8 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
                               profile={profiles.get(note.pubkey)}
                               reactions={reactions.get(note.eventId)}
                               onHeightChange={handleHeightChange}
+                              onHold={() => holdCard(note.slotId)}
+                              onRelease={() => releaseCard(note.slotId)}
                             />
                           )}
                         </motion.div>

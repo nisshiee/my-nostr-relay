@@ -35,9 +35,11 @@ interface NoteCardProps {
   /** リアクション集計（絵文字 → {件数, 画像URL}） */
   reactions?: Map<string, { count: number; imageUrl?: string }>;
   onHeightChange?: (slotId: string, height: number) => void;
+  onHold?: () => void;
+  onRelease?: () => void;
 }
 
-export function NoteCard({ note, profile, reactions, onHeightChange }: NoteCardProps) {
+export function NoteCard({ note, profile, reactions, onHeightChange, onHold, onRelease }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
   const avatarUrl = profile?.picture;
@@ -94,7 +96,7 @@ export function NoteCard({ note, profile, reactions, onHeightChange }: NoteCardP
       </div>
 
       {/* テキスト内容（ContentRendererでリッチコンテンツを描画） */}
-      <ContentRenderer content={note.content} />
+      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} />
 
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (

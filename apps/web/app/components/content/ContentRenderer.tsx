@@ -19,11 +19,22 @@ const NODE_RENDERERS: Record<ContentNode["type"], ComponentType<any>> = {
 
 interface ContentRendererProps {
   content: string;
+  onHold?: () => void;
+  onRelease?: () => void;
 }
 
 /** コンテンツをパースしてノードごとに適切なコンポーネントで描画する */
-export function ContentRenderer({ content }: ContentRendererProps) {
+export function ContentRenderer({ content, onHold, onRelease }: ContentRendererProps) {
   const nodes = parseContent(content);
+
+  // 画像URLリストを抽出
+  const imageUrls = nodes
+    .filter((n): n is Extract<ContentNode, { type: "image" }> => n.type === "image")
+    .map((n) => n.url);
+
+  // 各ノードに対応する画像インデックスを事前計算（画像以外は-1）
+  let imgIdx = 0;
+  const imageIndexMap = nodes.map((n) => (n.type === "image" ? imgIdx++ : -1));
 
   return (
     <div>
@@ -32,7 +43,12 @@ export function ContentRenderer({ content }: ContentRendererProps) {
         // ノードのプロパティをそのままspreadで渡す（typeは除外）
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
         const { type: _type, ...props } = node;
-        return <Renderer key={index} {...props} />;
+        // 画像ノードにはLightbox用の追加propsをマージ
+        const extraProps =
+          node.type === "image"
+            ? { imageUrls, imageIndex: imageIndexMap[index], onHold, onRelease }
+            : {};
+        return <Renderer key={index} {...props} {...extraProps} />;
       })}
     </div>
   );
