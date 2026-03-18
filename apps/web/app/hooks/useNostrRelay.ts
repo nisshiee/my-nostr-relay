@@ -297,7 +297,7 @@ export function useNostrRelay(
                 }
               }
             },
-            oneose() {
+            async oneose() {
               if (cancelled) return;
               initialLoading = false;
               // バッファを一括で state に反映
