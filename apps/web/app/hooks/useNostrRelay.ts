@@ -17,6 +17,9 @@ import type { NoteCard, NostrProfile, Reactions } from "../lib/types";
 
 type ConnectionStatus = "connecting" | "loading" | "connected" | "error";
 
+/** NIP-07拡張(window.nostr)の署名済みイベント型 */
+type SignedNostrEvent = NostrEvent & { id: string; sig: string };
+
 interface UseNostrRelayResult {
   notes: NoteCard[];
   profiles: Map<string, NostrProfile>;
@@ -25,6 +28,7 @@ interface UseNostrRelayResult {
   relayUrls: string[];
   publishEvent: (event: NostrEvent) => Promise<void>;
   patchNoteSlotId: (eventId: string, newSlotId: string) => void;
+  sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
 }
 
 /** カスタム絵文字（:shortcode: 形式）のイベントタグから画像URLを取得する */
@@ -102,13 +106,15 @@ export function useNostrRelay(
         const updated = new Map(eventReactions);
         const existing = updated.get(emoji);
         if (existing) {
-          updated.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl });
+          const newPubkeys = new Set(existing.pubkeys);
+          newPubkeys.add(event.pubkey);
+          updated.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl, pubkeys: newPubkeys });
         } else {
-          updated.set(emoji, { count: 1, imageUrl });
+          updated.set(emoji, { count: 1, imageUrl, pubkeys: new Set([event.pubkey]) });
         }
         next.set(targetEventId, updated);
       } else {
-        next.set(targetEventId, new Map([[emoji, { count: 1, imageUrl }]]));
+        next.set(targetEventId, new Map([[emoji, { count: 1, imageUrl, pubkeys: new Set([event.pubkey]) }]]));
       }
       return next;
     });
@@ -351,12 +357,13 @@ export function useNostrRelay(
                           if (eventReactions) {
                             const existing = eventReactions.get(emoji);
                             if (existing) {
-                              eventReactions.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl });
+                              existing.pubkeys.add(evt.pubkey);
+                              eventReactions.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl, pubkeys: existing.pubkeys });
                             } else {
-                              eventReactions.set(emoji, { count: 1, imageUrl });
+                              eventReactions.set(emoji, { count: 1, imageUrl, pubkeys: new Set([evt.pubkey]) });
                             }
                           } else {
-                            batchReactions.set(targetId, new Map([[emoji, { count: 1, imageUrl }]]));
+                            batchReactions.set(targetId, new Map([[emoji, { count: 1, imageUrl, pubkeys: new Set([evt.pubkey]) }]]));
                           }
                         }
                         setReactions(batchReactions);
@@ -482,5 +489,48 @@ export function useNostrRelay(
     [relayUrls],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, publishEvent, patchNoteSlotId };
+  /** NIP-25準拠のリアクションイベントを構築・署名・送信し、楽観的にUIを更新する */
+  const sendReaction = useCallback(
+    async (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => {
+      // NIP-07拡張の存在チェック
+      const nostrExt = (window as unknown as { nostr?: { signEvent: (event: Record<string, unknown>) => Promise<SignedNostrEvent> } }).nostr;
+      if (!nostrExt) {
+        throw new Error("NIP-07拡張（window.nostr）が見つかりません");
+      }
+
+      // NIP-25準拠のkind:7イベントを構築
+      const tags: string[][] = [
+        ["e", targetEventId, "", targetPubkey],
+        ["p", targetPubkey],
+        ["k", "1"],
+      ];
+
+      // カスタム絵文字（:shortcode: 形式）の場合はemojiタグを追加
+      let content = emoji;
+      if (emoji.startsWith(":") && emoji.endsWith(":") && emoji.length > 2 && imageUrl) {
+        const shortcode = emoji.slice(1, -1);
+        tags.push(["emoji", shortcode, imageUrl]);
+        content = emoji;
+      }
+
+      const unsignedEvent = {
+        kind: 7,
+        content,
+        tags,
+        created_at: Math.floor(Date.now() / 1000),
+      };
+
+      // NIP-07拡張で署名
+      const signedEvent = await nostrExt.signEvent(unsignedEvent);
+
+      // リレーに送信
+      await publishEvent(signedEvent as unknown as NostrEvent);
+
+      // 楽観的にローカルのreactions stateを更新
+      addReaction(signedEvent as unknown as Event);
+    },
+    [publishEvent, addReaction],
+  );
+
+  return { notes, profiles, reactions, status, relayUrls, publishEvent, patchNoteSlotId, sendReaction };
 }
