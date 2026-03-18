@@ -16,6 +16,13 @@ export interface NoteCard extends CardBase {
   /** NostrイベントID */
   eventId: string;
   content: string;
+  /** リポスト情報（リポスト経由で表示される場合に設定） */
+  repostInfo?: {
+    /** 最後にリポストした人のpubkey */
+    reposterPubkey: string;
+    /** 最終リポスト時刻（Unix timestamp、秒） */
+    repostedAt: number;
+  };
 }
 
 /** 投稿カード（下書き） */
