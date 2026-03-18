@@ -100,7 +100,9 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
 
     const updatedNotes: Card[] = allNotes.map((note) => {
       const halfLife = note.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-      const score = calcFreshnessScore(note.created_at, nowEpoch, halfLife);
+      // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
+      const scoreTimestamp = note.repostInfo?.repostedAt ?? note.created_at;
+      const score = calcFreshnessScore(scoreTimestamp, nowEpoch, halfLife);
       return {
         ...note,
         score,
@@ -315,6 +317,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
                             <NoteCard
                               note={note}
                               profile={profiles.get(note.pubkey)}
+                              reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
                               reactions={reactions.get(note.eventId)}
                               myPubkey={pubkey}
                               onReaction={(emoji, imageUrl) => {

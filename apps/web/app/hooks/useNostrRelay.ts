@@ -64,6 +64,9 @@ export function useNostrRelay(
   const poolRef = useRef<SimplePool | null>(null);
   const poolSubsRef = useRef<SubCloser[]>([]);
 
+  // リアルタイムリポスト: 元ノート取得中のeventIDを管理（重複REQ防止）
+  const inflightOriginalNotesRef = useRef<Set<string>>(new Set());
+
   // リアクション定期再subscribe用のref
   const reactionSubRef = useRef<SubCloser | null>(null);
   const reactionIntervalRef = useRef<number | null>(null);
@@ -71,6 +74,7 @@ export function useNostrRelay(
   const newNotesMinCreatedAtRef = useRef<number | undefined>(undefined);
   const seenReactionIdsRef = useRef<Set<string>>(new Set());
   const notesRef = useRef<NoteCard[]>([]);
+  const profilesRef = useRef<Map<string, NostrProfile>>(new Map());
 
   /** リアクションのcontentを正規化する。カスタム絵文字（:shortcode:）もそのまま返す */
   const normalizeReactionContent = useCallback((content: string): string | null => {
@@ -163,6 +167,62 @@ export function useNostrRelay(
     });
   }, [pubkey, publishedSlotMapRef]);
 
+  /**
+   * 元ノートイベントをNoteCardに変換してstateに追加する（既存カードがあればrepostInfoを付与）
+   * 初期ロードとリアルタイム処理の両方で使用する共通処理
+   */
+  const processOriginalNote = useCallback((origEvent: Event, repostEvent: Event) => {
+    if (origEvent.kind !== 1) return;
+
+    setNotes((prev) => {
+      // 既にカードが存在する場合はrepostInfoを付与して更新
+      const existingIndex = prev.findIndex((n) => n.eventId === origEvent.id);
+      if (existingIndex !== -1) {
+        const existing = prev[existingIndex]!;
+        // 既にrepostInfoがある場合は、より新しいリポストで上書き
+        if (existing.repostInfo && existing.repostInfo.repostedAt >= repostEvent.created_at) {
+          return prev;
+        }
+        const updated = [...prev];
+        updated[existingIndex] = {
+          ...existing,
+          repostInfo: {
+            reposterPubkey: repostEvent.pubkey,
+            repostedAt: repostEvent.created_at,
+          },
+        };
+        return updated;
+      }
+
+      // 新規カードとして追加（repostInfo付き）
+      const now = Math.floor(Date.now() / 1000);
+      const halfLife = origEvent.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+      // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
+      const scoreTimestamp = repostEvent.created_at;
+      const slotId = publishedSlotMapRef.current?.get(origEvent.id) ?? crypto.randomUUID();
+      const newNote: NoteCard = {
+        type: "note",
+        slotId,
+        eventId: origEvent.id,
+        pubkey: origEvent.pubkey,
+        content: origEvent.content,
+        created_at: origEvent.created_at,
+        score: calcFreshnessScore(scoreTimestamp, now, halfLife),
+        fadingOut: false,
+        repostInfo: {
+          reposterPubkey: repostEvent.pubkey,
+          repostedAt: repostEvent.created_at,
+        },
+      };
+
+      const updated = [...prev, newNote];
+      if (updated.length > MAX_NOTES) {
+        return sortByScore(updated).slice(0, MAX_NOTES);
+      }
+      return updated;
+    });
+  }, [pubkey, publishedSlotMapRef]);
+
   /** プロフィールを追加・更新（kind:0イベントから） */
   const upsertProfile = useCallback((event: Event) => {
     try {
@@ -181,6 +241,11 @@ export function useNostrRelay(
   useEffect(() => {
     notesRef.current = notes;
   }, [notes]);
+
+  // profilesの最新値をrefで同期（リアルタイムリポスト処理からアクセスするため）
+  useEffect(() => {
+    profilesRef.current = profiles;
+  }, [profiles]);
 
   useEffect(() => {
     if (!pubkey) {
@@ -271,24 +336,94 @@ export function useNostrRelay(
 
         setStatus("loading");
 
-        // ステップ4: フォロー中ユーザーのテキストノート（kind:1）を決定したリレーでsubscribe
+        /**
+         * リアルタイムリポスト処理: EOSE後に受信したkind:6イベントの元ノートを個別REQで取得する
+         * インフライト管理により、同じeventIDの重複REQ発行を防止する
+         */
+        const handleRealtimeRepost = async (repostEvent: Event, pool: SimplePool, relays: string[]) => {
+          // "e" タグから元ノートのeventIDを抽出
+          const eTags = repostEvent.tags.filter((tag) => tag[0] === "e" && tag[1]);
+          if (eTags.length === 0) return;
+          const originalEventId = eTags[eTags.length - 1]![1]!;
+
+          // インフライトチェック: 既にREQ中なら重複発行しない
+          if (inflightOriginalNotesRef.current.has(originalEventId)) return;
+          inflightOriginalNotesRef.current.add(originalEventId);
+
+          try {
+            // 個別REQで元ノートを取得（単一eventIDでの迅速取得）
+            const originalEvents = await pool.querySync(
+              relays,
+              { kinds: [1], ids: [originalEventId] } as Filter,
+              { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+            );
+
+            if (cancelled) return;
+
+            if (originalEvents.length > 0) {
+              const origEvent = originalEvents[0]!;
+              processOriginalNote(origEvent, repostEvent);
+
+              // フォロー外のプロフィールを追加取得（元ノート著者 + リポスター）
+              const unknownPubkeys = [origEvent.pubkey, repostEvent.pubkey]
+                .filter((pk) => !profilesRef.current.has(pk));
+              if (unknownPubkeys.length > 0) {
+                pool.querySync(
+                  relays,
+                  { kinds: [0], authors: unknownPubkeys } as Filter,
+                  { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+                ).then((profileEvents) => {
+                  if (!cancelled) {
+                    for (const pe of profileEvents) {
+                      upsertProfile(pe);
+                    }
+                  }
+                }).catch(() => { /* プロフィール取得失敗は無視 */ });
+              }
+
+              console.log(`[useNostrRelay] リアルタイムリポスト処理完了: 元ノート ${originalEventId.slice(0, 8)}...`);
+            } else {
+              console.warn(`[useNostrRelay] リアルタイムリポスト: 元ノートが見つかりません ${originalEventId.slice(0, 8)}...`);
+            }
+          } catch (err) {
+            console.error(`[useNostrRelay] リアルタイムリポスト元ノート取得エラー:`, err);
+            // 元ノート取得失敗はフィード表示を止めない
+          } finally {
+            // 完了後にインフライトから除去（成功・失敗問わず）
+            inflightOriginalNotesRef.current.delete(originalEventId);
+          }
+        };
+
+        // ステップ4: フォロー中ユーザーのテキストノート（kind:1）とリポスト（kind:6）を決定したリレーでsubscribe
         // 初期ロード中はバッファに溜めて oneose でまとめて state に反映する
         const initialBuffer: Event[] = [];
+        const initialRepostBuffer: Event[] = []; // kind:6リポスト用の初期ロードバッファ
         let initialLoading = true;
 
         const notesSub = pool.subscribeMany(
           allRelays,
-          { kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter,
+          { kinds: [1, 6], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter,
           {
             onevent(event: Event) {
               if (cancelled) return;
               if (initialLoading) {
-                initialBuffer.push(event);
+                if (event.kind === 6) {
+                  // kind:6はリポスト用バッファに蓄積（次タスクで処理）
+                  initialRepostBuffer.push(event);
+                } else {
+                  initialBuffer.push(event);
+                }
               } else {
-                addNote(event);
+                // リアルタイム処理
+                if (event.kind === 1) {
+                  addNote(event);
+                } else if (event.kind === 6) {
+                  // リアルタイムリポスト処理: 個別REQで元ノートを取得
+                  handleRealtimeRepost(event, pool, allRelays);
+                }
               }
             },
-            oneose() {
+            async oneose() {
               if (cancelled) return;
               initialLoading = false;
               // バッファを一括で state に反映
@@ -317,6 +452,128 @@ export function useNostrRelay(
                 displayedNotes = sortByScore(batchNotes).slice(0, MAX_NOTES);
                 setNotes(displayedNotes);
               }
+              console.log(`[useNostrRelay] 初期ロード完了: kind:1=${initialBuffer.length}件, kind:6(リポスト)=${initialRepostBuffer.length}件`);
+
+              // kind:6リポストから元ノートのeventIDを集約して一括取得
+              if (initialRepostBuffer.length > 0) {
+                // kind:6の "e" タグから最後のeventIDを抽出（リポスト対象の元ノートID）
+                // 同じkind:6イベントが複数ある場合、元ノートIDごとに最後のリポスト情報を保持する
+                const repostMap = new Map<string, Event>(); // 元ノートID → 最後のkind:6イベント
+                for (const repostEvent of initialRepostBuffer) {
+                  const eTags = repostEvent.tags.filter((tag) => tag[0] === "e" && tag[1]);
+                  if (eTags.length === 0) continue;
+                  const originalEventId = eTags[eTags.length - 1]![1]!;
+                  // 同じ元ノートに対する複数リポストは、最新のリポストで上書き
+                  const existing = repostMap.get(originalEventId);
+                  if (!existing || repostEvent.created_at > existing.created_at) {
+                    repostMap.set(originalEventId, repostEvent);
+                  }
+                }
+
+                // 既にdisplayedNotesに含まれている元ノートIDを除外
+                const existingEventIds = new Set(displayedNotes.map((n) => n.eventId));
+                const missingEventIds = [...repostMap.keys()].filter((id) => !existingEventIds.has(id));
+
+                // 既存カードのrepostInfo更新（displayedNotesに既にある元ノート）
+                const existingUpdates = [...repostMap.entries()].filter(([id]) => existingEventIds.has(id));
+                if (existingUpdates.length > 0) {
+                  const updatedNotes = displayedNotes.map((note) => {
+                    const repostEvent = repostMap.get(note.eventId);
+                    if (!repostEvent) return note;
+                    return {
+                      ...note,
+                      repostInfo: {
+                        reposterPubkey: repostEvent.pubkey,
+                        repostedAt: repostEvent.created_at,
+                      },
+                    };
+                  });
+                  displayedNotes = updatedNotes;
+                  setNotes(displayedNotes);
+                }
+
+                // 未取得の元ノートを一括REQで取得
+                if (missingEventIds.length > 0) {
+                  console.log(`[useNostrRelay] リポスト元ノート取得開始: ${missingEventIds.length}件`);
+                  try {
+                    const originalEvents = await pool.querySync(
+                      allRelays,
+                      { kinds: [1], ids: missingEventIds } as Filter,
+                      { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+                    );
+                    if (!cancelled && originalEvents.length > 0) {
+                      const now = Math.floor(Date.now() / 1000);
+                      const newCards: NoteCard[] = [];
+                      for (const origEvent of originalEvents) {
+                        // kind:1以外は無視
+                        if (origEvent.kind !== 1) continue;
+                        // 重複チェック（他のリポストが同じ元ノートを参照している場合）
+                        if (displayedNotes.some((n) => n.eventId === origEvent.id)) continue;
+                        const repostEvent = repostMap.get(origEvent.id);
+                        if (!repostEvent) continue;
+                        const halfLife = origEvent.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+                        // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
+                        const scoreTimestamp = repostEvent.created_at;
+                        const slotId = publishedSlotMapRef.current?.get(origEvent.id) ?? crypto.randomUUID();
+                        newCards.push({
+                          type: "note",
+                          slotId,
+                          eventId: origEvent.id,
+                          pubkey: origEvent.pubkey,
+                          content: origEvent.content,
+                          created_at: origEvent.created_at,
+                          score: calcFreshnessScore(scoreTimestamp, now, halfLife),
+                          fadingOut: false,
+                          repostInfo: {
+                            reposterPubkey: repostEvent.pubkey,
+                            repostedAt: repostEvent.created_at,
+                          },
+                        });
+                      }
+                      if (newCards.length > 0) {
+                        displayedNotes = sortByScore([...displayedNotes, ...newCards]).slice(0, MAX_NOTES);
+                        setNotes(displayedNotes);
+                        console.log(`[useNostrRelay] リポスト元ノート追加: ${newCards.length}件`);
+                      }
+                    }
+                  } catch (err) {
+                    console.error("[useNostrRelay] リポスト元ノート取得エラー:", err);
+                    // 元ノート取得失敗はフィード表示を止めない（kind:1のノートは既に表示済み）
+                  }
+                }
+
+                // リポスト関連の未取得プロフィールを一括フェッチ
+                // （リポスト元ノートの著者 + リポスターのうち、フォロー外のpubkey）
+                const followSet = new Set(followPubkeys);
+                const repostPubkeys = new Set<string>();
+                for (const [, repostEvent] of repostMap) {
+                  // リポスターのpubkey
+                  if (!followSet.has(repostEvent.pubkey)) {
+                    repostPubkeys.add(repostEvent.pubkey);
+                  }
+                }
+                // リポスト元ノートの著者（フォロー外）
+                for (const note of displayedNotes) {
+                  if (note.repostInfo && !followSet.has(note.pubkey)) {
+                    repostPubkeys.add(note.pubkey);
+                  }
+                }
+                if (repostPubkeys.size > 0) {
+                  console.log(`[useNostrRelay] リポスト関連プロフィール取得: ${repostPubkeys.size}件`);
+                  const repostProfileSub = pool.subscribeMany(
+                    allRelays,
+                    { kinds: [0], authors: [...repostPubkeys] } as Filter,
+                    {
+                      onevent(event: Event) {
+                        if (!cancelled) upsertProfile(event);
+                      },
+                      oneose() { /* done */ },
+                    },
+                  );
+                  poolSubsRef.current.push(repostProfileSub);
+                }
+              }
+
               setStatus("connected");
 
               // ステップ4b: 表示中ノートのリアクション（kind:7）をsubscribe
@@ -464,13 +721,14 @@ export function useNostrRelay(
         reactionIntervalRef.current = null;
       }
       seenReactionIds.clear();
+      inflightOriginalNotesRef.current.clear();
       closeAll();
       setStatus("connecting");
       setNotes([]);
       setProfiles(new Map());
       setReactions(new Map());
     };
-  }, [pubkey, addNote, addReaction, upsertProfile, normalizeReactionContent, publishedSlotMapRef]);
+  }, [pubkey, addNote, addReaction, processOriginalNote, upsertProfile, normalizeReactionContent, publishedSlotMapRef]);
 
   /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
   const publishEvent = useCallback(

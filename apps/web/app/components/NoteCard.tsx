@@ -33,6 +33,8 @@ function relativeTime(unixTimestamp: number): string {
 interface NoteCardProps {
   note: NoteCardType;
   profile?: NostrProfile;
+  /** リポスターのプロフィール情報 */
+  reposterProfile?: NostrProfile;
   /** リアクション集計（絵文字 → {件数, 画像URL, 送信者pubkey集合}） */
   reactions?: Map<string, { count: number; imageUrl?: string; pubkeys: Set<string> }>;
   /** 自分のpubkey（リアクション済み判定用） */
@@ -44,9 +46,14 @@ interface NoteCardProps {
   onRelease?: () => void;
 }
 
-export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHeightChange, onHold, onRelease }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onHeightChange, onHold, onRelease }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
+
+  // リポスター名の表示（display_name > name > 短縮pubkey）
+  const reposterName = note.repostInfo
+    ? reposterProfile?.display_name || reposterProfile?.name || shortenPubkey(note.repostInfo.reposterPubkey)
+    : undefined;
   const avatarUrl = profile?.picture;
   const cardRef = useRef<HTMLDivElement>(null);
   const [isActionBarOpen, setIsActionBarOpen] = useState(false);
@@ -143,6 +150,14 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
         isActionBarOpen ? "z-10" : ""
       }`}
     >
+      {/* リポスト情報（カード最上部） */}
+      {note.repostInfo && (
+        <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+          <span>🔁</span>
+          <span>{reposterName}がリポスト</span>
+        </div>
+      )}
+
       {/* ヘッダー: アバター + 名前 + 時刻 */}
       <div className="flex items-center gap-3 mb-2">
         {/* アバター */}
