@@ -150,6 +150,14 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
         isActionBarOpen ? "z-10" : ""
       }`}
     >
+      {/* リポスト情報（カード最上部） */}
+      {note.repostInfo && (
+        <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
+          <span>🔁</span>
+          <span>{reposterName}がリポスト</span>
+        </div>
+      )}
+
       {/* ヘッダー: アバター + 名前 + 時刻 */}
       <div className="flex items-center gap-3 mb-2">
         {/* アバター */}
