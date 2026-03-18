@@ -25,8 +25,6 @@ interface LiveCanvasProps {
   npub: string | null;
   publishEvent: (event: NostrEvent) => Promise<void>;
   onLogout: () => void;
-  /** Publish済みイベントIDのSet。addNoteでスキップ判定に使用 */
-  publishedIdsRef: React.RefObject<Set<string>>;
 }
 
 function calcColumnCount(width: number): number {
@@ -39,7 +37,7 @@ function truncateNpub(npub: string): string {
   return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
 }
 
-export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, onLogout, publishedIdsRef }: LiveCanvasProps) {
+export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, onLogout }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -87,7 +85,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
     handleDraftInput,
     handleDraftClose,
     handleDraftPublish,
-  } = useDraftNotes({ pubkey, notes, publishedIdsRef });
+  } = useDraftNotes({ pubkey, notes });
 
   const scoredCards = useMemo((): Card[] => {
     // notes + publishedNotes をマージ（eventIdで重複排除）

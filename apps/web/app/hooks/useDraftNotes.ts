@@ -6,7 +6,6 @@ import type { NoteCard as NoteCardType, ComposeCard as ComposeCardType } from ".
 interface UseDraftNotesProps {
   pubkey: string;
   notes: NoteCardType[];
-  publishedIdsRef: React.RefObject<Set<string>>;
 }
 
 interface UseDraftNotesResult {
@@ -28,7 +27,6 @@ interface UseDraftNotesResult {
 export function useDraftNotes({
   pubkey,
   notes,
-  publishedIdsRef,
 }: UseDraftNotesProps): UseDraftNotesResult {
   // 下書きカード管理
   const [draftNotes, setDraftNotes] = useState<ComposeCardType[]>([]);
@@ -66,22 +64,17 @@ export function useDraftNotes({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [addDraft]);
 
-  // リレーから到着した notes に含まれる publishedNotes を除去 + publishedIdsRef からも解放
+  // リレーから到着した notes に含まれる publishedNotes を除去
   useEffect(() => {
     if (publishedNotes.length === 0) return;
     const noteEventIds = new Set(notes.map((n) => n.eventId));
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- notes変更に連動してpublishedNotesを整理する派生ステート更新
     setPublishedNotes((prev) => {
-      const filtered = prev.filter((n) => {
-        if (noteEventIds.has(n.eventId)) {
-          publishedIdsRef.current.delete(n.eventId);
-          return false;
-        }
-        return true;
-      });
+      const filtered = prev.filter((n) => !noteEventIds.has(n.eventId));
       if (filtered.length === prev.length) return prev;
       return filtered;
     });
-  }, [notes, publishedNotes.length, publishedIdsRef]);
+  }, [notes, publishedNotes.length]);
 
   // 60秒経過したpublished noteをクリーンアップ（リレー未到着のフォールバック）
   useEffect(() => {
@@ -91,14 +84,11 @@ export function useDraftNotes({
       setPublishedNotes((prev) => {
         const stale = prev.filter((n) => now - n.created_at >= 60);
         if (stale.length === 0) return prev;
-        for (const n of stale) {
-          publishedIdsRef.current.delete(n.eventId);
-        }
         return prev.filter((n) => now - n.created_at < 60);
       });
     }, 10_000);
     return () => clearInterval(timer);
-  }, [publishedNotes.length, publishedIdsRef]);
+  }, [publishedNotes.length]);
 
   // スコアリセット: ComposeCard の onInput
   const handleDraftInput = useCallback((slotId: string) => {
@@ -119,13 +109,11 @@ export function useDraftNotes({
   // Publish 完了: ComposeCard の onPublish
   const handleDraftPublish = useCallback(
     (slotId: string, noteCard: NoteCardType) => {
-      // addNoteでスキップさせるためにeventIDを登録
-      publishedIdsRef.current.add(noteCard.eventId);
       // ドラフトを削除し、同じslotIdのNoteCardをpublishedNotesに追加
       setDraftNotes((prev) => prev.filter((d) => d.slotId !== slotId));
       setPublishedNotes((prev) => [...prev, noteCard]);
     },
-    [publishedIdsRef],
+    [],
   );
 
   return {

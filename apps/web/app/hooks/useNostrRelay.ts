@@ -1,4 +1,3 @@
-import type React from "react";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
@@ -45,7 +44,6 @@ const extractCustomEmojiUrl = (emoji: string, tags: string[][]): string | undefi
  */
 export function useNostrRelay(
   pubkey: string | null,
-  publishedIdsRef?: React.RefObject<Set<string>>,
 ): UseNostrRelayResult {
   const [notes, setNotes] = useState<NoteCard[]>([]);
   const [profiles, setProfiles] = useState<Map<string, NostrProfile>>(
@@ -128,8 +126,6 @@ export function useNostrRelay(
     setNotes((prev) => {
       // eventIDで重複チェック
       if (prev.some((n) => n.eventId === event.id)) return prev;
-      // Publish済みノートはスキップ（二重追加防止）
-      if (publishedIdsRef?.current?.has(event.id)) return prev;
 
       const now = Math.floor(Date.now() / 1000);
       const newNote: NoteCard = {
@@ -153,7 +149,7 @@ export function useNostrRelay(
 
       return updated;
     });
-  }, [publishedIdsRef]);
+  }, []);
 
   /** プロフィールを追加・更新（kind:0イベントから） */
   const upsertProfile = useCallback((event: Event) => {
