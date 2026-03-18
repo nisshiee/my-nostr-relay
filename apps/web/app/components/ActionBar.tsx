@@ -1,23 +1,20 @@
 "use client";
 
-/** NoteCard用アクションバー（長押しで展開するリアクション操作UI） */
+/** NoteCard用アクションバー（カードクリックで展開するリアクション操作UI） */
 
 interface ActionBarProps {
   /** アクションバーの開閉状態 */
   isOpen: boolean;
-  /** 「👍」ボタンクリック時のハンドラ */
-  onThumbsUp: () => void;
+  /** 「+」ボタンクリック時のハンドラ */
+  onAddReaction: () => void;
   /** 自分が既に「👍」リアクション済みかどうか */
   isAlreadyReacted: boolean;
-  /** 明示的に閉じる場合のハンドラ（将来拡張用） */
-  onClose?: () => void;
 }
 
 export function ActionBar({
   isOpen,
-  onThumbsUp,
+  onAddReaction,
   isAlreadyReacted,
-  onClose: _onClose,
 }: ActionBarProps) {
   return (
     <div
@@ -30,23 +27,23 @@ export function ActionBar({
       }`}
     >
       <div className="flex items-center gap-1.5">
-        {/* 👍 リアクションボタン */}
+        {/* + リアクション追加ボタン（アイコンのみ、ボーダーなし） */}
         <button
           type="button"
-          aria-label={isAlreadyReacted ? "既にリアクション済み" : "👍 リアクション"}
+          aria-label={isAlreadyReacted ? "既にリアクション済み" : "リアクションを追加"}
           aria-pressed={isAlreadyReacted}
           disabled={isAlreadyReacted}
           onClick={(e) => {
             e.stopPropagation();
-            onThumbsUp();
+            onAddReaction();
           }}
-          className={`rounded-full px-2 py-0.5 text-xs inline-flex items-center gap-1 transition-colors ${
+          className={`text-lg leading-none p-1 rounded transition-colors ${
             isAlreadyReacted
-              ? "bg-blue-100 dark:bg-blue-900/40 border border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 cursor-not-allowed"
-              : "bg-gray-100 dark:bg-gray-700 border border-transparent cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+              ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
+              : "text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300"
           }`}
         >
-          👍
+          +
         </button>
         {/* 将来的に他のアクションボタンをここに追加 */}
       </div>

@@ -50,6 +50,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
   const avatarUrl = profile?.picture;
   const cardRef = useRef<HTMLDivElement>(null);
   const [isActionBarOpen, setIsActionBarOpen] = useState(false);
+  const isHoveringRef = useRef(false);
 
   // ResizeObserver でカードの高さを測定して親に通知
   useEffect(() => {
@@ -92,15 +93,40 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
     setIsActionBarOpen((prev) => !prev);
   };
 
-  // ホバー外れ → アクションバーを閉じる
-  const handleMouseLeave = () => {
-    setIsActionBarOpen(false);
+  // ホバー外れ → 少し遅延してからアクションバーを閉じる（子要素間の移動による一瞬のleaveを無視）
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseEnter = () => {
+    isHoveringRef.current = true;
+    if (leaveTimerRef.current) {
+      clearTimeout(leaveTimerRef.current);
+      leaveTimerRef.current = null;
+    }
   };
+
+  const handleMouseLeave = () => {
+    isHoveringRef.current = false;
+    leaveTimerRef.current = setTimeout(() => {
+      if (!isHoveringRef.current) {
+        setIsActionBarOpen(false);
+      }
+    }, 100);
+  };
+
+  // タイマークリーンアップ
+  useEffect(() => {
+    return () => {
+      if (leaveTimerRef.current) {
+        clearTimeout(leaveTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div
       ref={cardRef}
       onClick={handleCardClick}
+      onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
         isActionBarOpen ? "z-10" : ""
@@ -182,7 +208,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
       {/* アクションバー */}
       <ActionBar
         isOpen={isActionBarOpen}
-        onThumbsUp={() => {
+        onAddReaction={() => {
           try {
             if (onReaction) {
               onReaction("+");
@@ -193,7 +219,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
             setIsActionBarOpen(false);
           }
         }}
-        isAlreadyReacted={!!(myPubkey && reactions?.get("+")?.pubkeys?.has(myPubkey))}
+        isAlreadyReacted={!!(myPubkey && reactions?.get("👍")?.pubkeys?.has(myPubkey))}
       />
     </div>
   );
