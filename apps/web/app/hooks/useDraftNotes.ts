@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import type { NoteCard as NoteCardType, ComposeCard as ComposeCardType } from "../lib/types";
 
 interface UseDraftNotesProps {
   pubkey: string;
   notes: NoteCardType[];
-  patchNoteSlotId: (eventId: string, slotId: string) => void;
+  publishedSlotMapRef: React.RefObject<Map<string, string>>;
 }
 
 interface UseDraftNotesResult {
@@ -28,7 +28,7 @@ interface UseDraftNotesResult {
 export function useDraftNotes({
   pubkey,
   notes,
-  patchNoteSlotId,
+  publishedSlotMapRef,
 }: UseDraftNotesProps): UseDraftNotesResult {
   // 下書きカード管理
   const [draftNotes, setDraftNotes] = useState<ComposeCardType[]>([]);
@@ -66,15 +66,15 @@ export function useDraftNotes({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [addDraft]);
 
-  // リレーから到着した notes に含まれる publishedNotes を除去（slotId引き継ぎ付き）
+  // リレーから到着した notes に含まれる publishedNotes を除去し、マッピングもクリーンアップ
   useEffect(() => {
     if (publishedNotes.length === 0) return;
     const noteEventIds = new Set(notes.map((n) => n.eventId));
 
-    // リレーから到着済みの publishedNotes を見つけて slotId を書き換え
+    // リレーから到着済みの publishedNotes のマッピングを削除
     const arrivedNotes = publishedNotes.filter((n) => noteEventIds.has(n.eventId));
     for (const arrived of arrivedNotes) {
-      patchNoteSlotId(arrived.eventId, arrived.slotId);
+      publishedSlotMapRef.current?.delete(arrived.eventId);
     }
 
     // publishedNotes から除去
@@ -84,7 +84,7 @@ export function useDraftNotes({
       if (filtered.length === prev.length) return prev;
       return filtered;
     });
-  }, [notes, publishedNotes.length, patchNoteSlotId]);
+  }, [notes, publishedNotes.length, publishedSlotMapRef]);
 
   // 60秒経過したpublished noteをクリーンアップ（リレー未到着のフォールバック）
   useEffect(() => {
@@ -94,11 +94,15 @@ export function useDraftNotes({
       setPublishedNotes((prev) => {
         const stale = prev.filter((n) => now - n.created_at >= 60);
         if (stale.length === 0) return prev;
+        // staleなノートのマッピングも削除
+        for (const n of stale) {
+          publishedSlotMapRef.current?.delete(n.eventId);
+        }
         return prev.filter((n) => now - n.created_at < 60);
       });
     }, 10_000);
     return () => clearInterval(timer);
-  }, [publishedNotes.length]);
+  }, [publishedNotes.length, publishedSlotMapRef]);
 
   // スコアリセット: ComposeCard の onInput
   const handleDraftInput = useCallback((slotId: string) => {
@@ -119,11 +123,13 @@ export function useDraftNotes({
   // Publish 完了: ComposeCard の onPublish
   const handleDraftPublish = useCallback(
     (slotId: string, noteCard: NoteCardType) => {
+      // eventId → slotId のマッピングを登録（addNote時にslotIdを引き継ぐため）
+      publishedSlotMapRef.current?.set(noteCard.eventId, noteCard.slotId);
       // ドラフトを削除し、同じslotIdのNoteCardをpublishedNotesに追加
       setDraftNotes((prev) => prev.filter((d) => d.slotId !== slotId));
       setPublishedNotes((prev) => [...prev, noteCard]);
     },
-    [],
+    [publishedSlotMapRef],
   );
 
   return {
