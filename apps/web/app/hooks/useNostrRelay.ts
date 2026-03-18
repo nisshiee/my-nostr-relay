@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
@@ -29,7 +29,6 @@ interface UseNostrRelayResult {
   status: ConnectionStatus;
   relayUrls: string[];
   publishEvent: (event: NostrEvent) => Promise<void>;
-  patchNoteSlotId: (eventId: string, newSlotId: string) => void;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
 }
 
@@ -51,6 +50,7 @@ const extractCustomEmojiUrl = (emoji: string, tags: string[][]): string | undefi
  */
 export function useNostrRelay(
   pubkey: string | null,
+  publishedSlotMapRef: React.RefObject<Map<string, string>>,
 ): UseNostrRelayResult {
   const [notes, setNotes] = useState<NoteCard[]>([]);
   const [profiles, setProfiles] = useState<Map<string, NostrProfile>>(
@@ -122,13 +122,6 @@ export function useNostrRelay(
     });
   }, [normalizeReactionContent]);
 
-  /** notes内の既存ノートのslotIdを書き換える（publishedNotesのslotIdを引き継ぐ用） */
-  const patchNoteSlotId = useCallback((eventId: string, newSlotId: string) => {
-    setNotes((prev) =>
-      prev.map((n) => (n.eventId === eventId ? { ...n, slotId: newSlotId } : n)),
-    );
-  }, []);
-
   /** ノートを追加（重複排除・スコア計算・prune込み） */
   const addNote = useCallback((event: Event) => {
     // 新規ノートのcreated_atを追跡（リアクション再subscribe時のsince計算用）
@@ -145,9 +138,11 @@ export function useNostrRelay(
 
       const now = Math.floor(Date.now() / 1000);
       const halfLife = event.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+      // publishedSlotMapにマッピングがあればそのslotIdを使う（同じスロットを維持する）
+      const slotId = publishedSlotMapRef.current?.get(event.id) ?? crypto.randomUUID();
       const newNote: NoteCard = {
         type: "note",
-        slotId: crypto.randomUUID(),
+        slotId,
         eventId: event.id,
         pubkey: event.pubkey,
         content: event.content,
@@ -166,7 +161,7 @@ export function useNostrRelay(
 
       return updated;
     });
-  }, [pubkey]);
+  }, [pubkey, publishedSlotMapRef]);
 
   /** プロフィールを追加・更新（kind:0イベントから） */
   const upsertProfile = useCallback((event: Event) => {
@@ -306,9 +301,11 @@ export function useNostrRelay(
                   if (seen.has(event.id)) continue;
                   seen.add(event.id);
                   const halfLife = event.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+                  // publishedSlotMapにマッピングがあればそのslotIdを使う
+                  const slotId = publishedSlotMapRef.current?.get(event.id) ?? crypto.randomUUID();
                   batchNotes.push({
                     type: "note",
-                    slotId: crypto.randomUUID(),
+                    slotId,
                     eventId: event.id,
                     pubkey: event.pubkey,
                     content: event.content,
@@ -473,7 +470,7 @@ export function useNostrRelay(
       setProfiles(new Map());
       setReactions(new Map());
     };
-  }, [pubkey, addNote, addReaction, upsertProfile, normalizeReactionContent]);
+  }, [pubkey, addNote, addReaction, upsertProfile, normalizeReactionContent, publishedSlotMapRef]);
 
   /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
   const publishEvent = useCallback(
@@ -536,5 +533,5 @@ export function useNostrRelay(
     [publishEvent, addReaction],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, publishEvent, patchNoteSlotId, sendReaction };
+  return { notes, profiles, reactions, status, relayUrls, publishEvent, sendReaction };
 }

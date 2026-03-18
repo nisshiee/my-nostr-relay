@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Card, NoteCard as NoteCardType, NostrProfile, Reactions } from "../lib/types";
 import {
@@ -26,7 +26,7 @@ interface LiveCanvasProps {
   pubkey: string;
   npub: string | null;
   publishEvent: (event: NostrEvent) => Promise<void>;
-  patchNoteSlotId: (eventId: string, slotId: string) => void;
+  publishedSlotMapRef: React.RefObject<Map<string, string>>;
   /** リアクション送信ハンドラ */
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
   onLogout: () => void;
@@ -42,7 +42,7 @@ function truncateNpub(npub: string): string {
   return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
 }
 
-export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, patchNoteSlotId, sendReaction, onLogout }: LiveCanvasProps) {
+export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, onLogout }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -90,7 +90,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
     handleDraftInput,
     handleDraftClose,
     handleDraftPublish,
-  } = useDraftNotes({ pubkey, notes, patchNoteSlotId });
+  } = useDraftNotes({ pubkey, notes, publishedSlotMapRef });
 
   const scoredCards = useMemo((): Card[] => {
     // notes + publishedNotes をマージ（eventIdで重複排除）
