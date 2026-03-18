@@ -119,7 +119,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
                 }}
                 className={`rounded-full px-2 py-0.5 text-xs inline-flex items-center gap-1 transition-colors ${
                   reacted
-                    ? "bg-blue-50 dark:bg-blue-900/30 border border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 cursor-not-allowed opacity-60"
+                    ? "bg-blue-100 dark:bg-blue-900/40 border border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 cursor-not-allowed"
                     : "bg-gray-100 dark:bg-gray-700 border border-transparent cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
                 }`}
               >
