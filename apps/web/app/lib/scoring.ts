@@ -4,12 +4,13 @@ import { SCORE_HALF_LIFE } from "./constants";
  * 新しさスコアを計算する（指数関数的減衰）
  * @param createdAt ノートの作成時刻（Unix timestamp、秒）
  * @param now 現在時刻（Unix timestamp、秒）
+ * @param halfLife 半減期（秒）。デフォルトは SCORE_HALF_LIFE
  * @returns 0〜1のスコア値
  */
-export function calcFreshnessScore(createdAt: number, now: number): number {
+export function calcFreshnessScore(createdAt: number, now: number, halfLife: number = SCORE_HALF_LIFE): number {
   const age = now - createdAt;
   if (age <= 0) return 1;
-  return Math.pow(0.5, age / SCORE_HALF_LIFE);
+  return Math.pow(0.5, age / halfLife);
 }
 
 /**

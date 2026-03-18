@@ -19,6 +19,9 @@ export const COLUMN_WIDTH = 320;
 /** 新しさスコアの半減期（秒）。30分で半減 */
 export const SCORE_HALF_LIFE = 1800;
 
+/** オーナー（ログインユーザー）の投稿に適用する半減期（秒）。1時間で半減 */
+export const OWNER_SCORE_HALF_LIFE = 3600;
+
 /** このスコア以下でフェードアウト開始 */
 export const FADEOUT_THRESHOLD = 0.05;
 
