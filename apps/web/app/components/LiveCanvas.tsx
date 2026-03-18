@@ -8,6 +8,8 @@ import {
   SCORE_UPDATE_INTERVAL,
   FADEOUT_THRESHOLD,
   COLUMN_GAP,
+  SCORE_HALF_LIFE,
+  OWNER_SCORE_HALF_LIFE,
 } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { useDraftNotes } from "../hooks/useDraftNotes";
@@ -97,7 +99,8 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
     const allNotes = [...notes, ...uniquePublished];
 
     const updatedNotes: Card[] = allNotes.map((note) => {
-      const score = calcFreshnessScore(note.created_at, nowEpoch);
+      const halfLife = note.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+      const score = calcFreshnessScore(note.created_at, nowEpoch, halfLife);
       return {
         ...note,
         score,
@@ -107,7 +110,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
 
     // draftNotes にスコアを再計算
     const scoredDrafts: Card[] = draftNotes.map((d) => {
-      const score = calcFreshnessScore(d.created_at, nowEpoch);
+      const score = calcFreshnessScore(d.created_at, nowEpoch, OWNER_SCORE_HALF_LIFE);
       return {
         ...d,
         score,
@@ -116,7 +119,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
     });
 
     return sortByScore([...scoredDrafts, ...updatedNotes]);
-  }, [notes, publishedNotes, draftNotes, nowEpoch, holdSet]);
+  }, [notes, publishedNotes, draftNotes, nowEpoch, holdSet, pubkey]);
 
   // レイアウト計算
   const {

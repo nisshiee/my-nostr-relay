@@ -9,8 +9,10 @@ import {
   MAX_WAIT_FOR_CONNECTION,
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
+  OWNER_SCORE_HALF_LIFE,
   REACTION_POLL_INTERVAL,
   REACTION_SINCE_SAFETY_MARGIN,
+  SCORE_HALF_LIFE,
 } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import type { NoteCard, NostrProfile, Reactions } from "../lib/types";
@@ -142,6 +144,7 @@ export function useNostrRelay(
       if (prev.some((n) => n.eventId === event.id)) return prev;
 
       const now = Math.floor(Date.now() / 1000);
+      const halfLife = event.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
       const newNote: NoteCard = {
         type: "note",
         slotId: crypto.randomUUID(),
@@ -149,7 +152,7 @@ export function useNostrRelay(
         pubkey: event.pubkey,
         content: event.content,
         created_at: event.created_at,
-        score: calcFreshnessScore(event.created_at, now),
+        score: calcFreshnessScore(event.created_at, now, halfLife),
         fadingOut: false,
       };
 
@@ -163,7 +166,7 @@ export function useNostrRelay(
 
       return updated;
     });
-  }, []);
+  }, [pubkey]);
 
   /** プロフィールを追加・更新（kind:0イベントから） */
   const upsertProfile = useCallback((event: Event) => {
@@ -302,6 +305,7 @@ export function useNostrRelay(
                 for (const event of initialBuffer) {
                   if (seen.has(event.id)) continue;
                   seen.add(event.id);
+                  const halfLife = event.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
                   batchNotes.push({
                     type: "note",
                     slotId: crypto.randomUUID(),
@@ -309,7 +313,7 @@ export function useNostrRelay(
                     pubkey: event.pubkey,
                     content: event.content,
                     created_at: event.created_at,
-                    score: calcFreshnessScore(event.created_at, now),
+                    score: calcFreshnessScore(event.created_at, now, halfLife),
                     fadingOut: false,
                   });
                 }
