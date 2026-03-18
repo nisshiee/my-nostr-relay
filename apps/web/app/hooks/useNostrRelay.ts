@@ -27,6 +27,14 @@ interface UseNostrRelayResult {
   publishEvent: (event: NostrEvent) => Promise<void>;
 }
 
+/** カスタム絵文字（:shortcode: 形式）のイベントタグから画像URLを取得する */
+const extractCustomEmojiUrl = (emoji: string, tags: string[][]): string | undefined => {
+  if (!emoji.startsWith(":") || !emoji.endsWith(":") || emoji.length <= 2) return undefined;
+  const shortcode = emoji.slice(1, -1);
+  const emojiTag = tags.find(tag => tag[0] === "emoji" && tag[1] === shortcode && tag[2]);
+  return emojiTag?.[2];
+};
+
 /**
  * Nostrリレーに接続し、フォロー中ユーザーのノートとプロフィールを取得するhook
  *
@@ -59,14 +67,14 @@ export function useNostrRelay(
   const seenReactionIdsRef = useRef<Set<string>>(new Set());
   const notesRef = useRef<NoteCard[]>([]);
 
-  /** リアクションのcontentを正規化する。カスタム絵文字（:shortcode:）はnullを返す */
+  /** リアクションのcontentを正規化する。カスタム絵文字（:shortcode:）もそのまま返す */
   const normalizeReactionContent = useCallback((content: string): string | null => {
     // "+" または空文字 → 👍
     if (content === "+" || content === "") return "👍";
     // "-" → 👎
     if (content === "-") return "👎";
-    // NIP-30カスタム絵文字（:shortcode: 形式）→ 無視
-    if (content.startsWith(":") && content.endsWith(":") && content.length > 2) return null;
+    // NIP-30カスタム絵文字（:shortcode: 形式）→ そのまま返す
+    if (content.startsWith(":") && content.endsWith(":") && content.length > 2) return content;
     // 通常の絵文字はそのまま
     return content;
   }, []);
@@ -83,17 +91,25 @@ export function useNostrRelay(
     const targetEventId = eTags[eTags.length - 1]![1]!;
 
     const emoji = normalizeReactionContent(event.content);
-    if (emoji === null) return; // カスタム絵文字は無視
+    if (emoji === null) return;
+
+    // カスタム絵文字の画像URLを取得
+    const imageUrl = extractCustomEmojiUrl(emoji, event.tags);
 
     setReactions((prev) => {
       const next = new Map(prev);
       const eventReactions = next.get(targetEventId);
       if (eventReactions) {
         const updated = new Map(eventReactions);
-        updated.set(emoji, (updated.get(emoji) ?? 0) + 1);
+        const existing = updated.get(emoji);
+        if (existing) {
+          updated.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl });
+        } else {
+          updated.set(emoji, { count: 1, imageUrl });
+        }
         next.set(targetEventId, updated);
       } else {
-        next.set(targetEventId, new Map([[emoji, 1]]));
+        next.set(targetEventId, new Map([[emoji, { count: 1, imageUrl }]]));
       }
       return next;
     });
@@ -323,11 +339,20 @@ export function useNostrRelay(
                           const targetId = eTags[eTags.length - 1]![1]!;
                           const emoji = normalizeReactionContent(evt.content);
                           if (emoji === null) continue;
+                          
+                          // カスタム絵文字の画像URLを取得
+                          const imageUrl = extractCustomEmojiUrl(emoji, evt.tags);
+                          
                           const eventReactions = batchReactions.get(targetId);
                           if (eventReactions) {
-                            eventReactions.set(emoji, (eventReactions.get(emoji) ?? 0) + 1);
+                            const existing = eventReactions.get(emoji);
+                            if (existing) {
+                              eventReactions.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl });
+                            } else {
+                              eventReactions.set(emoji, { count: 1, imageUrl });
+                            }
                           } else {
-                            batchReactions.set(targetId, new Map([[emoji, 1]]));
+                            batchReactions.set(targetId, new Map([[emoji, { count: 1, imageUrl }]]));
                           }
                         }
                         setReactions(batchReactions);
