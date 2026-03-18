@@ -271,21 +271,30 @@ export function useNostrRelay(
 
         setStatus("loading");
 
-        // ステップ4: フォロー中ユーザーのテキストノート（kind:1）を決定したリレーでsubscribe
+        // ステップ4: フォロー中ユーザーのテキストノート（kind:1）とリポスト（kind:6）を決定したリレーでsubscribe
         // 初期ロード中はバッファに溜めて oneose でまとめて state に反映する
         const initialBuffer: Event[] = [];
+        const initialRepostBuffer: Event[] = []; // kind:6リポスト用の初期ロードバッファ
         let initialLoading = true;
 
         const notesSub = pool.subscribeMany(
           allRelays,
-          { kinds: [1], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter,
+          { kinds: [1, 6], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter,
           {
             onevent(event: Event) {
               if (cancelled) return;
               if (initialLoading) {
-                initialBuffer.push(event);
+                if (event.kind === 6) {
+                  // kind:6はリポスト用バッファに蓄積（次タスクで処理）
+                  initialRepostBuffer.push(event);
+                } else {
+                  initialBuffer.push(event);
+                }
               } else {
-                addNote(event);
+                // リアルタイム処理: kind:1のみaddNote（kind:6のリアルタイム処理は次タスクで実装）
+                if (event.kind === 1) {
+                  addNote(event);
+                }
               }
             },
             oneose() {
