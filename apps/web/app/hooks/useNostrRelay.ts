@@ -59,8 +59,6 @@ export function useNostrRelay(
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [relayUrls, setRelayUrls] = useState<string[]>([]);
   const [reactions, setReactions] = useState<Reactions>(new Map());
-  const [reconnectCounter, setReconnectCounter] = useState(0);
-
   // クリーンアップ用のref
   const poolRef = useRef<SimplePool | null>(null);
   const poolSubsRef = useRef<SubCloser[]>([]);
@@ -186,11 +184,6 @@ export function useNostrRelay(
   useEffect(() => {
     if (!pubkey) {
       return;
-    }
-
-    // reconnectの場合のログ
-    if (reconnectCounter > 0) {
-      console.debug('[nostr-relay] Reconnect started due to visibility change');
     }
 
     let cancelled = false;
@@ -324,9 +317,6 @@ export function useNostrRelay(
                 setNotes(displayedNotes);
               }
               setStatus("connected");
-              if (reconnectCounter > 0) {
-                console.debug('[nostr-relay] Reconnect completed successfully');
-              }
 
               // ステップ4b: 表示中ノートのリアクション（kind:7）をsubscribe
               const eventIds = displayedNotes.map((n) => n.eventId);
@@ -461,30 +451,51 @@ export function useNostrRelay(
 
     connect();
 
-    // visibilitychange による再接続デバッグログ
+    // visibilitychange による再接続（スリープ復帰対策）
+    // useEffectを再トリガーせず、poolの内部リコネクト機構を利用する
     let lastHiddenAt: number | null = null;
 
     const handleVisibilityChange = () => {
       const now = Date.now();
       const state = document.visibilityState;
-      console.debug(`[nostr-relay] visibilitychange detected: ${state} at ${new Date(now).toISOString()}`);
 
       if (state === "hidden") {
         lastHiddenAt = now;
-        console.debug("[nostr-relay] tab hidden, recording timestamp for reconnect check");
-      } else if (state === "visible") {
-        const elapsed = lastHiddenAt !== null ? Math.round((now - lastHiddenAt) / 1000) : null;
-        console.debug(`[nostr-relay] tab visible again, hidden duration: ${elapsed !== null ? `${elapsed}s` : "unknown"}`);
+        return;
+      }
 
-        const shouldReconnect = elapsed !== null && elapsed >= 30;
-        console.debug(`[nostr-relay] reconnect trigger check: ${shouldReconnect ? "YES" : "NO"} (threshold: 30s, elapsed: ${elapsed ?? "N/A"}s)`);
+      // visible に戻った
+      const elapsed = lastHiddenAt !== null ? Math.round((now - lastHiddenAt) / 1000) : null;
+      lastHiddenAt = null;
 
-        if (shouldReconnect) {
-          console.debug("[nostr-relay] triggering reconnect via reconnectCounter increment");
-          setReconnectCounter(c => c + 1);
+      // 30秒未満の非表示はスキップ（通常のタブ切替）
+      if (elapsed === null || elapsed < 30) return;
+
+      console.debug(`[nostr-relay] tab visible after ${elapsed}s, checking relay connections`);
+
+      const pool = poolRef.current;
+      if (!pool) return;
+
+      // pool.relays（Map<string, AbstractRelay>）を走査して、
+      // 切断されたリレーにリコネクトをトリガーする
+      // nostr-tools の enableReconnect が subscriptions の自動復旧も行う
+      // Note: relays は protected、reconnect は private だが、ランタイムでは問題なくアクセスできる
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const relayMap = (pool as any).relays as Map<string, { connected: boolean; reconnect: () => void }>;
+      let reconnected = 0;
+      for (const [url, relay] of relayMap) {
+        if (!relay.connected) {
+          console.debug(`[nostr-relay] relay ${url} disconnected, triggering reconnect`);
+          relay.reconnect();
+          reconnected++;
         }
+      }
 
-        lastHiddenAt = null;
+      if (reconnected > 0) {
+        console.debug(`[nostr-relay] triggered reconnect for ${reconnected} relay(s)`);
+        setStatus("connecting");
+      } else {
+        console.debug("[nostr-relay] all relays still connected");
       }
     };
 
@@ -509,7 +520,7 @@ export function useNostrRelay(
       setProfiles(new Map());
       setReactions(new Map());
     };
-  }, [pubkey, reconnectCounter, addNote, addReaction, upsertProfile, normalizeReactionContent, publishedSlotMapRef]);
+  }, [pubkey, addNote, addReaction, upsertProfile, normalizeReactionContent, publishedSlotMapRef]);
 
   /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
   const publishEvent = useCallback(
