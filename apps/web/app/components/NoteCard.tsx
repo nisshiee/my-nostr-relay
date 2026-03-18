@@ -71,6 +71,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       if (cardRef.current && !cardRef.current.contains(event.target as Node)) {
         setIsActionBarOpen(false);
+        onRelease?.();
       }
     };
 
@@ -90,7 +91,16 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
     if (selection && selection.toString().length > 0) {
       return;
     }
-    setIsActionBarOpen((prev) => !prev);
+    setIsActionBarOpen((prev) => {
+      const next = !prev;
+      // アクションバーを開いたらホールド開始、閉じたらホールド解除
+      if (next) {
+        onHold?.();
+      } else {
+        onRelease?.();
+      }
+      return next;
+    });
   };
 
   // ホバー外れ → 少し遅延してからアクションバーを閉じる（子要素間の移動による一瞬のleaveを無視）
@@ -109,6 +119,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
     leaveTimerRef.current = setTimeout(() => {
       if (!isHoveringRef.current) {
         setIsActionBarOpen(false);
+        onRelease?.();
       }
     }, 100);
   };
@@ -217,6 +228,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
             console.error(e);
           } finally {
             setIsActionBarOpen(false);
+            onRelease?.();
           }
         }}
         isAlreadyReacted={!!(myPubkey && reactions?.get("👍")?.pubkeys?.has(myPubkey))}
