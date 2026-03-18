@@ -24,6 +24,7 @@ interface LiveCanvasProps {
   pubkey: string;
   npub: string | null;
   publishEvent: (event: NostrEvent) => Promise<void>;
+  patchNoteSlotId: (eventId: string, slotId: string) => void;
   onLogout: () => void;
 }
 
@@ -37,7 +38,7 @@ function truncateNpub(npub: string): string {
   return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
 }
 
-export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, onLogout }: LiveCanvasProps) {
+export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, patchNoteSlotId, onLogout }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -85,7 +86,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
     handleDraftInput,
     handleDraftClose,
     handleDraftPublish,
-  } = useDraftNotes({ pubkey, notes });
+  } = useDraftNotes({ pubkey, notes, patchNoteSlotId });
 
   const scoredCards = useMemo((): Card[] => {
     // notes + publishedNotes をマージ（eventIdで重複排除）

@@ -24,6 +24,7 @@ interface UseNostrRelayResult {
   status: ConnectionStatus;
   relayUrls: string[];
   publishEvent: (event: NostrEvent) => Promise<void>;
+  patchNoteSlotId: (eventId: string, newSlotId: string) => void;
 }
 
 /** カスタム絵文字（:shortcode: 形式）のイベントタグから画像URLを取得する */
@@ -112,6 +113,13 @@ export function useNostrRelay(
       return next;
     });
   }, [normalizeReactionContent]);
+
+  /** notes内の既存ノートのslotIdを書き換える（publishedNotesのslotIdを引き継ぐ用） */
+  const patchNoteSlotId = useCallback((eventId: string, newSlotId: string) => {
+    setNotes((prev) =>
+      prev.map((n) => (n.eventId === eventId ? { ...n, slotId: newSlotId } : n)),
+    );
+  }, []);
 
   /** ノートを追加（重複排除・スコア計算・prune込み） */
   const addNote = useCallback((event: Event) => {
@@ -474,5 +482,5 @@ export function useNostrRelay(
     [relayUrls],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, publishEvent };
+  return { notes, profiles, reactions, status, relayUrls, publishEvent, patchNoteSlotId };
 }
