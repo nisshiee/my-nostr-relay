@@ -32,8 +32,8 @@ function relativeTime(unixTimestamp: number): string {
 interface NoteCardProps {
   note: NoteCardType;
   profile?: NostrProfile;
-  /** リアクション集計（絵文字 → 件数） */
-  reactions?: Map<string, number>;
+  /** リアクション集計（絵文字 → {件数, 画像URL}） */
+  reactions?: Map<string, { count: number; imageUrl?: string }>;
   onHeightChange?: (slotId: string, height: number) => void;
 }
 
@@ -99,12 +99,22 @@ export function NoteCard({ note, profile, reactions, onHeightChange }: NoteCardP
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {Array.from(reactions.entries()).map(([emoji, count]) => (
+          {Array.from(reactions.entries()).map(([emoji, { count, imageUrl }]) => (
             <span
               key={emoji}
-              className="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-700"
+              className="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-700 inline-flex items-center gap-1"
             >
-              {emoji} {count}
+              {imageUrl ? (
+                <img 
+                  src={imageUrl} 
+                  alt={emoji} 
+                  className="inline-block h-4 w-4"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                emoji
+              )}{" "}
+              {count}
             </span>
           ))}
         </div>
