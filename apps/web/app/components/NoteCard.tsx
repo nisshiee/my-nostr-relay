@@ -3,6 +3,7 @@
 import { useRef, useEffect } from "react";
 import Image from "next/image";
 import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
+import { ContentRenderer } from "./content/ContentRenderer";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -92,10 +93,8 @@ export function NoteCard({ note, profile, reactions, onHeightChange }: NoteCardP
         </div>
       </div>
 
-      {/* テキスト内容 */}
-      <p className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
-        {note.content}
-      </p>
+      {/* テキスト内容（ContentRendererでリッチコンテンツを描画） */}
+      <ContentRenderer content={note.content} />
 
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (
