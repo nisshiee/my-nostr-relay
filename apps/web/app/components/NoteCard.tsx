@@ -32,14 +32,18 @@ function relativeTime(unixTimestamp: number): string {
 interface NoteCardProps {
   note: NoteCardType;
   profile?: NostrProfile;
-  /** リアクション集計（絵文字 → {件数, 画像URL}） */
-  reactions?: Map<string, { count: number; imageUrl?: string }>;
+  /** リアクション集計（絵文字 → {件数, 画像URL, 送信者pubkey集合}） */
+  reactions?: Map<string, { count: number; imageUrl?: string; pubkeys: Set<string> }>;
+  /** 自分のpubkey（リアクション済み判定用） */
+  myPubkey?: string;
+  /** リアクション送信ハンドラ */
+  onReaction?: (emoji: string, imageUrl?: string) => void;
   onHeightChange?: (slotId: string, height: number) => void;
   onHold?: () => void;
   onRelease?: () => void;
 }
 
-export function NoteCard({ note, profile, reactions, onHeightChange, onHold, onRelease }: NoteCardProps) {
+export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHeightChange, onHold, onRelease }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
   const avatarUrl = profile?.picture;
@@ -101,24 +105,38 @@ export function NoteCard({ note, profile, reactions, onHeightChange, onHold, onR
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {Array.from(reactions.entries()).map(([emoji, { count, imageUrl }]) => (
-            <span
-              key={emoji}
-              className="rounded-full bg-gray-100 px-2 py-0.5 text-xs dark:bg-gray-700 inline-flex items-center gap-1"
-            >
-              {imageUrl ? (
-                <img 
-                  src={imageUrl} 
-                  alt={emoji} 
-                  className="inline-block h-4 w-4"
-                  referrerPolicy="no-referrer"
-                />
-              ) : (
-                emoji
-              )}{" "}
-              {count}
-            </span>
-          ))}
+          {Array.from(reactions.entries()).map(([emoji, { count, imageUrl, pubkeys }]) => {
+            const reacted = !!(myPubkey && pubkeys.has(myPubkey));
+            return (
+              <button
+                key={emoji}
+                type="button"
+                disabled={reacted}
+                onClick={() => {
+                  if (!reacted && onReaction) {
+                    onReaction(emoji, imageUrl);
+                  }
+                }}
+                className={`rounded-full px-2 py-0.5 text-xs inline-flex items-center gap-1 transition-colors ${
+                  reacted
+                    ? "bg-blue-100 dark:bg-blue-900/40 border border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 cursor-not-allowed"
+                    : "bg-gray-100 dark:bg-gray-700 border border-transparent cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                }`}
+              >
+                {imageUrl ? (
+                  <img
+                    src={imageUrl}
+                    alt={emoji}
+                    className="inline-block h-4 w-4"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  emoji
+                )}{" "}
+                {count}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
