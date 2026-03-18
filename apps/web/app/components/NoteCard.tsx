@@ -87,6 +87,11 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
 
   // カードクリック → アクションバーのトグル（テキスト選択中は無視）
   const handleCardClick = (e: React.MouseEvent) => {
+    // インタラクティブ要素（画像、リンク、ボタン）のクリックは無視する
+    const target = e.target as HTMLElement;
+    if (target.closest("img, a, button")) {
+      return;
+    }
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
       return;
