@@ -15,6 +15,9 @@ import { useCardLayout } from "../hooks/useCardLayout";
 import { NoteCard } from "./NoteCard";
 import { ComposeCard } from "./ComposeCard";
 
+/** useCardLayout に渡すデフォルトの空 holdSet（参照安定） */
+const emptyHoldSet: ReadonlySet<string> = new Set<string>();
+
 interface LiveCanvasProps {
   notes: NoteCardType[];
   profiles: Map<string, NostrProfile>;
@@ -103,7 +106,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
     cardLayout,
     delayMap,
     computeColumnHeight,
-  } = useCardLayout(scoredCards, columnCount);
+  } = useCardLayout(scoredCards, columnCount, emptyHoldSet);
 
   const statusIndicator = useCallback(() => {
     switch (status) {
