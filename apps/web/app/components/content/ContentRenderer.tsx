@@ -3,6 +3,7 @@
 import { parseContent, type ContentNode } from "../../lib/contentParser";
 import { TextNode } from "./TextNode";
 import { ImageNode } from "./ImageNode";
+import { LinkNode } from "./LinkNode";
 import type { ComponentType } from "react";
 
 /**
@@ -13,7 +14,7 @@ import type { ComponentType } from "react";
 const NODE_RENDERERS: Record<ContentNode["type"], ComponentType<any>> = {
   text: TextNode,
   image: ImageNode,
-  // 将来: link: LinkNode, video: VideoNode, ogp: OgpNode, ...
+  link: LinkNode,
 };
 
 interface ContentRendererProps {
