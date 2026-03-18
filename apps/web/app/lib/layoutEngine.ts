@@ -70,14 +70,91 @@ export function placeCard(
   scoreMap: ReadonlyMap<string, number>,
   columnCount: number,
   chain: { movedIds: Set<string>; chainOrder: Map<string, number> },
+  holdSet: ReadonlySet<string>,
 ): void {
   const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
 
-  // この位置にいるカードを探す
+  // この位置にいるカードを探す（配置前に確認）
   const colCards = columns[targetCol];
-  const victimIdx = colCards.findIndex(
+  const victimEntry = colCards.find(
     (c) => c.id !== cardId && !chain.movedIds.has(c.id) && c.y === targetY,
   );
+
+  // ── victim が holdSet に含まれる場合: cardId をリダイレクト ──
+  if (victimEntry && holdSet.has(victimEntry.id)) {
+    const victimId = victimEntry.id;
+    const victimY = victimEntry.y;
+    const victimHeight = heightMap.get(victimId) ?? DEFAULT_CARD_HEIGHT;
+
+    // ステップ0: victim が列の一番下のカードか？
+    const sameColOthers = columns[targetCol].filter((c) => c.id !== victimId);
+    const isBottomOfColumn = sameColOthers.every((c) => c.y <= victimY);
+
+    if (isBottomOfColumn) {
+      // ホールドカードは動かない。cardId をその下に配置
+      const newY = victimY + victimHeight + GAP;
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet);
+      return;
+    }
+
+    // ステップ1: 押し出し先候補のリストアップ（victim 基準で計算）
+    const candidates: DisplaceCandidate[] = [];
+
+    // 1a. 同じ列の、victim の直下のカード
+    const belowInCol = columns[targetCol]
+      .filter((c) => c.id !== victimId && c.y > victimY)
+      .sort((a, b) => a.y - b.y);
+    if (belowInCol.length > 0) {
+      const below = belowInCol[0];
+      candidates.push({
+        id: below.id,
+        col: targetCol,
+        y: below.y,
+        score: scoreMap.get(below.id) ?? 0,
+      });
+    }
+
+    // 1b. 左右の列で、victim とy座標が1pxでも重なるカード
+    const victimBottom = victimY + victimHeight;
+    for (const adjCol of [targetCol - 1, targetCol + 1]) {
+      if (adjCol < 0 || adjCol >= columnCount) continue;
+      for (const card of columns[adjCol]) {
+        const cardH = heightMap.get(card.id) ?? DEFAULT_CARD_HEIGHT;
+        const cardBottom = card.y + cardH;
+        if (victimY < cardBottom && victimBottom > card.y) {
+          candidates.push({
+            id: card.id,
+            col: adjCol,
+            y: card.y,
+            score: scoreMap.get(card.id) ?? 0,
+          });
+        }
+      }
+    }
+
+    // ステップ2: 別列の候補から除外
+    const filtered = candidates.filter((c) => {
+      if (c.col === targetCol) return true;
+      if (c.y < victimY) return false;
+      if (chain.movedIds.has(c.id)) return false;
+      return true;
+    });
+
+    // ステップ3: 最低スコアの候補位置に cardId をリダイレクト
+    if (filtered.length === 0) {
+      // 候補がない → victim の下に cardId を配置
+      const newY = victimY + victimHeight + GAP;
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet);
+      return;
+    }
+
+    const best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+    // cardId を best の位置にリダイレクト（連鎖は続く）
+    placeCard(grid, columns, cardId, best.col, best.y, heightMap, scoreMap, columnCount, chain, holdSet);
+    return;
+  }
+
+  // ── 通常フロー: cardId を配置 ──
 
   // 自分を配置（元の列から削除して新位置に）
   for (let c = 0; c < columnCount; c++) {
@@ -89,10 +166,9 @@ export function placeCard(
   chain.chainOrder.set(cardId, chain.chainOrder.size);
 
   // 押し出す相手がいない → 終了
-  if (victimIdx === -1) return;
+  if (!victimEntry) return;
 
-  // victimIdx は filter 前の colCards を参照しているので、
-  // filter 後の columns[targetCol] から victim を探し直す
+  // columns が変更された後なので victim を探し直す
   const victim = columns[targetCol].find(
     (c) => c.id !== cardId && c.y === targetY && !chain.movedIds.has(c.id),
   );
@@ -180,7 +256,7 @@ export function placeCard(
   const best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
 
   // 押し出されるカードを best の位置に配置 → best が次に押し出される
-  placeCard(grid, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, chain);
+  placeCard(grid, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, chain, holdSet);
 }
 
 // ── 公開API ──
@@ -254,6 +330,7 @@ export function insertCard(
   allNotes: readonly Card[],
   columnCount: number,
   heightMap: ReadonlyMap<string, number>,
+  holdSet: ReadonlySet<string>,
 ): LayoutResult {
   // prevGrid を clone してから内部関数に渡す
   const grid = new Map(prevGrid);
@@ -267,7 +344,7 @@ export function insertCard(
   const bestCol = 0;
 
   const chain = { movedIds: new Set<string>(), chainOrder: new Map<string, number>() };
-  placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain);
+  placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain, holdSet);
 
   return { grid, chain };
 }
