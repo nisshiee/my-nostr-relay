@@ -20,6 +20,41 @@ interface DisplaceCandidate {
 
 // ── ヘルパー ──
 
+/**
+ * 隣列の場合は上優先ロジックを適用する。
+ * 
+ * bestが隣の列（best.col !== targetCol）にある場合:
+ * 1. filtered の中から best と同じ列にある候補を抽出
+ * 2. その中で victimのスコア以下のものを「変更候補」とする
+ * 3. 変更候補がある場合 → 変更候補の中でyが最小のものを新たなbestとする
+ * 4. 変更候補がない場合 → 変更なし（元のbestのまま）
+ */
+function applyTopPreferenceForAdjacentColumns(
+  best: DisplaceCandidate,
+  filtered: DisplaceCandidate[],
+  targetCol: number,
+  victimScore: number,
+): DisplaceCandidate {
+  // bestが同じ列にある場合は変更しない
+  if (best.col === targetCol) {
+    return best;
+  }
+
+  // bestと同じ列にある候補を抽出
+  const sameColCandidates = filtered.filter((c) => c.col === best.col);
+
+  // victimのスコア以下の変更候補を取得
+  const changeCandidates = sameColCandidates.filter((c) => c.score <= victimScore);
+
+  // 変更候補がない場合は元のbestのまま
+  if (changeCandidates.length === 0) {
+    return best;
+  }
+
+  // yが最小のものを選択
+  return changeCandidates.reduce((a, b) => (a.y <= b.y ? a : b));
+}
+
 /** Grid → ColumnSlots に変換 */
 export function gridToColumns(grid: Grid, columnCount: number): ColumnSlots {
   const columns: ColumnSlots = Array.from({ length: columnCount }, () => []);
@@ -148,7 +183,14 @@ export function placeCard(
       return;
     }
 
-    const best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+    let best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+    // 隣列の場合は上優先ロジックを適用
+    best = applyTopPreferenceForAdjacentColumns(
+      best,
+      filtered,
+      targetCol,
+      scoreMap.get(victimId) ?? 0,
+    );
     // cardId を best の位置にリダイレクト（連鎖は続く）
     placeCard(grid, columns, cardId, best.col, best.y, heightMap, scoreMap, columnCount, chain, holdSet);
     return;
@@ -253,7 +295,14 @@ export function placeCard(
     return;
   }
 
-  const best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+  let best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+  // 隣列の場合は上優先ロジックを適用
+  best = applyTopPreferenceForAdjacentColumns(
+    best,
+    filtered,
+    targetCol,
+    scoreMap.get(victimId) ?? 0,
+  );
 
   // 押し出されるカードを best の位置に配置 → best が次に押し出される
   placeCard(grid, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, chain, holdSet);
