@@ -36,7 +36,10 @@ export function ActionBar({
           aria-label={isAlreadyReacted ? "既にリアクション済み" : "👍 リアクション"}
           aria-pressed={isAlreadyReacted}
           disabled={isAlreadyReacted}
-          onClick={onThumbsUp}
+          onClick={(e) => {
+            e.stopPropagation();
+            onThumbsUp();
+          }}
           className={`rounded-full px-2 py-0.5 text-xs inline-flex items-center gap-1 transition-colors ${
             isAlreadyReacted
               ? "bg-blue-100 dark:bg-blue-900/40 border border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 cursor-not-allowed"

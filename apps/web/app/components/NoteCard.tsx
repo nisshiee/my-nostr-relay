@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import Image from "next/image";
 import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
 import { ContentRenderer } from "./content/ContentRenderer";
+import { ActionBar } from "./ActionBar";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -48,6 +49,7 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
   const avatarUrl = profile?.picture;
   const cardRef = useRef<HTMLDivElement>(null);
+  const [isActionBarOpen, setIsActionBarOpen] = useState(false);
 
   // ResizeObserver でカードの高さを測定して親に通知
   useEffect(() => {
@@ -63,10 +65,46 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
     return () => observer.disconnect();
   }, [note.slotId, onHeightChange]);
 
+  // Click outside でアクションバーを閉じる（モバイル対応）
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      if (cardRef.current && !cardRef.current.contains(event.target as Node)) {
+        setIsActionBarOpen(false);
+      }
+    };
+
+    if (isActionBarOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      document.addEventListener("touchstart", handleClickOutside as EventListener);
+      return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+        document.removeEventListener("touchstart", handleClickOutside as EventListener);
+      };
+    }
+  }, [isActionBarOpen]);
+
+  // カードクリック → アクションバーのトグル（テキスト選択中は無視）
+  const handleCardClick = (e: React.MouseEvent) => {
+    const selection = window.getSelection();
+    if (selection && selection.toString().length > 0) {
+      return;
+    }
+    setIsActionBarOpen((prev) => !prev);
+  };
+
+  // ホバー外れ → アクションバーを閉じる
+  const handleMouseLeave = () => {
+    setIsActionBarOpen(false);
+  };
+
   return (
     <div
       ref={cardRef}
-      className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 hover:shadow-md dark:hover:shadow-gray-900/50"
+      onClick={handleCardClick}
+      onMouseLeave={handleMouseLeave}
+      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
+        isActionBarOpen ? "z-10" : ""
+      }`}
     >
       {/* ヘッダー: アバター + 名前 + 時刻 */}
       <div className="flex items-center gap-3 mb-2">
@@ -112,7 +150,8 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
                 key={emoji}
                 type="button"
                 disabled={reacted}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   if (!reacted && onReaction) {
                     onReaction(emoji, imageUrl);
                   }
@@ -139,6 +178,13 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
           })}
         </div>
       )}
+
+      {/* アクションバー */}
+      <ActionBar
+        isOpen={isActionBarOpen}
+        onThumbsUp={() => {/* タスク3で本実装 */}}
+        isAlreadyReacted={false}
+      />
     </div>
   );
 }

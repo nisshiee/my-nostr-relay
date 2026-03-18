@@ -23,7 +23,8 @@ export function ImageNode({
   const [lightboxOpen, setLightboxOpen] = useState(false);
 
   /** 画像クリック時: Lightboxを開いてホールド通知 */
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
     setLightboxOpen(true);
     onHold?.();
   };

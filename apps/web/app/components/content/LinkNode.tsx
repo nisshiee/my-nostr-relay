@@ -12,6 +12,7 @@ export function LinkNode({ url, text }: LinkNodeProps) {
       href={url}
       target="_blank"
       rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
       className="text-sm text-blue-600 dark:text-blue-400 hover:underline break-all"
     >
       {text}
