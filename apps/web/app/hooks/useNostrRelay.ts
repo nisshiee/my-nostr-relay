@@ -59,6 +59,7 @@ export function useNostrRelay(
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const [relayUrls, setRelayUrls] = useState<string[]>([]);
   const [reactions, setReactions] = useState<Reactions>(new Map());
+  const [reconnectCounter, setReconnectCounter] = useState(0);
 
   // クリーンアップ用のref
   const poolRef = useRef<SimplePool | null>(null);
@@ -185,6 +186,11 @@ export function useNostrRelay(
   useEffect(() => {
     if (!pubkey) {
       return;
+    }
+
+    // reconnectの場合のログ
+    if (reconnectCounter > 0) {
+      console.debug('[nostr-relay] Reconnect started due to visibility change');
     }
 
     let cancelled = false;
@@ -318,6 +324,9 @@ export function useNostrRelay(
                 setNotes(displayedNotes);
               }
               setStatus("connected");
+              if (reconnectCounter > 0) {
+                console.debug('[nostr-relay] Reconnect completed successfully');
+              }
 
               // ステップ4b: 表示中ノートのリアクション（kind:7）をsubscribe
               const eventIds = displayedNotes.map((n) => n.eventId);
@@ -452,12 +461,42 @@ export function useNostrRelay(
 
     connect();
 
+    // visibilitychange による再接続デバッグログ
+    let lastHiddenAt: number | null = null;
+
+    const handleVisibilityChange = () => {
+      const now = Date.now();
+      const state = document.visibilityState;
+      console.debug(`[nostr-relay] visibilitychange detected: ${state} at ${new Date(now).toISOString()}`);
+
+      if (state === "hidden") {
+        lastHiddenAt = now;
+        console.debug("[nostr-relay] tab hidden, recording timestamp for reconnect check");
+      } else if (state === "visible") {
+        const elapsed = lastHiddenAt !== null ? Math.round((now - lastHiddenAt) / 1000) : null;
+        console.debug(`[nostr-relay] tab visible again, hidden duration: ${elapsed !== null ? `${elapsed}s` : "unknown"}`);
+
+        const shouldReconnect = elapsed !== null && elapsed >= 30;
+        console.debug(`[nostr-relay] reconnect trigger check: ${shouldReconnect ? "YES" : "NO"} (threshold: 30s, elapsed: ${elapsed ?? "N/A"}s)`);
+
+        if (shouldReconnect) {
+          console.debug("[nostr-relay] triggering reconnect via reconnectCounter increment");
+          setReconnectCounter(c => c + 1);
+        }
+
+        lastHiddenAt = null;
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
     // クリーンアップ用にrefの値をキャプチャ
     const seenReactionIds = seenReactionIdsRef.current;
 
     // クリーンアップ（pubkey変更時にステートもリセット）
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       // リアクション定期再subscribeタイマーを停止
       if (reactionIntervalRef.current !== null) {
         clearInterval(reactionIntervalRef.current);
@@ -470,7 +509,7 @@ export function useNostrRelay(
       setProfiles(new Map());
       setReactions(new Map());
     };
-  }, [pubkey, addNote, addReaction, upsertProfile, normalizeReactionContent, publishedSlotMapRef]);
+  }, [pubkey, reconnectCounter, addNote, addReaction, upsertProfile, normalizeReactionContent, publishedSlotMapRef]);
 
   /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
   const publishEvent = useCallback(
