@@ -182,8 +182,18 @@ export function NoteCard({ note, profile, reactions, myPubkey, onReaction, onHei
       {/* アクションバー */}
       <ActionBar
         isOpen={isActionBarOpen}
-        onThumbsUp={() => {/* タスク3で本実装 */}}
-        isAlreadyReacted={false}
+        onThumbsUp={() => {
+          try {
+            if (onReaction) {
+              onReaction("+");
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            setIsActionBarOpen(false);
+          }
+        }}
+        isAlreadyReacted={!!(myPubkey && reactions?.get("+")?.pubkeys?.has(myPubkey))}
       />
     </div>
   );
