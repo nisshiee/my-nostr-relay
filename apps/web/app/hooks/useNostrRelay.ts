@@ -74,6 +74,7 @@ export function useNostrRelay(
   const newNotesMinCreatedAtRef = useRef<number | undefined>(undefined);
   const seenReactionIdsRef = useRef<Set<string>>(new Set());
   const notesRef = useRef<NoteCard[]>([]);
+  const profilesRef = useRef<Map<string, NostrProfile>>(new Map());
 
   /** リアクションのcontentを正規化する。カスタム絵文字（:shortcode:）もそのまま返す */
   const normalizeReactionContent = useCallback((content: string): string | null => {
@@ -196,6 +197,8 @@ export function useNostrRelay(
       // 新規カードとして追加（repostInfo付き）
       const now = Math.floor(Date.now() / 1000);
       const halfLife = origEvent.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+      // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
+      const scoreTimestamp = repostEvent.created_at;
       const slotId = publishedSlotMapRef.current?.get(origEvent.id) ?? crypto.randomUUID();
       const newNote: NoteCard = {
         type: "note",
@@ -204,7 +207,7 @@ export function useNostrRelay(
         pubkey: origEvent.pubkey,
         content: origEvent.content,
         created_at: origEvent.created_at,
-        score: calcFreshnessScore(origEvent.created_at, now, halfLife),
+        score: calcFreshnessScore(scoreTimestamp, now, halfLife),
         fadingOut: false,
         repostInfo: {
           reposterPubkey: repostEvent.pubkey,
@@ -238,6 +241,11 @@ export function useNostrRelay(
   useEffect(() => {
     notesRef.current = notes;
   }, [notes]);
+
+  // profilesの最新値をrefで同期（リアルタイムリポスト処理からアクセスするため）
+  useEffect(() => {
+    profilesRef.current = profiles;
+  }, [profiles]);
 
   useEffect(() => {
     if (!pubkey) {
@@ -355,6 +363,24 @@ export function useNostrRelay(
             if (originalEvents.length > 0) {
               const origEvent = originalEvents[0]!;
               processOriginalNote(origEvent, repostEvent);
+
+              // フォロー外のプロフィールを追加取得（元ノート著者 + リポスター）
+              const unknownPubkeys = [origEvent.pubkey, repostEvent.pubkey]
+                .filter((pk) => !profilesRef.current.has(pk));
+              if (unknownPubkeys.length > 0) {
+                pool.querySync(
+                  relays,
+                  { kinds: [0], authors: unknownPubkeys } as Filter,
+                  { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+                ).then((profileEvents) => {
+                  if (!cancelled) {
+                    for (const pe of profileEvents) {
+                      upsertProfile(pe);
+                    }
+                  }
+                }).catch(() => { /* プロフィール取得失敗は無視 */ });
+              }
+
               console.log(`[useNostrRelay] リアルタイムリポスト処理完了: 元ノート ${originalEventId.slice(0, 8)}...`);
             } else {
               console.warn(`[useNostrRelay] リアルタイムリポスト: 元ノートが見つかりません ${originalEventId.slice(0, 8)}...`);
@@ -486,6 +512,8 @@ export function useNostrRelay(
                         const repostEvent = repostMap.get(origEvent.id);
                         if (!repostEvent) continue;
                         const halfLife = origEvent.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+                        // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
+                        const scoreTimestamp = repostEvent.created_at;
                         const slotId = publishedSlotMapRef.current?.get(origEvent.id) ?? crypto.randomUUID();
                         newCards.push({
                           type: "note",
@@ -494,7 +522,7 @@ export function useNostrRelay(
                           pubkey: origEvent.pubkey,
                           content: origEvent.content,
                           created_at: origEvent.created_at,
-                          score: calcFreshnessScore(origEvent.created_at, now, halfLife),
+                          score: calcFreshnessScore(scoreTimestamp, now, halfLife),
                           fadingOut: false,
                           repostInfo: {
                             reposterPubkey: repostEvent.pubkey,
@@ -512,6 +540,37 @@ export function useNostrRelay(
                     console.error("[useNostrRelay] リポスト元ノート取得エラー:", err);
                     // 元ノート取得失敗はフィード表示を止めない（kind:1のノートは既に表示済み）
                   }
+                }
+
+                // リポスト関連の未取得プロフィールを一括フェッチ
+                // （リポスト元ノートの著者 + リポスターのうち、フォロー外のpubkey）
+                const followSet = new Set(followPubkeys);
+                const repostPubkeys = new Set<string>();
+                for (const [, repostEvent] of repostMap) {
+                  // リポスターのpubkey
+                  if (!followSet.has(repostEvent.pubkey)) {
+                    repostPubkeys.add(repostEvent.pubkey);
+                  }
+                }
+                // リポスト元ノートの著者（フォロー外）
+                for (const note of displayedNotes) {
+                  if (note.repostInfo && !followSet.has(note.pubkey)) {
+                    repostPubkeys.add(note.pubkey);
+                  }
+                }
+                if (repostPubkeys.size > 0) {
+                  console.log(`[useNostrRelay] リポスト関連プロフィール取得: ${repostPubkeys.size}件`);
+                  const repostProfileSub = pool.subscribeMany(
+                    allRelays,
+                    { kinds: [0], authors: [...repostPubkeys] } as Filter,
+                    {
+                      onevent(event: Event) {
+                        if (!cancelled) upsertProfile(event);
+                      },
+                      oneose() { /* done */ },
+                    },
+                  );
+                  poolSubsRef.current.push(repostProfileSub);
                 }
               }
 
