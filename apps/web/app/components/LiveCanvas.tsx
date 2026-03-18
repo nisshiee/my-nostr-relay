@@ -298,9 +298,9 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
                               pubkey={note.pubkey}
                               profile={profiles.get(note.pubkey)}
                               onHeightChange={handleHeightChange}
-                              onPublish={handleDraftPublish}
+                              onPublish={(slotId, event) => { releaseCard(slotId); handleDraftPublish(slotId, event); }}
                               onInput={handleDraftInput}
-                              onClose={handleDraftClose}
+                              onClose={(slotId) => { releaseCard(slotId); handleDraftClose(slotId); }}
                               publishEvent={publishEvent}
                               onHold={holdCard}
                               onRelease={releaseCard}
