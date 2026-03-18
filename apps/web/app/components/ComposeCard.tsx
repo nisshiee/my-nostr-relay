@@ -19,6 +19,10 @@ interface ComposeCardProps {
   onInput: (slotId: string) => void;
   onClose: (slotId: string) => void;
   publishEvent: (event: NostrEvent) => Promise<void>;
+  /** テキストエリアにフォーカスしたときホールド開始 */
+  onHold?: (slotId: string) => void;
+  /** テキストエリアからブラーしたときホールド解除 */
+  onRelease?: (slotId: string) => void;
   autoFocus?: boolean;
 }
 
@@ -31,6 +35,8 @@ export function ComposeCard({
   onInput,
   onClose,
   publishEvent,
+  onHold,
+  onRelease,
   autoFocus,
 }: ComposeCardProps) {
   const [text, setText] = useState("");
@@ -63,6 +69,16 @@ export function ComposeCard({
     observer.observe(el);
     return () => observer.disconnect();
   }, [slotId, onHeightChange]);
+
+  /** テキストエリアのフォーカスでホールド開始 */
+  const handleFocus = useCallback(() => {
+    onHold?.(slotId);
+  }, [onHold, slotId]);
+
+  /** テキストエリアのブラーでホールド解除 */
+  const handleBlur = useCallback(() => {
+    onRelease?.(slotId);
+  }, [onRelease, slotId]);
 
   // textarea の高さを内容に合わせて自動調整
   const adjustTextareaHeight = useCallback(() => {
@@ -206,6 +222,8 @@ export function ComposeCard({
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
         placeholder="いまどうしてる？"
         rows={3}
         className="w-full resize-none overflow-hidden rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 p-3 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-400 dark:focus:ring-purple-600 leading-relaxed"

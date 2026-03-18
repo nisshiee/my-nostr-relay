@@ -41,6 +41,26 @@ function truncateNpub(npub: string): string {
 
 export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, onLogout, publishedIdsRef }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
+  const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
+
+  /** カードをホールド状態にする */
+  const holdCard = useCallback((slotId: string) => {
+    setHoldSet(prev => {
+      const next = new Set(prev);
+      next.add(slotId);
+      return next;
+    });
+  }, []);
+
+  /** カードのホールドを解除する */
+  const releaseCard = useCallback((slotId: string) => {
+    setHoldSet(prev => {
+      if (!prev.has(slotId)) return prev;
+      const next = new Set(prev);
+      next.delete(slotId);
+      return next;
+    });
+  }, []);
   const [nowEpoch, setNowEpoch] = useState(() =>
     Math.floor(Date.now() / 1000),
   );
@@ -80,7 +100,7 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
       return {
         ...note,
         score,
-        fadingOut: note.fadingOut || score <= FADEOUT_THRESHOLD,
+        fadingOut: holdSet.has(note.slotId) ? false : (note.fadingOut || score <= FADEOUT_THRESHOLD),
       };
     });
 
@@ -90,20 +110,20 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
       return {
         ...d,
         score,
-        fadingOut: score <= FADEOUT_THRESHOLD,
+        fadingOut: holdSet.has(d.slotId) ? false : score <= FADEOUT_THRESHOLD,
       };
     });
 
     return sortByScore([...scoredDrafts, ...updatedNotes]);
-  }, [notes, publishedNotes, draftNotes, nowEpoch]);
+  }, [notes, publishedNotes, draftNotes, nowEpoch, holdSet]);
 
   // レイアウト計算
   const {
     handleHeightChange,
-    cardLayout,
+    displayLayout,
     delayMap,
     computeColumnHeight,
-  } = useCardLayout(scoredCards, columnCount);
+  } = useCardLayout(scoredCards, columnCount, holdSet);
 
   const statusIndicator = useCallback(() => {
     switch (status) {
@@ -224,13 +244,15 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
               >
                 <AnimatePresence>
                   {scoredCards
-                    .filter((n) => cardLayout.has(n.slotId))
+                    .filter((n) => displayLayout.has(n.slotId))
                     .map((note, idx, arr) => {
-                      const placement = cardLayout.get(note.slotId)!;
+                      const placement = displayLayout.get(note.slotId)!;
                       const x = placement.col * (COLUMN_WIDTH + COLUMN_GAP);
                       const y = placement.y;
                       const delay = delayMap.get(note.slotId) ?? 0;
-                      const zIndex = arr.length - idx;
+                      const zIndex = holdSet.has(note.slotId)
+                        ? arr.length + 1000 // ホールド中は最前面
+                        : arr.length - idx;
                       return (
                         <motion.div
                           key={note.slotId}
@@ -281,6 +303,8 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
                               onInput={handleDraftInput}
                               onClose={handleDraftClose}
                               publishEvent={publishEvent}
+                              onHold={holdCard}
+                              onRelease={releaseCard}
                               autoFocus
                             />
                           ) : (
