@@ -94,7 +94,7 @@ describe("parseContent", () => {
   it("URLパスの途中に画像拡張子がある場合、画像として検出しない", () => {
     const result = parseContent("https://example.com/img.jpg/page");
     expect(result).toEqual([
-      { type: "text", text: "https://example.com/img.jpg/page" },
+      { type: "link", url: "https://example.com/img.jpg/page", text: "example.com/img.jpg/page" },
     ]);
   });
 
