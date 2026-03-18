@@ -326,6 +326,95 @@ export function useNostrRelay(
                 displayedNotes = sortByScore(batchNotes).slice(0, MAX_NOTES);
                 setNotes(displayedNotes);
               }
+              console.log(`[useNostrRelay] 初期ロード完了: kind:1=${initialBuffer.length}件, kind:6(リポスト)=${initialRepostBuffer.length}件`);
+
+              // kind:6リポストから元ノートのeventIDを集約して一括取得
+              if (initialRepostBuffer.length > 0) {
+                // kind:6の "e" タグから最後のeventIDを抽出（リポスト対象の元ノートID）
+                // 同じkind:6イベントが複数ある場合、元ノートIDごとに最後のリポスト情報を保持する
+                const repostMap = new Map<string, Event>(); // 元ノートID → 最後のkind:6イベント
+                for (const repostEvent of initialRepostBuffer) {
+                  const eTags = repostEvent.tags.filter((tag) => tag[0] === "e" && tag[1]);
+                  if (eTags.length === 0) continue;
+                  const originalEventId = eTags[eTags.length - 1]![1]!;
+                  // 同じ元ノートに対する複数リポストは、最新のリポストで上書き
+                  const existing = repostMap.get(originalEventId);
+                  if (!existing || repostEvent.created_at > existing.created_at) {
+                    repostMap.set(originalEventId, repostEvent);
+                  }
+                }
+
+                // 既にdisplayedNotesに含まれている元ノートIDを除外
+                const existingEventIds = new Set(displayedNotes.map((n) => n.eventId));
+                const missingEventIds = [...repostMap.keys()].filter((id) => !existingEventIds.has(id));
+
+                // 既存カードのrepostInfo更新（displayedNotesに既にある元ノート）
+                const existingUpdates = [...repostMap.entries()].filter(([id]) => existingEventIds.has(id));
+                if (existingUpdates.length > 0) {
+                  const updatedNotes = displayedNotes.map((note) => {
+                    const repostEvent = repostMap.get(note.eventId);
+                    if (!repostEvent) return note;
+                    return {
+                      ...note,
+                      repostInfo: {
+                        reposterPubkey: repostEvent.pubkey,
+                        repostedAt: repostEvent.created_at,
+                      },
+                    };
+                  });
+                  displayedNotes = updatedNotes;
+                  setNotes(displayedNotes);
+                }
+
+                // 未取得の元ノートを一括REQで取得
+                if (missingEventIds.length > 0) {
+                  console.log(`[useNostrRelay] リポスト元ノート取得開始: ${missingEventIds.length}件`);
+                  try {
+                    const originalEvents = await pool.querySync(
+                      allRelays,
+                      { kinds: [1], ids: missingEventIds } as Filter,
+                      { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+                    );
+                    if (!cancelled && originalEvents.length > 0) {
+                      const now = Math.floor(Date.now() / 1000);
+                      const newCards: NoteCard[] = [];
+                      for (const origEvent of originalEvents) {
+                        // kind:1以外は無視
+                        if (origEvent.kind !== 1) continue;
+                        // 重複チェック（他のリポストが同じ元ノートを参照している場合）
+                        if (displayedNotes.some((n) => n.eventId === origEvent.id)) continue;
+                        const repostEvent = repostMap.get(origEvent.id);
+                        if (!repostEvent) continue;
+                        const halfLife = origEvent.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+                        const slotId = publishedSlotMapRef.current?.get(origEvent.id) ?? crypto.randomUUID();
+                        newCards.push({
+                          type: "note",
+                          slotId,
+                          eventId: origEvent.id,
+                          pubkey: origEvent.pubkey,
+                          content: origEvent.content,
+                          created_at: origEvent.created_at,
+                          score: calcFreshnessScore(origEvent.created_at, now, halfLife),
+                          fadingOut: false,
+                          repostInfo: {
+                            reposterPubkey: repostEvent.pubkey,
+                            repostedAt: repostEvent.created_at,
+                          },
+                        });
+                      }
+                      if (newCards.length > 0) {
+                        displayedNotes = sortByScore([...displayedNotes, ...newCards]).slice(0, MAX_NOTES);
+                        setNotes(displayedNotes);
+                        console.log(`[useNostrRelay] リポスト元ノート追加: ${newCards.length}件`);
+                      }
+                    }
+                  } catch (err) {
+                    console.error("[useNostrRelay] リポスト元ノート取得エラー:", err);
+                    // 元ノート取得失敗はフィード表示を止めない（kind:1のノートは既に表示済み）
+                  }
+                }
+              }
+
               setStatus("connected");
 
               // ステップ4b: 表示中ノートのリアクション（kind:7）をsubscribe
