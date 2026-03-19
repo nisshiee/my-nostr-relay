@@ -205,6 +205,8 @@ export function ThreadCard({
             onClick={(e) => handleNoteClick(note.eventId, e)}
             onHold={onHold}
             onRelease={onRelease}
+            pool={pool}
+            relayUrls={relayUrls}
           />
         );
       })}
@@ -234,6 +236,8 @@ interface ThreadNoteItemProps {
   onClick: (e: React.MouseEvent) => void;
   onHold?: () => void;
   onRelease?: () => void;
+  pool?: SimplePool | null;
+  relayUrls?: string[];
 }
 
 function ThreadNoteItem({
@@ -248,6 +252,8 @@ function ThreadNoteItem({
   onClick,
   onHold,
   onRelease,
+  pool,
+  relayUrls,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
   const displayName =
