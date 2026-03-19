@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { Card, NoteCard as NoteCardType, NostrProfile, Reactions } from "../lib/types";
+import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
 import {
   COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
@@ -13,12 +13,17 @@ import {
 } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { useDraftNotes } from "../hooks/useDraftNotes";
+
+/** isProcessing中にuseCardLayoutに渡す空配列（参照を安定させて無限ループ防止） */
+const EMPTY_CARDS: Card[] = [];
 import { useCardLayout } from "../hooks/useCardLayout";
 import { NoteCard } from "./NoteCard";
+import { ThreadCard } from "./ThreadCard";
 import { ComposeCard } from "./ComposeCard";
 
 interface LiveCanvasProps {
   notes: NoteCardType[];
+  threadCards: ThreadCardType[];
   profiles: Map<string, NostrProfile>;
   /** リアクション集計: eventId → (絵文字 → 件数) */
   reactions: Reactions;
@@ -30,6 +35,7 @@ interface LiveCanvasProps {
   /** リアクション送信ハンドラ */
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
   onLogout: () => void;
+  isProcessing: boolean;
 }
 
 function calcColumnCount(width: number): number {
@@ -42,7 +48,7 @@ function truncateNpub(npub: string): string {
   return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
 }
 
-export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, onLogout }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, onLogout, isProcessing }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -120,16 +126,34 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
       };
     });
 
-    return sortByScore([...scoredDrafts, ...updatedNotes]);
-  }, [notes, publishedNotes, draftNotes, nowEpoch, holdSet, pubkey]);
+    // threadCards にスコアを再計算
+    const scoredThreads: Card[] = threadCards.map((thread) => {
+      // スレッド内に自分のノートがあれば OWNER_SCORE_HALF_LIFE を使用
+      const hasOwnerNote = thread.notes.some((n) => n.pubkey === pubkey);
+      const halfLife = hasOwnerNote ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+      // スレッド内最新リプライの created_at をベースにスコア計算
+      const score = calcFreshnessScore(thread.created_at, nowEpoch, halfLife);
+      return {
+        ...thread,
+        score,
+        fadingOut: holdSet.has(thread.slotId) ? false : (thread.fadingOut || score <= FADEOUT_THRESHOLD),
+      };
+    });
+
+    return sortByScore([...scoredDrafts, ...updatedNotes, ...scoredThreads]);
+  }, [notes, publishedNotes, draftNotes, threadCards, nowEpoch, holdSet, pubkey]);
 
   // レイアウト計算
+  // isProcessing中は空配列を渡してレイアウトエンジンを停止する
+  // 参照を安定させるため、モジュールスコープの定数を使用
+  const layoutCards = isProcessing ? EMPTY_CARDS : scoredCards;
+
   const {
     handleHeightChange,
     displayLayout,
     delayMap,
     computeColumnHeight,
-  } = useCardLayout(scoredCards, columnCount, holdSet);
+  } = useCardLayout(layoutCards, columnCount, holdSet);
 
   const statusIndicator = useCallback(() => {
     switch (status) {
@@ -234,7 +258,18 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
           </div>
         )}
 
-        {scoredCards.length > 0 && (() => {
+        {isProcessing && (
+          <div className="flex h-full items-center justify-center">
+            <div className="text-center">
+              <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-400 border-t-transparent" />
+              <p className="text-gray-500 dark:text-gray-400">
+                ノートを読み込み中...
+              </p>
+            </div>
+          </div>
+        )}
+
+        {scoredCards.length > 0 && !isProcessing && (() => {
           const containerHeight = Math.max(
             ...Array.from({ length: columnCount }, (_, i) => computeColumnHeight(i)),
             0,
@@ -312,6 +347,19 @@ export function LiveCanvas({ notes, profiles, reactions, status, pubkey, npub, p
                               onHold={holdCard}
                               onRelease={releaseCard}
                               autoFocus
+                            />
+                          ) : note.type === "thread" ? (
+                            <ThreadCard
+                              thread={note}
+                              profiles={profiles}
+                              reactions={reactions}
+                              myPubkey={pubkey}
+                              onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
+                                sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
+                              }}
+                              onHeightChange={handleHeightChange}
+                              onHold={() => holdCard(note.slotId)}
+                              onRelease={() => releaseCard(note.slotId)}
                             />
                           ) : (
                             <NoteCard

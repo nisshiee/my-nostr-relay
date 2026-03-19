@@ -28,6 +28,7 @@ interface UseNostrRelayResult {
   reactions: Reactions;
   status: ConnectionStatus;
   relayUrls: string[];
+  pool: SimplePool | null;
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
 }
@@ -150,6 +151,7 @@ export function useNostrRelay(
         eventId: event.id,
         pubkey: event.pubkey,
         content: event.content,
+        tags: event.tags,
         created_at: event.created_at,
         score: calcFreshnessScore(event.created_at, now, halfLife),
         fadingOut: false,
@@ -206,6 +208,7 @@ export function useNostrRelay(
         eventId: origEvent.id,
         pubkey: origEvent.pubkey,
         content: origEvent.content,
+        tags: origEvent.tags,
         created_at: origEvent.created_at,
         score: calcFreshnessScore(scoreTimestamp, now, halfLife),
         fadingOut: false,
@@ -444,6 +447,7 @@ export function useNostrRelay(
                     eventId: event.id,
                     pubkey: event.pubkey,
                     content: event.content,
+                    tags: event.tags,
                     created_at: event.created_at,
                     score: calcFreshnessScore(event.created_at, now, halfLife),
                     fadingOut: false,
@@ -521,6 +525,7 @@ export function useNostrRelay(
                           eventId: origEvent.id,
                           pubkey: origEvent.pubkey,
                           content: origEvent.content,
+                          tags: origEvent.tags,
                           created_at: origEvent.created_at,
                           score: calcFreshnessScore(scoreTimestamp, now, halfLife),
                           fadingOut: false,
@@ -791,5 +796,5 @@ export function useNostrRelay(
     [publishEvent, addReaction],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, publishEvent, sendReaction };
+  return { notes, profiles, reactions, status, relayUrls, pool: poolRef.current, publishEvent, sendReaction };
 }

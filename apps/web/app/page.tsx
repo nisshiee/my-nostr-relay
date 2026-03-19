@@ -3,19 +3,22 @@
 import { useRef } from "react";
 import { useAuth } from "./contexts/AuthContext";
 import { useNostrRelay } from "./hooks/useNostrRelay";
+import { useThreadCards } from "./hooks/useThreadCards";
 import { LiveCanvas } from "./components/LiveCanvas";
 
 export default function Home() {
   const { pubkey, npub, nip07Available, autoLoading, login, logout } = useAuth();
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
-  const { notes, profiles, reactions, status, publishEvent, sendReaction } = useNostrRelay(pubkey, publishedSlotMapRef);
+  const { notes, profiles, reactions, status, relayUrls, pool, publishEvent, sendReaction } = useNostrRelay(pubkey, publishedSlotMapRef);
+  const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status);
 
   // 認証済み → LiveCanvas を全画面表示
   if (pubkey) {
     return (
       <LiveCanvas
-        notes={notes}
+        notes={filteredNotes}
+        threadCards={threadCards}
         profiles={profiles}
         reactions={reactions}
         status={status}
@@ -25,6 +28,7 @@ export default function Home() {
         publishedSlotMapRef={publishedSlotMapRef}
         sendReaction={sendReaction}
         onLogout={logout}
+        isProcessing={isProcessing}
       />
     );
   }
