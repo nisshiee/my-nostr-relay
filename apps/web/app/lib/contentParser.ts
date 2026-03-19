@@ -7,7 +7,8 @@
 export type ContentNode =
   | { type: "text"; text: string }
   | { type: "image"; url: string }
-  | { type: "link"; url: string; text: string };
+  | { type: "link"; url: string; text: string }
+  | { type: "quote"; uri: string };
 // 今後追加予定: | { type: "video"; url: string } | { type: "ogp"; url: string; title: string }
 
 /** 画像URLにマッチする正規表現パターン（パス途中の拡張子誤検出を防ぐため末尾に先読みを追加） */
