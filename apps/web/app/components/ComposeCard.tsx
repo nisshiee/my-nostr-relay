@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useCallback } from "react";
 import Image from "next/image";
 import type { NoteCard, NostrProfile } from "../lib/types";
+import type { NostrEvent } from "../types/nostr";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
