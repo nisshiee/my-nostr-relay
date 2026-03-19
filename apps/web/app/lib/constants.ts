@@ -54,3 +54,6 @@ export const REACTION_POLL_INTERVAL = 30_000;
 
 /** リアクションsubscribeのsince安全マージン（秒） */
 export const REACTION_SINCE_SAFETY_MARGIN = 10;
+
+/** スレッド再帰フェッチの最大深度 */
+export const MAX_THREAD_DEPTH = 10;

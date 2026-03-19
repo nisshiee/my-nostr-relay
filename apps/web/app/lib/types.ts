@@ -16,6 +16,8 @@ export interface NoteCard extends CardBase {
   /** NostrイベントID */
   eventId: string;
   content: string;
+  /** Nostrイベントのタグ配列 */
+  tags: string[][];
   /** リポスト情報（リポスト経由で表示される場合に設定） */
   repostInfo?: {
     /** 最後にリポストした人のpubkey */
@@ -30,8 +32,28 @@ export interface ComposeCard extends CardBase {
   type: "compose";
 }
 
+/** スレッド内の個別ノート */
+export interface ThreadNote {
+  eventId: string;
+  pubkey: string;
+  content: string;
+  created_at: number;
+  tags: string[][];
+  /** 直接の返信先（最後の e タグから取得）。歯抜けの場合は undefined */
+  replyTo?: { eventId: string; pubkey?: string };
+}
+
+/** リプライスレッドカード */
+export interface ThreadCard extends CardBase {
+  type: "thread";
+  /** スレッド内のノート（created_at 順） */
+  notes: ThreadNote[];
+  /** スレッドに含まれる全 eventId の集合（マージ判定に使用） */
+  eventIds: Set<string>;
+}
+
 /** キャンバス上に配置されるカード（Discriminated Union） */
-export type Card = NoteCard | ComposeCard;
+export type Card = NoteCard | ComposeCard | ThreadCard;
 
 /** リアクション集計: eventId → (絵文字 → {件数, 画像URL, 送信者pubkey集合}) のマッピング */
 export type Reactions = Map<string, Map<string, { count: number; imageUrl?: string; pubkeys: Set<string> }>>;

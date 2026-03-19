@@ -125,6 +125,7 @@ export function ComposeCard({
         eventId: signedEvent.id,
         pubkey: signedEvent.pubkey,
         content: signedEvent.content,
+        tags: signedEvent.tags,
         created_at: signedEvent.created_at,
         score: 1,
         fadingOut: false,
