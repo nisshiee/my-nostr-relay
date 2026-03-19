@@ -20,6 +20,9 @@ import { useCardLayout } from "../hooks/useCardLayout";
 import { NoteCard } from "./NoteCard";
 import { ThreadCard } from "./ThreadCard";
 import { ComposeCard } from "./ComposeCard";
+import { CanvasHeader } from "./CanvasHeader";
+import { EmptyState } from "./EmptyState";
+import type { NostrEvent } from "../types/nostr";
 
 interface LiveCanvasProps {
   notes: NoteCardType[];
@@ -40,12 +43,6 @@ interface LiveCanvasProps {
 
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
-}
-
-/** npubを省略表示する */
-function truncateNpub(npub: string): string {
-  if (npub.length <= 20) return npub;
-  return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
 }
 
 export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, onLogout, isProcessing }: LiveCanvasProps) {
@@ -155,119 +152,12 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     computeColumnHeight,
   } = useCardLayout(layoutCards, columnCount, holdSet);
 
-  const statusIndicator = useCallback(() => {
-    switch (status) {
-      case "connecting":
-        return (
-          <div className="flex items-center gap-2 text-yellow-500">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-yellow-500" />
-            <span className="text-xs">接続中...</span>
-          </div>
-        );
-      case "loading":
-        return (
-          <div className="flex items-center gap-2 text-blue-500">
-            <div className="h-2 w-2 animate-pulse rounded-full bg-blue-500" />
-            <span className="text-xs">読み込み中...</span>
-          </div>
-        );
-      case "connected":
-        return (
-          <div className="flex items-center gap-2 text-green-500">
-            <div className="h-2 w-2 rounded-full bg-green-500" />
-            <span className="text-xs">接続済み</span>
-          </div>
-        );
-      case "error":
-        return (
-          <div className="flex items-center gap-2 text-red-500">
-            <div className="h-2 w-2 rounded-full bg-red-500" />
-            <span className="text-xs">接続エラー</span>
-          </div>
-        );
-    }
-  }, [status]);
-
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
-      <header className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-900">
-        <div className="flex items-center gap-4">
-          <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-            Nostr Live Canvas
-          </h1>
-          {statusIndicator()}
-        </div>
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={addDraft}
-            className="rounded-lg bg-purple-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-purple-600 transition-colors"
-            title="新規投稿 (n)"
-          >
-            ✏️ 投稿
-          </button>
-          {npub && (
-            <span
-              className="rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-              title={npub}
-            >
-              {truncateNpub(npub)}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={onLogout}
-            className="rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
-          >
-            ログアウト
-          </button>
-        </div>
-      </header>
+      <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
 
       <main className="flex-1 overflow-y-auto p-4">
-        {status === "connecting" && notes.length === 0 && (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-purple-400 border-t-transparent" />
-              <p className="text-gray-500 dark:text-gray-400">
-                リレーに接続中...
-              </p>
-            </div>
-          </div>
-        )}
-
-        {status === "loading" && notes.length === 0 && (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-400 border-t-transparent" />
-              <p className="text-gray-500 dark:text-gray-400">
-                ノートを読み込み中...
-              </p>
-            </div>
-          </div>
-        )}
-
-        {status === "error" && notes.length === 0 && (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <p className="mb-2 text-lg text-red-500">⚠️ 接続エラー</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                リレーへの接続に失敗しました。再接続を試みています...
-              </p>
-            </div>
-          </div>
-        )}
-
-        {isProcessing && (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center">
-              <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-blue-400 border-t-transparent" />
-              <p className="text-gray-500 dark:text-gray-400">
-                ノートを読み込み中...
-              </p>
-            </div>
-          </div>
-        )}
+        <EmptyState status={status} hasNotes={notes.length > 0} isProcessing={isProcessing} />
 
         {scoredCards.length > 0 && !isProcessing && (() => {
           const containerHeight = Math.max(

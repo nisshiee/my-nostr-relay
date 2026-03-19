@@ -9,13 +9,13 @@ import {
   MAX_WAIT_FOR_CONNECTION,
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
-  OWNER_SCORE_HALF_LIFE,
   REACTION_POLL_INTERVAL,
   REACTION_SINCE_SAFETY_MARGIN,
-  SCORE_HALF_LIFE,
 } from "../lib/constants";
-import { calcFreshnessScore, sortByScore } from "../lib/scoring";
+import { sortByScore } from "../lib/scoring";
+import { createNoteCard, resolveSlotId } from "../lib/createNoteCard";
 import type { NoteCard, NostrProfile, Reactions } from "../lib/types";
+import type { NostrEvent } from "../types/nostr";
 
 type ConnectionStatus = "connecting" | "loading" | "connected" | "error";
 
@@ -142,20 +142,12 @@ export function useNostrRelay(
       if (prev.some((n) => n.eventId === event.id)) return prev;
 
       const now = Math.floor(Date.now() / 1000);
-      const halfLife = event.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-      // publishedSlotMapにマッピングがあればそのslotIdを使う（同じスロットを維持する）
-      const slotId = publishedSlotMapRef.current?.get(event.id) ?? crypto.randomUUID();
-      const newNote: NoteCard = {
-        type: "note",
-        slotId,
-        eventId: event.id,
-        pubkey: event.pubkey,
-        content: event.content,
-        tags: event.tags,
-        created_at: event.created_at,
-        score: calcFreshnessScore(event.created_at, now, halfLife),
-        fadingOut: false,
-      };
+      const newNote = createNoteCard({
+        event,
+        ownerPubkey: pubkey,
+        now,
+        slotId: resolveSlotId(publishedSlotMapRef.current, event.id),
+      });
 
       const updated = [...prev, newNote];
 
@@ -198,25 +190,13 @@ export function useNostrRelay(
 
       // 新規カードとして追加（repostInfo付き）
       const now = Math.floor(Date.now() / 1000);
-      const halfLife = origEvent.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-      // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
-      const scoreTimestamp = repostEvent.created_at;
-      const slotId = publishedSlotMapRef.current?.get(origEvent.id) ?? crypto.randomUUID();
-      const newNote: NoteCard = {
-        type: "note",
-        slotId,
-        eventId: origEvent.id,
-        pubkey: origEvent.pubkey,
-        content: origEvent.content,
-        tags: origEvent.tags,
-        created_at: origEvent.created_at,
-        score: calcFreshnessScore(scoreTimestamp, now, halfLife),
-        fadingOut: false,
-        repostInfo: {
-          reposterPubkey: repostEvent.pubkey,
-          repostedAt: repostEvent.created_at,
-        },
-      };
+      const newNote = createNoteCard({
+        event: origEvent,
+        ownerPubkey: pubkey,
+        now,
+        slotId: resolveSlotId(publishedSlotMapRef.current, origEvent.id),
+        repostInfo: { reposterPubkey: repostEvent.pubkey, repostedAt: repostEvent.created_at },
+      });
 
       const updated = [...prev, newNote];
       if (updated.length > MAX_NOTES) {
@@ -438,20 +418,12 @@ export function useNostrRelay(
                 for (const event of initialBuffer) {
                   if (seen.has(event.id)) continue;
                   seen.add(event.id);
-                  const halfLife = event.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-                  // publishedSlotMapにマッピングがあればそのslotIdを使う
-                  const slotId = publishedSlotMapRef.current?.get(event.id) ?? crypto.randomUUID();
-                  batchNotes.push({
-                    type: "note",
-                    slotId,
-                    eventId: event.id,
-                    pubkey: event.pubkey,
-                    content: event.content,
-                    tags: event.tags,
-                    created_at: event.created_at,
-                    score: calcFreshnessScore(event.created_at, now, halfLife),
-                    fadingOut: false,
-                  });
+                  batchNotes.push(createNoteCard({
+                    event,
+                    ownerPubkey: pubkey,
+                    now,
+                    slotId: resolveSlotId(publishedSlotMapRef.current, event.id),
+                  }));
                 }
                 displayedNotes = sortByScore(batchNotes).slice(0, MAX_NOTES);
                 setNotes(displayedNotes);
@@ -515,25 +487,13 @@ export function useNostrRelay(
                         if (displayedNotes.some((n) => n.eventId === origEvent.id)) continue;
                         const repostEvent = repostMap.get(origEvent.id);
                         if (!repostEvent) continue;
-                        const halfLife = origEvent.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-                        // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
-                        const scoreTimestamp = repostEvent.created_at;
-                        const slotId = publishedSlotMapRef.current?.get(origEvent.id) ?? crypto.randomUUID();
-                        newCards.push({
-                          type: "note",
-                          slotId,
-                          eventId: origEvent.id,
-                          pubkey: origEvent.pubkey,
-                          content: origEvent.content,
-                          tags: origEvent.tags,
-                          created_at: origEvent.created_at,
-                          score: calcFreshnessScore(scoreTimestamp, now, halfLife),
-                          fadingOut: false,
-                          repostInfo: {
-                            reposterPubkey: repostEvent.pubkey,
-                            repostedAt: repostEvent.created_at,
-                          },
-                        });
+                        newCards.push(createNoteCard({
+                          event: origEvent,
+                          ownerPubkey: pubkey,
+                          now,
+                          slotId: resolveSlotId(publishedSlotMapRef.current, origEvent.id),
+                          repostInfo: { reposterPubkey: repostEvent.pubkey, repostedAt: repostEvent.created_at },
+                        }));
                       }
                       if (newCards.length > 0) {
                         displayedNotes = sortByScore([...displayedNotes, ...newCards]).slice(0, MAX_NOTES);
