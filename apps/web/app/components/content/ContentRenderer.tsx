@@ -4,6 +4,8 @@ import { parseContent, type ContentNode } from "../../lib/contentParser";
 import { TextNode } from "./TextNode";
 import { ImageNode } from "./ImageNode";
 import { LinkNode } from "./LinkNode";
+import { QuoteNode } from "./QuoteNode";
+import type { SimplePool } from "nostr-tools/pool";
 import type { ComponentType } from "react";
 
 /**
@@ -15,16 +17,21 @@ const NODE_RENDERERS: Record<ContentNode["type"], ComponentType<any>> = {
   text: TextNode,
   image: ImageNode,
   link: LinkNode,
+  quote: QuoteNode,
 };
 
 interface ContentRendererProps {
   content: string;
   onHold?: () => void;
   onRelease?: () => void;
+  /** SimplePool インスタンス（引用ノード表示用） */
+  pool?: SimplePool | null;
+  /** 接続先リレーURL配列（引用ノード表示用） */
+  relayUrls?: string[];
 }
 
 /** コンテンツをパースしてノードごとに適切なコンポーネントで描画する */
-export function ContentRenderer({ content, onHold, onRelease }: ContentRendererProps) {
+export function ContentRenderer({ content, onHold, onRelease, pool, relayUrls }: ContentRendererProps) {
   const nodes = parseContent(content);
 
   // 画像URLリストを抽出
