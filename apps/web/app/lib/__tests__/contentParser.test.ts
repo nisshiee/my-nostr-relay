@@ -244,4 +244,109 @@ describe("parseContent", () => {
       { type: "link", url: "http://example.com", text: "example.com" },
     ]);
   });
+
+  // ===== Nostr URI テスト =====
+
+  // nevent1 の検出
+  it("nostr:nevent1... を検出してquoteノードを返す", () => {
+    const uri = "nostr:nevent1qqsxyzabc123def456ghi789jkl012mno345pqr678stu901vwx234yz";
+    const result = parseContent(uri);
+    expect(result).toEqual([
+      { type: "quote", uri },
+    ]);
+  });
+
+  // note1 の検出
+  it("nostr:note1... を検出してquoteノードを返す", () => {
+    const uri = "nostr:note1qqsxyzabc123def456ghi789jkl012mno345pqr678stu901vwx234yz";
+    const result = parseContent(uri);
+    expect(result).toEqual([
+      { type: "quote", uri },
+    ]);
+  });
+
+  // naddr1 の検出
+  it("nostr:naddr1... を検出してquoteノードを返す", () => {
+    const uri = "nostr:naddr1qqsxyzabc123def456ghi789jkl012mno345pqr678stu901vwx234yz";
+    const result = parseContent(uri);
+    expect(result).toEqual([
+      { type: "quote", uri },
+    ]);
+  });
+
+  // テキスト + Nostr URI + テキスト → 3ノード
+  it("テキストの間にNostr URIがある場合、text + quote + text に分割する", () => {
+    const uri = "nostr:nevent1qqsxyzabc123def456ghi789jkl012mno345pqr";
+    const result = parseContent(`引用: ${uri} いいね`);
+    expect(result).toEqual([
+      { type: "text", text: "引用: " },
+      { type: "quote", uri },
+      { type: "text", text: " いいね" },
+    ]);
+  });
+
+  // 複数Nostr URI の処理
+  it("複数のNostr URIを含む場合、それぞれquoteノードに分離する", () => {
+    const uri1 = "nostr:nevent1qqsabc123def456ghi789jkl012mno345";
+    const uri2 = "nostr:note1qqsxyz789abc012def345ghi678jkl901";
+    const result = parseContent(`${uri1} と ${uri2}`);
+    expect(result).toEqual([
+      { type: "quote", uri: uri1 },
+      { type: "text", text: " と " },
+      { type: "quote", uri: uri2 },
+    ]);
+  });
+
+  // 画像URL → Nostr URI → 一般URL の優先順テスト
+  it("画像URL・Nostr URI・一般URLが混在する場合、それぞれ正しいノードタイプに変換する", () => {
+    const imageUrl = "https://example.com/photo.jpg";
+    const nostrUri = "nostr:nevent1qqsabc123def456ghi789jkl012mno345pqr";
+    const linkUrl = "https://example.com/page";
+    const result = parseContent(`${imageUrl} ${nostrUri} ${linkUrl}`);
+    expect(result).toEqual([
+      { type: "image", url: imageUrl },
+      { type: "text", text: " " },
+      { type: "quote", uri: nostrUri },
+      { type: "text", text: " " },
+      { type: "link", url: linkUrl, text: "example.com/page" },
+    ]);
+  });
+
+  // 不正なNostr URI（bech32でない）の処理
+  it("nostr: の後にbech32プレフィックスがない場合、quoteノードとして検出しない", () => {
+    const result = parseContent("nostr:invalidprefix123abc");
+    expect(result).toEqual([
+      { type: "text", text: "nostr:invalidprefix123abc" },
+    ]);
+  });
+
+  // nostr: だけの場合
+  it("nostr: だけの場合、textノードとして扱う", () => {
+    const result = parseContent("nostr:");
+    expect(result).toEqual([
+      { type: "text", text: "nostr:" },
+    ]);
+  });
+
+  // Nostr URIに大文字が含まれる場合（case-insensitive マッチ）
+  it("nostr:nevent1 の後に大文字が含まれても全体がquoteノードとしてマッチする", () => {
+    // 正規表現は gi フラグ（case-insensitive）なので大文字もマッチに含まれる
+    const result = parseContent("nostr:nevent1abcXYZ rest");
+    expect(result).toEqual([
+      { type: "quote", uri: "nostr:nevent1abcXYZ" },
+      { type: "text", text: " rest" },
+    ]);
+  });
+
+  // Nostr URI + 一般URLの重複防止（nostr URIはhttpスキームでないのでURLと競合しない）
+  it("テキスト中のNostr URIが一般URL検出と競合しない", () => {
+    const nostrUri = "nostr:note1abc123def456ghi789jkl012mno345pqr678stu";
+    const linkUrl = "https://example.com";
+    const result = parseContent(`${nostrUri} ${linkUrl}`);
+    expect(result).toEqual([
+      { type: "quote", uri: nostrUri },
+      { type: "text", text: " " },
+      { type: "link", url: linkUrl, text: "example.com" },
+    ]);
+  });
 });
