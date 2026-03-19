@@ -15,8 +15,11 @@ export type ContentNode =
 const IMAGE_URL_PATTERN =
   /https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?(?:#[^\s]*)?(?=\s|$)/gi;
 
-/** Nostr URIにマッチする正規表現パターン（nevent1, note1, naddr1） */
-const NOSTR_URI_PATTERN = /nostr:(?:nevent1|note1|naddr1)[a-z0-9]+/gi;
+/** 引用ノートのNostr URIにマッチする正規表現パターン（nevent1, note1, naddr1） */
+const NOSTR_QUOTE_URI_PATTERN = /nostr:(?:nevent1|note1|naddr1)[a-z0-9]+/gi;
+
+/** メンションのNostr URIにマッチする正規表現パターン（npub1, nprofile1） */
+const NOSTR_MENTION_URI_PATTERN = /nostr:(?:npub1|nprofile1)[a-z0-9]+/gi;
 
 /** 一般的なHTTP(S) URLにマッチする正規表現パターン */
 const GENERAL_URL_PATTERN = /https?:\/\/[^\s<>「」『』【】（）\u3000-\u3002\uff01\uff0c\uff1b\uff1f]+/gi;
@@ -50,13 +53,23 @@ function splitTextWithNostrAndLinks(text: string): ContentNode[] {
   // すべてのマッチを収集し、位置でソートする
   type MatchEntry =
     | { kind: "nostr"; index: number; length: number; uri: string }
+    | { kind: "mention"; index: number; length: number; uri: string }
     | { kind: "link"; index: number; length: number; url: string };
 
   const entries: MatchEntry[] = [];
 
-  for (const match of text.matchAll(NOSTR_URI_PATTERN)) {
+  for (const match of text.matchAll(NOSTR_QUOTE_URI_PATTERN)) {
     entries.push({
       kind: "nostr",
+      index: match.index,
+      length: match[0].length,
+      uri: match[0],
+    });
+  }
+
+  for (const match of text.matchAll(NOSTR_MENTION_URI_PATTERN)) {
+    entries.push({
+      kind: "mention",
       index: match.index,
       length: match[0].length,
       uri: match[0],
@@ -108,6 +121,13 @@ function splitTextWithNostrAndLinks(text: string): ContentNode[] {
 
     if (entry.kind === "nostr") {
       nodes.push({ type: "quote", uri: entry.uri });
+    } else if (entry.kind === "mention") {
+      // npub/nprofile → njump.me へのリンクとして表示
+      const identifier = entry.uri.replace(/^nostr:/, "");
+      const shortId = identifier.length > 16
+        ? `${identifier.slice(0, 12)}…${identifier.slice(-4)}`
+        : identifier;
+      nodes.push({ type: "link", url: `https://njump.me/${identifier}`, text: `@${shortId}` });
     } else {
       nodes.push({ type: "link", url: entry.url, text: shortenUrl(entry.url) });
     }

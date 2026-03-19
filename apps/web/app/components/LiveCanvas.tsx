@@ -255,6 +255,8 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               onHeightChange={handleHeightChange}
                               onHold={() => holdCard(note.slotId)}
                               onRelease={() => releaseCard(note.slotId)}
+                              pool={pool}
+                              relayUrls={relayUrls}
                             />
                           ) : (
                             <NoteCard
