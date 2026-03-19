@@ -77,6 +77,83 @@ export function columnsToGrid(columns: ColumnSlots): Grid {
   return grid;
 }
 
+/**
+ * 押し出し先の最適候補を探す。
+ * ステップ1〜3を共通化した内部ヘルパー。
+ * @returns 最適な候補、または null（候補なし）
+ */
+function findDisplaceTarget(
+  columns: ColumnSlots,
+  victimId: string,
+  victimCol: number,
+  victimY: number,
+  victimHeight: number,
+  victimScore: number,
+  heightMap: ReadonlyMap<string, number>,
+  scoreMap: ReadonlyMap<string, number>,
+  columnCount: number,
+  chain: { movedIds: Set<string> },
+): DisplaceCandidate | null {
+  const candidates: DisplaceCandidate[] = [];
+
+  // ステップ1a: 同じ列の、victimの直下のカード
+  const belowInCol = columns[victimCol]
+    .filter((c) => c.id !== victimId && c.y > victimY)
+    .sort((a, b) => a.y - b.y);
+  if (belowInCol.length > 0) {
+    const below = belowInCol[0];
+    candidates.push({
+      id: below.id,
+      col: victimCol,
+      y: below.y,
+      score: scoreMap.get(below.id) ?? 0,
+    });
+  }
+
+  // ステップ1b: 左右の列で、victimとy座標が1pxでも重なるカード
+  const victimBottom = victimY + victimHeight;
+  for (const adjCol of [victimCol - 1, victimCol + 1]) {
+    if (adjCol < 0 || adjCol >= columnCount) continue;
+    for (const card of columns[adjCol]) {
+      const cardH = heightMap.get(card.id) ?? DEFAULT_CARD_HEIGHT;
+      const cardBottom = card.y + cardH;
+      if (victimY < cardBottom && victimBottom > card.y) {
+        candidates.push({
+          id: card.id,
+          col: adjCol,
+          y: card.y,
+          score: scoreMap.get(card.id) ?? 0,
+        });
+      }
+    }
+  }
+
+  // ステップ2: 別列の候補から除外
+  const filtered = candidates.filter((c) => {
+    // 同じ列の候補は除外対象外（常に残る）
+    if (c.col === victimCol) return true;
+    // topのy座標がvictimの元位置のtopより小さい（上にある）もの
+    if (c.y < victimY) return false;
+    // 既にこの連鎖で押し出されたもの
+    if (chain.movedIds.has(c.id)) return false;
+    return true;
+  });
+
+  // ステップ3: 最低スコアの候補を選択
+  if (filtered.length === 0) return null;
+
+  let best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+  // 隣列の場合は上優先ロジックを適用
+  best = applyTopPreferenceForAdjacentColumns(
+    best,
+    filtered,
+    victimCol,
+    victimScore,
+  );
+
+  return best;
+}
+
 // ── コア: 配置 + 押し出し ──
 
 /**
@@ -132,67 +209,19 @@ export function placeCard(
       return;
     }
 
-    // ステップ1: 押し出し先候補のリストアップ（victim 基準で計算）
-    const candidates: DisplaceCandidate[] = [];
+    // ステップ1〜3: 押し出し先候補を探す
+    const victimScore = scoreMap.get(victimId) ?? 0;
+    const target = findDisplaceTarget(columns, victimId, targetCol, victimY, victimHeight, victimScore, heightMap, scoreMap, columnCount, chain);
 
-    // 1a. 同じ列の、victim の直下のカード
-    const belowInCol = columns[targetCol]
-      .filter((c) => c.id !== victimId && c.y > victimY)
-      .sort((a, b) => a.y - b.y);
-    if (belowInCol.length > 0) {
-      const below = belowInCol[0];
-      candidates.push({
-        id: below.id,
-        col: targetCol,
-        y: below.y,
-        score: scoreMap.get(below.id) ?? 0,
-      });
-    }
-
-    // 1b. 左右の列で、victim とy座標が1pxでも重なるカード
-    const victimBottom = victimY + victimHeight;
-    for (const adjCol of [targetCol - 1, targetCol + 1]) {
-      if (adjCol < 0 || adjCol >= columnCount) continue;
-      for (const card of columns[adjCol]) {
-        const cardH = heightMap.get(card.id) ?? DEFAULT_CARD_HEIGHT;
-        const cardBottom = card.y + cardH;
-        if (victimY < cardBottom && victimBottom > card.y) {
-          candidates.push({
-            id: card.id,
-            col: adjCol,
-            y: card.y,
-            score: scoreMap.get(card.id) ?? 0,
-          });
-        }
-      }
-    }
-
-    // ステップ2: 別列の候補から除外
-    const filtered = candidates.filter((c) => {
-      if (c.col === targetCol) return true;
-      if (c.y < victimY) return false;
-      if (chain.movedIds.has(c.id)) return false;
-      return true;
-    });
-
-    // ステップ3: 最低スコアの候補位置に cardId をリダイレクト
-    if (filtered.length === 0) {
+    if (!target) {
       // 候補がない → victim の下に cardId を配置
       const newY = victimY + victimHeight + GAP;
       placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet);
       return;
     }
 
-    let best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
-    // 隣列の場合は上優先ロジックを適用
-    best = applyTopPreferenceForAdjacentColumns(
-      best,
-      filtered,
-      targetCol,
-      scoreMap.get(victimId) ?? 0,
-    );
-    // cardId を best の位置にリダイレクト（連鎖は続く）
-    placeCard(grid, columns, cardId, best.col, best.y, heightMap, scoreMap, columnCount, chain, holdSet);
+    // cardId を target の位置にリダイレクト（連鎖は続く）
+    placeCard(grid, columns, cardId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet);
     return;
   }
 
@@ -234,57 +263,11 @@ export function placeCard(
     return;
   }
 
-  // --- ステップ1: 押し出し先候補のリストアップ ---
-  const candidates: DisplaceCandidate[] = [];
+  // --- ステップ1〜3: 押し出し先候補を探す ---
+  const victimScore = scoreMap.get(victimId) ?? 0;
+  const target = findDisplaceTarget(columns, victimId, targetCol, victimY, victimHeight, victimScore, heightMap, scoreMap, columnCount, chain);
 
-  // 1a. 同じ列の、元位置の直下のカード
-  const belowInCol = columns[targetCol]
-    .filter((c) => c.id !== victimId && c.y > victimY)
-    .sort((a, b) => a.y - b.y);
-  if (belowInCol.length > 0) {
-    const below = belowInCol[0];
-    candidates.push({
-      id: below.id,
-      col: targetCol,
-      y: below.y,
-      score: scoreMap.get(below.id) ?? 0,
-    });
-  }
-
-  // 1b. 左右の列で、元位置とy座標が1pxでも重なるカード
-  const victimBottom = victimY + victimHeight;
-  for (const adjCol of [targetCol - 1, targetCol + 1]) {
-    if (adjCol < 0 || adjCol >= columnCount) continue;
-    for (const card of columns[adjCol]) {
-      const cardH = heightMap.get(card.id) ?? DEFAULT_CARD_HEIGHT;
-      const cardBottom = card.y + cardH;
-      if (victimY < cardBottom && victimBottom > card.y) {
-        candidates.push({
-          id: card.id,
-          col: adjCol,
-          y: card.y,
-          score: scoreMap.get(card.id) ?? 0,
-        });
-      }
-    }
-  }
-
-  // --- ステップ2: 別列の候補から除外 ---
-  const filtered = candidates.filter((c) => {
-    // 同じ列の候補は除外対象外（常に残る）
-    if (c.col === targetCol) return true;
-
-    // topのy座標が押し出されるカードの元位置のtopより小さい（上にある）もの
-    if (c.y < victimY) return false;
-
-    // 既にこの連鎖で押し出されたもの
-    if (chain.movedIds.has(c.id)) return false;
-
-    return true;
-  });
-
-  // --- ステップ3: 最もスコアが低いものを押し出し先とする ---
-  if (filtered.length === 0) {
+  if (!target) {
     // 候補がない → 下に配置して終了
     const newY = targetY + cardHeight + GAP;
     columns[targetCol] = columns[targetCol].filter((c) => c.id !== victimId);
@@ -295,17 +278,8 @@ export function placeCard(
     return;
   }
 
-  let best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
-  // 隣列の場合は上優先ロジックを適用
-  best = applyTopPreferenceForAdjacentColumns(
-    best,
-    filtered,
-    targetCol,
-    scoreMap.get(victimId) ?? 0,
-  );
-
-  // 押し出されるカードを best の位置に配置 → best が次に押し出される
-  placeCard(grid, columns, victimId, best.col, best.y, heightMap, scoreMap, columnCount, chain, holdSet);
+  // 押し出されるカードを target の位置に配置 → target が次に押し出される
+  placeCard(grid, columns, victimId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet);
 }
 
 // ── 公開API ──
