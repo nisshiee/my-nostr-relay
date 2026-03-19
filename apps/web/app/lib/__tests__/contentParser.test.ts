@@ -328,13 +328,13 @@ describe("parseContent", () => {
     ]);
   });
 
-  // Nostr URIに大文字が含まれない（bech32は小文字）ことの確認
-  it("nostr:nevent1 の後に大文字が含まれる場合、マッチ範囲が小文字部分までになる", () => {
-    // 正規表現は [a-z0-9]+ なので大文字でマッチが切れる
+  // Nostr URIに大文字が含まれる場合（case-insensitive マッチ）
+  it("nostr:nevent1 の後に大文字が含まれても全体がquoteノードとしてマッチする", () => {
+    // 正規表現は gi フラグ（case-insensitive）なので大文字もマッチに含まれる
     const result = parseContent("nostr:nevent1abcXYZ rest");
     expect(result).toEqual([
-      { type: "quote", uri: "nostr:nevent1abc" },
-      { type: "text", text: "XYZ rest" },
+      { type: "quote", uri: "nostr:nevent1abcXYZ" },
+      { type: "text", text: " rest" },
     ]);
   });
 

@@ -1,13 +1,17 @@
 "use client";
 
 import Image from "next/image";
+import type { SimplePool } from "nostr-tools/pool";
 import { useQuotedEvent } from "../../hooks/useQuotedEvent";
-import { SimplePool } from "nostr-tools/pool";
 
-interface QuoteNodeProps {
-  uri: string;
-  pool: SimplePool | null;
-  relayUrls: string[];
+// ---------------------------------------------------------------------------
+// ヘルパー
+// ---------------------------------------------------------------------------
+
+/** npubの省略表示を生成 */
+function shortenPubkey(pubkey: string): string {
+  if (pubkey.length <= 12) return pubkey;
+  return `${pubkey.slice(0, 8)}…${pubkey.slice(-4)}`;
 }
 
 /** 相対時刻を表示する（"3分前", "1時間前" など） */
@@ -28,128 +32,125 @@ function relativeTime(unixTimestamp: number): string {
   }
 }
 
-/** テキストコンテンツからnostr: URIを除去し、指定文字数でtruncateする */
-function cleanAndTruncateText(content: string, maxLength = 140): string {
-  // nostr: URIを除去
-  const cleaned = content.replace(/nostr:[a-z0-9]+/gi, "").trim();
-  
-  if (cleaned.length <= maxLength) {
-    return cleaned;
-  }
-  
-  return cleaned.slice(0, maxLength - 1) + "…";
+/** nostr: URI をテキストから除去する */
+function stripNostrUris(text: string): string {
+  return text.replace(/nostr:(?:nevent1|note1|naddr1|npub1|nprofile1)[a-z0-9]+/gi, "").trim();
 }
 
-/** 引用ノートを表示するコンポーネント */
+/** テキストを指定文字数でtruncateする */
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) return text;
+  return text.slice(0, maxLength) + "…";
+}
+
+/** njump.me のURLを生成する */
+function njumpUrl(nostrUri: string): string {
+  // "nostr:" プレフィックスを除去してnjump.meに渡す
+  const identifier = nostrUri.replace(/^nostr:/, "");
+  return `https://njump.me/${identifier}`;
+}
+
+// ---------------------------------------------------------------------------
+// コンポーネント
+// ---------------------------------------------------------------------------
+
+interface QuoteNodeProps {
+  /** nostr: URI 文字列（例: "nostr:nevent1..."） */
+  uri: string;
+  /** SimplePool インスタンス（useNostrRelay から取得） */
+  pool: SimplePool | null;
+  /** 接続先リレーURL配列（useNostrRelay から取得） */
+  relayUrls: string[];
+}
+
+/** 引用ノートをカード形式で表示するコンポーネント */
 export function QuoteNode({ uri, pool, relayUrls }: QuoteNodeProps) {
   const { event, profile, loading, error } = useQuotedEvent(uri, pool, relayUrls);
 
-  // njump.me リンクを作成
-  const njumpUrl = `https://njump.me/${uri.replace(/^nostr:/, "")}`;
+  const linkUrl = njumpUrl(uri);
 
-  // クリックハンドラー
-  const handleClick = () => {
-    window.open(njumpUrl, "_blank", "noopener,noreferrer");
-  };
-
-  // ローディング状態
+  // ローディング中
   if (loading) {
     return (
-      <div className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors">
-        <div className="flex items-center space-x-2">
-          <div className="w-6 h-6 bg-gray-300 dark:bg-gray-600 rounded-full animate-pulse" />
-          <div className="h-4 bg-gray-300 dark:bg-gray-600 rounded w-24 animate-pulse" />
+      <a
+        href={linkUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="block my-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 p-3 animate-pulse"
+      >
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-600" />
+          <div className="h-3 w-24 rounded bg-gray-200 dark:bg-gray-600" />
         </div>
-        <div className="mt-2 space-y-1">
-          <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-full animate-pulse" />
-          <div className="h-3 bg-gray-300 dark:bg-gray-600 rounded w-3/4 animate-pulse" />
-        </div>
-      </div>
+        <div className="mt-2 h-3 w-full rounded bg-gray-200 dark:bg-gray-600" />
+        <div className="mt-1 h-3 w-2/3 rounded bg-gray-200 dark:bg-gray-600" />
+      </a>
     );
   }
 
-  // エラー状態またはデータが取得できない場合のフォールバック
+  // エラー or イベント取得失敗 → URIをリンクとして表示
   if (error || !event) {
     return (
       <a
-        href={njumpUrl}
+        href={linkUrl}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-blue-500 dark:text-blue-400 hover:text-blue-600 dark:hover:text-blue-300 underline break-all"
+        onClick={(e) => e.stopPropagation()}
+        className="block my-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 p-3 text-sm text-blue-600 dark:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors break-all"
       >
         {uri}
       </a>
     );
   }
 
-  // 表示名の決定
-  const displayName = profile?.display_name || profile?.name || "Anonymous";
-  
-  // アバター画像のURL
-  const avatarUrl = profile?.picture || "";
-  
-  // テキスト抜粋を作成
-  const textExcerpt = cleanAndTruncateText(event.content);
-
-  // 相対タイムスタンプ
-  const timeText = relativeTime(event.created_at);
+  // 正常表示
+  const displayName =
+    profile?.display_name || profile?.name || shortenPubkey(event.pubkey);
+  const avatarUrl = profile?.picture;
+  const strippedContent = stripNostrUris(event.content);
+  const excerpt = truncateText(strippedContent, 140);
 
   return (
-    <div
-      onClick={handleClick}
-      className="border border-gray-200 dark:border-gray-700 rounded-lg p-3 bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          handleClick();
-        }
-      }}
+    <a
+      href={linkUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="block my-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 p-3 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
     >
-      {/* ヘッダー（アバター + 表示名 + タイムスタンプ） */}
-      <div className="flex items-center space-x-2 mb-2">
-        <div className="relative w-6 h-6 flex-shrink-0">
-          {avatarUrl ? (
-            <Image
-              src={avatarUrl}
-              alt={`${displayName}のアバター`}
-              fill
-              className="rounded-full object-cover"
-              sizes="24px"
-              onError={(e) => {
-                // エラー時はデフォルト画像を表示
-                const target = e.target as HTMLImageElement;
-                target.style.display = "none";
-              }}
-            />
-          ) : (
-            <div className="w-6 h-6 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-              <span className="text-xs text-gray-600 dark:text-gray-400">
-                {displayName.charAt(0).toUpperCase()}
-              </span>
-            </div>
-          )}
-        </div>
-        <span className="font-medium text-sm text-gray-900 dark:text-gray-100 truncate">
+      {/* ヘッダー: アバター + 名前 + 時刻 */}
+      <div className="flex items-center gap-2 mb-1.5">
+        {avatarUrl ? (
+          <Image
+            src={avatarUrl}
+            alt={displayName}
+            width={24}
+            height={24}
+            className="h-6 w-6 shrink-0 rounded-full object-cover"
+            unoptimized
+          />
+        ) : (
+          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center flex-shrink-0">
+            <span className="text-white text-[10px] font-bold">
+              {displayName.charAt(0).toUpperCase()}
+            </span>
+          </div>
+        )}
+        <span className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">
           {displayName}
         </span>
-        <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
-          {timeText}
+        <span className="text-xs text-gray-500 dark:text-gray-400 shrink-0">
+          {relativeTime(event.created_at)}
         </span>
       </div>
 
       {/* テキスト抜粋 */}
-      {textExcerpt && (
-        <div className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
-          {textExcerpt}
-        </div>
+      {excerpt && (
+        <p className="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words leading-relaxed line-clamp-3">
+          {excerpt}
+        </p>
       )}
-
-      {/* 引用インジケーター */}
-      <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-        引用されたノート
-      </div>
-    </div>
+    </a>
   );
 }

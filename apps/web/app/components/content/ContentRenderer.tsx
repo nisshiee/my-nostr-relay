@@ -54,7 +54,9 @@ export function ContentRenderer({ content, onHold, onRelease, pool, relayUrls }:
         const extraProps =
           node.type === "image"
             ? { imageUrls, imageIndex: imageIndexMap[index], onHold, onRelease }
-            : {};
+            : node.type === "quote"
+              ? { pool: pool ?? null, relayUrls: relayUrls ?? [] }
+              : {};
         return <Renderer key={index} {...props} {...extraProps} />;
       })}
     </div>

@@ -27,6 +27,8 @@ export default function Home() {
         publishEvent={publishEvent}
         publishedSlotMapRef={publishedSlotMapRef}
         sendReaction={sendReaction}
+        pool={pool}
+        relayUrls={relayUrls}
         onLogout={logout}
         isProcessing={isProcessing}
       />

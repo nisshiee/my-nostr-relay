@@ -1,61 +1,66 @@
 /**
- * NIP-19 Nostr Entity Decoder
- * Decodes Nostr URIs (nevent1, note1, naddr1) into structured data
+ * NIP-19 デコードユーティリティ
+ *
+ * Nostr の bech32 エンコードされた識別子（nevent, note, naddr）をデコードする。
+ * nostr-tools の nip19 モジュールをラップし、型安全なインターフェースを提供する。
+ *
+ * @see https://github.com/nostr-protocol/nips/blob/master/19.md
  */
 
-import { decode } from "nostr-tools/nip19";
+import { nip19 } from "nostr-tools";
 
-/** Decoded nevent data */
-export interface DecodedNevent {
-  type: "nevent";
+// ---------------------------------------------------------------------------
+// 型定義
+// ---------------------------------------------------------------------------
+
+/** nevent デコード結果 */
+export interface NeventData {
   eventId: string;
   relays?: string[];
   pubkey?: string;
+  kind?: number;
 }
 
-/** Decoded note data */
-export interface DecodedNote {
-  type: "note";
+/** note デコード結果 */
+export interface NoteData {
   eventId: string;
 }
 
-/** Decoded naddr data */
-export interface DecodedNaddr {
-  type: "naddr";
+/** naddr デコード結果 */
+export interface NaddrData {
   kind: number;
   pubkey: string;
   d: string;
   relays?: string[];
 }
 
-/** Union type for all decoded results */
-export type DecodedNostr = DecodedNevent | DecodedNote | DecodedNaddr;
+/** parseNostrUri の返り値（discriminated union） */
+export type NostrUriDecoded =
+  | { type: "nevent"; data: NeventData }
+  | { type: "note"; data: NoteData }
+  | { type: "naddr"; data: NaddrData };
+
+// ---------------------------------------------------------------------------
+// デコード関数
+// ---------------------------------------------------------------------------
 
 /**
- * Decode nevent1... string into structured data
- * @param nevent - The nevent1... string (with or without nostr: prefix)
- * @returns Decoded nevent data or null if invalid
+ * nevent1... 文字列をデコードする
+ *
+ * @param nevent bech32 エンコードされた nevent 文字列
+ * @returns デコード結果。不正な入力の場合は null
  */
-export function decodeNevent(nevent: string): DecodedNevent | null {
+export function decodeNevent(nevent: string): NeventData | null {
   try {
-    // Remove nostr: prefix if present
-    const cleanNevent = nevent.replace(/^nostr:/, "");
-    
-    if (!cleanNevent.startsWith("nevent1")) {
-      return null;
-    }
+    const decoded = nip19.decode(nevent);
+    if (decoded.type !== "nevent") return null;
 
-    const decoded = decode(cleanNevent);
-    
-    if (decoded.type !== "nevent") {
-      return null;
-    }
-
+    const { id, relays, author, kind } = decoded.data;
     return {
-      type: "nevent",
-      eventId: decoded.data.id,
-      relays: decoded.data.relays?.length ? decoded.data.relays : undefined,
-      pubkey: decoded.data.author || undefined,
+      eventId: id,
+      relays: relays && relays.length > 0 ? relays : undefined,
+      pubkey: author ?? undefined,
+      kind: kind ?? undefined,
     };
   } catch {
     return null;
@@ -63,28 +68,39 @@ export function decodeNevent(nevent: string): DecodedNevent | null {
 }
 
 /**
- * Decode note1... string into structured data
- * @param note - The note1... string (with or without nostr: prefix)
- * @returns Decoded note data or null if invalid
+ * note1... 文字列をデコードする
+ *
+ * @param note bech32 エンコードされた note 文字列
+ * @returns デコード結果。不正な入力の場合は null
  */
-export function decodeNote(note: string): DecodedNote | null {
+export function decodeNote(note: string): NoteData | null {
   try {
-    // Remove nostr: prefix if present
-    const cleanNote = note.replace(/^nostr:/, "");
-    
-    if (!cleanNote.startsWith("note1")) {
-      return null;
-    }
+    const decoded = nip19.decode(note);
+    if (decoded.type !== "note") return null;
 
-    const decoded = decode(cleanNote);
-    
-    if (decoded.type !== "note") {
-      return null;
-    }
+    return { eventId: decoded.data };
+  } catch {
+    return null;
+  }
+}
 
+/**
+ * naddr1... 文字列をデコードする
+ *
+ * @param naddr bech32 エンコードされた naddr 文字列
+ * @returns デコード結果。不正な入力の場合は null
+ */
+export function decodeNaddr(naddr: string): NaddrData | null {
+  try {
+    const decoded = nip19.decode(naddr);
+    if (decoded.type !== "naddr") return null;
+
+    const { kind, pubkey, identifier, relays } = decoded.data;
     return {
-      type: "note",
-      eventId: decoded.data,
+      kind,
+      pubkey,
+      d: identifier,
+      relays: relays && relays.length > 0 ? relays : undefined,
     };
   } catch {
     return null;
@@ -92,71 +108,57 @@ export function decodeNote(note: string): DecodedNote | null {
 }
 
 /**
- * Decode naddr1... string into structured data
- * @param naddr - The naddr1... string (with or without nostr: prefix)
- * @returns Decoded naddr data or null if invalid
+ * nostr: URI をパースしてデコード結果を返す
+ *
+ * 対応プレフィックス: nostr:nevent1..., nostr:note1..., nostr:naddr1...
+ *
+ * @param uri nostr: URI 文字列（例: "nostr:nevent1..."）
+ * @returns デコード結果。不正な URI や未対応のタイプの場合は null
  */
-export function decodeNaddr(naddr: string): DecodedNaddr | null {
+export function parseNostrUri(uri: string): NostrUriDecoded | null {
+  // nostr: プレフィックスを除去
+  const match = uri.match(/^nostr:(.+)$/i);
+  if (!match) return null;
+
+  const bech32str = match[1];
+
   try {
-    // Remove nostr: prefix if present
-    const cleanNaddr = naddr.replace(/^nostr:/, "");
-    
-    if (!cleanNaddr.startsWith("naddr1")) {
-      return null;
-    }
+    const decoded = nip19.decode(bech32str);
 
-    const decoded = decode(cleanNaddr);
-    
-    if (decoded.type !== "naddr") {
-      return null;
+    switch (decoded.type) {
+      case "nevent": {
+        const { id, relays, author, kind } = decoded.data;
+        return {
+          type: "nevent",
+          data: {
+            eventId: id,
+            relays: relays && relays.length > 0 ? relays : undefined,
+            pubkey: author ?? undefined,
+            kind: kind ?? undefined,
+          },
+        };
+      }
+      case "note":
+        return {
+          type: "note",
+          data: { eventId: decoded.data },
+        };
+      case "naddr": {
+        const { kind, pubkey, identifier, relays } = decoded.data;
+        return {
+          type: "naddr",
+          data: {
+            kind,
+            pubkey,
+            d: identifier,
+            relays: relays && relays.length > 0 ? relays : undefined,
+          },
+        };
+      }
+      default:
+        return null;
     }
-
-    return {
-      type: "naddr",
-      kind: decoded.data.kind,
-      pubkey: decoded.data.pubkey,
-      d: decoded.data.identifier,
-      relays: decoded.data.relays?.length ? decoded.data.relays : undefined,
-    };
   } catch {
     return null;
   }
-}
-
-/**
- * Parse any Nostr URI into structured data
- * @param uri - The nostr:xxx URI or raw bech32 string
- * @returns Decoded Nostr entity or null if invalid
- */
-export function parseNostrUri(uri: string): DecodedNostr | null {
-  // Remove nostr: prefix for processing
-  const cleanUri = uri.replace(/^nostr:/, "");
-  
-  if (cleanUri.startsWith("nevent1")) {
-    return decodeNevent(uri);
-  } else if (cleanUri.startsWith("note1")) {
-    return decodeNote(uri);
-  } else if (cleanUri.startsWith("naddr1")) {
-    return decodeNaddr(uri);
-  }
-  
-  return null;
-}
-
-/**
- * Extract event ID from any Nostr URI
- * @param uri - The nostr:xxx URI or raw bech32 string
- * @returns Event ID or null if not applicable or invalid
- */
-export function extractEventId(uri: string): string | null {
-  const decoded = parseNostrUri(uri);
-  
-  if (!decoded) return null;
-  
-  if (decoded.type === "nevent" || decoded.type === "note") {
-    return decoded.eventId;
-  }
-  
-  // naddr doesn't have a direct event ID
-  return null;
 }
