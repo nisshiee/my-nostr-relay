@@ -66,7 +66,7 @@ aws-config = { version = "1.5.5", optional = true }
 
 
 [dev-dependencies]
-tokio-tungstenite = "0.28"
+tokio-tungstenite = "0.29"
 reqwest = { version = "0.13", features = ["json"] }
 serial_test = "3"
 # DynamoDB Local用のTCP待機ヘルパー
