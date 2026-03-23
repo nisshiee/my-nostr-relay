@@ -325,6 +325,28 @@ export const createFeedSlice: StateCreator<
           // phase を ready に
           set({ phase: "ready" });
 
+          // リプライ検出 → スレッド祖先取得（連鎖フロー）
+          const currentState = get();
+          const replyEventIds: string[] = [];
+          for (const [, event] of currentState.events) {
+            if (event.kind !== 1) continue;
+            const hasETag = event.tags.some((tag) => tag[0] === "e" && tag[1]);
+            if (hasETag) {
+              // e タグの参照先で未取得のものを収集
+              const refIds = event.tags
+                .filter((tag) => tag[0] === "e" && tag[1])
+                .map((tag) => tag[1]!)
+                .filter((id) => !currentState.events.has(id));
+              replyEventIds.push(...refIds);
+            }
+          }
+          if (replyEventIds.length > 0) {
+            const uniqueIds = [...new Set(replyEventIds)];
+            console.log(`[feed] リプライ祖先取得開始: ${uniqueIds.length}件`);
+            // 非同期で祖先取得（完了を待たない — subscribeReactions と並行）
+            get().fetchAncestors(uniqueIds);
+          }
+
           // subscribeReactions を呼び出し（連鎖フロー）
           const currentCards = get().cards;
           const eventIds = currentCards.map((c) =>

@@ -390,9 +390,11 @@ export const createThreadsSlice: StateCreator<
             ? OWNER_SCORE_HALF_LIFE
             : SCORE_HALF_LIFE;
 
+          // slotId をルートイベントIDベースで安定化
+          const rootEventId = resolved[0]?.eventId ?? replyEvent.id;
           const newCard: ThreadCard = {
             type: "thread",
-            slotId: crypto.randomUUID(),
+            slotId: `thread:${rootEventId}`,
             pubkey: resolved[0]?.pubkey ?? replyEvent.pubkey,
             score: calcFreshnessScore(latestCreatedAt, now, halfLife),
             fadingOut: false,
