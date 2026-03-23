@@ -112,7 +112,7 @@ export function EmojiPickerPopover({
       onClick={(e) => e.stopPropagation()}
     >
       <EmojiPicker.Root
-        locale="ja"
+        locale="en"
         onEmojiSelect={(emoji) => {
           onEmojiSelect(emoji.emoji);
           onClose();
