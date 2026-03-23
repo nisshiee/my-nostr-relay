@@ -1,5 +1,18 @@
-import type { ThreadNote, ThreadCard } from "./types";
-export { MAX_THREAD_DEPTH } from "./constants";
+/**
+ * store/pure/buildThreads.ts
+ *
+ * スレッド構築の純粋関数群。
+ * lib/threadBuilder.ts からの移植（リファクタ）。
+ *
+ * リファクタ内容:
+ * - store の state（events Map）を引数で受け取るパターンに調整
+ * - 関数シグネチャは同じまま維持（既存ロジックは変更なし）
+ * - buildThreadCard の crypto.randomUUID() 呼び出しはそのまま維持
+ *   （純粋関数の厳密性よりも既存ロジック保持を優先）
+ */
+
+import type { ThreadNote, ThreadCard } from "../../lib/types";
+export { MAX_THREAD_DEPTH } from "../../lib/constants";
 
 /**
  * kind:1 イベントから全 e タグの参照先 eventId を抽出する
@@ -82,14 +95,11 @@ export function buildThreadCard(
   notes: ThreadNote[],
   _ownerPubkey: string, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): ThreadCard {
-  // created_at でソート
   const sorted = [...notes].sort((a, b) => a.created_at - b.created_at);
   const resolved = resolveReplyAuthors(sorted);
 
-  // eventIds 集合
   const eventIds = new Set<string>(resolved.map(n => n.eventId));
 
-  // 最新リプライの created_at をカードの created_at にする
   const latestCreatedAt =
     resolved.length > 0
       ? Math.max(...resolved.map(n => n.created_at))
@@ -99,7 +109,7 @@ export function buildThreadCard(
     type: "thread",
     slotId: crypto.randomUUID(),
     pubkey: resolved[0]?.pubkey ?? "",
-    score: 0, // スコアは LiveCanvas 側で再計算される
+    score: 0,
     fadingOut: false,
     created_at: latestCreatedAt,
     notes: resolved,
@@ -133,7 +143,6 @@ export function mergeThreadCards(
   newNotes: ThreadNote[],
   ownerPubkey: string,
 ): ThreadCard {
-  // 全ノートを集約（重複排除）
   const allNotes = new Map<string, ThreadNote>();
   for (const thread of existingThreads) {
     for (const note of thread.notes) {
@@ -144,7 +153,6 @@ export function mergeThreadCards(
     allNotes.set(note.eventId, note);
   }
 
-  // slotId は最初の既存スレッドから引き継ぐ（レイアウト維持のため）
   const result = buildThreadCard([...allNotes.values()], ownerPubkey);
   if (existingThreads.length > 0) {
     return { ...result, slotId: existingThreads[0]!.slotId };

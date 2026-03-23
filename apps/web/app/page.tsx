@@ -1,36 +1,18 @@
 "use client";
 
-import { useRef } from "react";
 import { useAuth } from "./contexts/AuthContext";
-import { useNostrRelay } from "./hooks/useNostrRelay";
-import { useThreadCards } from "./hooks/useThreadCards";
 import { LiveCanvas } from "./components/LiveCanvas";
 
 export default function Home() {
   const { pubkey, npub, nip07Available, autoLoading, login, logout } = useAuth();
-  // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
-  const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
-  const { notes, profiles, reactions, status, relayUrls, pool, publishEvent, sendReaction } = useNostrRelay(pubkey, publishedSlotMapRef);
-  const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status);
 
   // 認証済み → LiveCanvas を全画面表示
   if (pubkey) {
     return (
       <LiveCanvas
-        notes={filteredNotes}
-        threadCards={threadCards}
-        profiles={profiles}
-        reactions={reactions}
-        status={status}
         pubkey={pubkey}
         npub={npub}
-        publishEvent={publishEvent}
-        publishedSlotMapRef={publishedSlotMapRef}
-        sendReaction={sendReaction}
-        pool={pool}
-        relayUrls={relayUrls}
         onLogout={logout}
-        isProcessing={isProcessing}
       />
     );
   }

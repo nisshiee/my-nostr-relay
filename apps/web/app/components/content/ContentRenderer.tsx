@@ -5,7 +5,6 @@ import { TextNode } from "./TextNode";
 import { ImageNode } from "./ImageNode";
 import { LinkNode } from "./LinkNode";
 import { QuoteNode } from "./QuoteNode";
-import type { SimplePool } from "nostr-tools/pool";
 import type { ComponentType } from "react";
 
 /**
@@ -24,14 +23,10 @@ interface ContentRendererProps {
   content: string;
   onHold?: () => void;
   onRelease?: () => void;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool?: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls?: string[];
 }
 
 /** コンテンツをパースしてノードごとに適切なコンポーネントで描画する */
-export function ContentRenderer({ content, onHold, onRelease, pool, relayUrls }: ContentRendererProps) {
+export function ContentRenderer({ content, onHold, onRelease }: ContentRendererProps) {
   const nodes = parseContent(content);
 
   // 画像URLリストを抽出
@@ -54,9 +49,7 @@ export function ContentRenderer({ content, onHold, onRelease, pool, relayUrls }:
         const extraProps =
           node.type === "image"
             ? { imageUrls, imageIndex: imageIndexMap[index], onHold, onRelease }
-            : node.type === "quote"
-              ? { pool: pool ?? null, relayUrls: relayUrls ?? [] }
-              : {};
+            : {};
         return <Renderer key={index} {...props} {...extraProps} />;
       })}
     </div>

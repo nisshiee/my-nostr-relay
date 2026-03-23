@@ -10,7 +10,7 @@ import {
   mergeThreadCards,
   collectMissingEventIds,
   MAX_THREAD_DEPTH,
-} from "../threadBuilder";
+} from "../../store/pure/buildThreads";
 import type { ThreadNote, ThreadCard } from "../types";
 
 // ヘルパー: 最小限の ThreadNote を作成

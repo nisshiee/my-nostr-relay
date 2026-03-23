@@ -2,10 +2,11 @@
 
 import { useRef, useEffect, useState } from "react";
 import Image from "next/image";
-import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
+import type { NoteCard as NoteCardType } from "../lib/types";
 import { ContentRenderer } from "./content/ContentRenderer";
 import { ActionBar } from "./ActionBar";
-import type { SimplePool } from "nostr-tools/pool";
+import useCanvasStore from "../store";
+import { useProfile, useReactionsFor } from "../store/selectors";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -33,25 +34,22 @@ function relativeTime(unixTimestamp: number): string {
 
 interface NoteCardProps {
   note: NoteCardType;
-  profile?: NostrProfile;
-  /** リポスターのプロフィール情報 */
-  reposterProfile?: NostrProfile;
-  /** リアクション集計（絵文字 → {件数, 画像URL, 送信者pubkey集合}） */
-  reactions?: Map<string, { count: number; imageUrl?: string; pubkeys: Set<string> }>;
   /** 自分のpubkey（リアクション済み判定用） */
   myPubkey?: string;
-  /** リアクション送信ハンドラ */
-  onReaction?: (emoji: string, imageUrl?: string) => void;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool?: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls?: string[];
   onHeightChange?: (slotId: string, height: number) => void;
   onHold?: () => void;
   onRelease?: () => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, pool, relayUrls, onHeightChange, onHold, onRelease }: NoteCardProps) {
+export function NoteCard({ note, myPubkey, onHeightChange, onHold, onRelease }: NoteCardProps) {
+  // --- Store セレクター ---
+  const profile = useCanvasStore(useProfile(note.pubkey));
+  const reposterPubkey = note.repostInfo?.reposterPubkey ?? "";
+  const reposterProfileRaw = useCanvasStore(useProfile(reposterPubkey));
+  const reposterProfile = note.repostInfo ? reposterProfileRaw : undefined;
+  const reactions = useCanvasStore(useReactionsFor(note.eventId));
+  const sendReaction = useCanvasStore((s) => s.sendReaction);
+
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -145,6 +143,11 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
     };
   }, []);
 
+  /** リアクション送信ハンドラ */
+  const handleReaction = (emoji: string, imageUrl?: string) => {
+    sendReaction(note.eventId, note.pubkey, emoji, imageUrl).catch(console.error);
+  };
+
   return (
     <div
       ref={cardRef}
@@ -195,7 +198,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       </div>
 
       {/* テキスト内容（ContentRendererでリッチコンテンツを描画） */}
-      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} pool={pool} relayUrls={relayUrls} />
+      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} />
 
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (
@@ -209,8 +212,8 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
                 disabled={reacted}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (!reacted && onReaction) {
-                    onReaction(emoji, imageUrl);
+                  if (!reacted) {
+                    handleReaction(emoji, imageUrl);
                   }
                 }}
                 className={`rounded-full px-2 py-0.5 text-xs inline-flex items-center gap-1 transition-colors ${
@@ -241,9 +244,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
         isOpen={isActionBarOpen}
         onThumbsUp={async () => {
           try {
-            if (onReaction) {
-              await onReaction("+"); // Nostrプロトコル上の「👍」相当（NIP-25）
-            }
+            await handleReaction("+");
           } catch (e) {
             console.error(e);
           } finally {
