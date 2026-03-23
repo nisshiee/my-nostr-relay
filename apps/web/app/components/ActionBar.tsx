@@ -1,6 +1,8 @@
 "use client";
 
-import { Repeat2, Plus } from "lucide-react";
+import { useState, useRef } from "react";
+import { Repeat2, Plus, Smile } from "lucide-react";
+import { EmojiPickerPopover } from "./EmojiPickerPopover";
 
 /** NoteCard用アクションバー（カードクリックで展開するリアクション操作UI） */
 
@@ -15,6 +17,10 @@ interface ActionBarProps {
   onRepost: () => void | Promise<void>;
   /** 自分が既にリポスト済みかどうか */
   isAlreadyReposted: boolean;
+  /** 絵文字ピッカーから絵文字が選択されたときのハンドラ */
+  onEmojiSelect?: (emoji: string) => void;
+  /** 絵文字ピッカーの開閉状態が変わったときのコールバック */
+  onPickerOpenChange?: (isOpen: boolean) => void;
 }
 
 export function ActionBar({
@@ -23,7 +29,25 @@ export function ActionBar({
   isAlreadyReacted,
   onRepost,
   isAlreadyReposted,
+  onEmojiSelect,
+  onPickerOpenChange,
 }: ActionBarProps) {
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
+
+  // アクションバーが閉じたらピッカーもリセット（レンダー中の条件付きsetState）
+  // React 19: 条件付きsetStateはレンダー中に安全にバッチされる
+  if (!isOpen && isPickerOpen) {
+    setIsPickerOpen(false);
+    onPickerOpenChange?.(false);
+  }
+
+  /** ピッカーの開閉状態を更新し、親に通知する */
+  const updatePickerOpen = (open: boolean) => {
+    setIsPickerOpen(open);
+    onPickerOpenChange?.(open);
+  };
+
   return (
     <div
       role="toolbar"
@@ -70,7 +94,31 @@ export function ActionBar({
         >
           <Plus size={18} />
         </button>
-        {/* 将来的に他のアクションボタンをここに追加 */}
+        {/* 絵文字ピッカーボタン */}
+        {onEmojiSelect && (
+          <>
+            <button
+              ref={emojiButtonRef}
+              type="button"
+              aria-label="絵文字ピッカーを開く"
+              onClick={(e) => {
+                e.stopPropagation();
+                updatePickerOpen(!isPickerOpen);
+              }}
+              className="p-1.5 rounded transition-colors text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              <Smile size={18} />
+            </button>
+            <EmojiPickerPopover
+              isOpen={isPickerOpen}
+              onClose={() => updatePickerOpen(false)}
+              onEmojiSelect={(emoji) => {
+                onEmojiSelect(emoji);
+              }}
+              anchorRef={emojiButtonRef}
+            />
+          </>
+        )}
       </div>
     </div>
   );

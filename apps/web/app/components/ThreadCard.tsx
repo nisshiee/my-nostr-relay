@@ -96,12 +96,18 @@ export function ThreadCard({
   }, [thread.slotId, onHeightChange]);
 
   // Click outside でアクションバーを閉じる
+  // ※ 絵文字ピッカー（Portal描画）内のクリックはカード内扱いにする
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
       if (
         cardRef.current &&
-        !cardRef.current.contains(event.target as Node)
+        !cardRef.current.contains(target)
       ) {
+        // 絵文字ピッカーPopover内のクリックは無視する
+        const popover = document.querySelector("[data-emoji-picker-popover]");
+        if (popover && popover.contains(target)) return;
+
         setActiveNoteId(null);
         onRelease?.();
       }
@@ -142,6 +148,7 @@ export function ThreadCard({
   // ホバー外れ → 少し遅延してからアクションバーを閉じる
   const isHoveringRef = useRef(false);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isEmojiPickerOpenRef = useRef(false);
 
   const handleMouseEnter = () => {
     isHoveringRef.current = true;
@@ -154,7 +161,7 @@ export function ThreadCard({
   const handleMouseLeave = () => {
     isHoveringRef.current = false;
     leaveTimerRef.current = setTimeout(() => {
-      if (!isHoveringRef.current) {
+      if (!isHoveringRef.current && !isEmojiPickerOpenRef.current) {
         setActiveNoteId(null);
         onRelease?.();
       }
@@ -200,8 +207,15 @@ export function ThreadCard({
             isLast={index === thread.notes.length - 1}
             showDivider={index > 0}
             onClick={(e) => handleNoteClick(note.eventId, e)}
+            onActionComplete={() => {
+              setActiveNoteId(null);
+              onRelease?.();
+            }}
             onHold={onHold}
             onRelease={onRelease}
+            onPickerOpenChange={(open) => {
+              isEmojiPickerOpenRef.current = open;
+            }}
             cache={cache}
           />
         );
@@ -230,8 +244,12 @@ interface ThreadNoteItemProps {
   isLast: boolean;
   showDivider: boolean;
   onClick: (e: React.MouseEvent) => void;
+  /** リアクション送信完了後のコールバック（アクションバーを閉じる等） */
+  onActionComplete?: () => void;
   onHold?: () => void;
   onRelease?: () => void;
+  /** 絵文字ピッカーの開閉状態が変わったときのコールバック */
+  onPickerOpenChange?: (isOpen: boolean) => void;
   cache?: EventCache;
 }
 
@@ -245,8 +263,10 @@ function ThreadNoteItem({
   isLast,
   showDivider,
   onClick,
+  onActionComplete,
   onHold,
   onRelease,
+  onPickerOpenChange,
   cache,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
@@ -371,6 +391,8 @@ function ThreadNoteItem({
               }
             } catch (e) {
               console.error(e);
+            } finally {
+              onActionComplete?.();
             }
           }}
           isAlreadyReacted={
@@ -380,6 +402,18 @@ function ThreadNoteItem({
             // スレッド内ノートのリポストは未実装（将来対応）
           }}
           isAlreadyReposted={false}
+          onPickerOpenChange={onPickerOpenChange}
+          onEmojiSelect={async (emoji) => {
+            try {
+              if (onReaction) {
+                await onReaction(note.eventId, note.pubkey, emoji);
+              }
+            } catch (e) {
+              console.error(e);
+            } finally {
+              onActionComplete?.();
+            }
+          }}
         />
       </div>
     </>
