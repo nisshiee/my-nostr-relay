@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Repeat2, Plus, Smile } from "lucide-react";
 import { EmojiPickerPopover } from "./EmojiPickerPopover";
 
@@ -30,6 +30,7 @@ export function ActionBar({
   onEmojiSelect,
 }: ActionBarProps) {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const emojiButtonRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div
@@ -79,8 +80,9 @@ export function ActionBar({
         </button>
         {/* 絵文字ピッカーボタン */}
         {onEmojiSelect && (
-          <div className="relative">
+          <>
             <button
+              ref={emojiButtonRef}
               type="button"
               aria-label="絵文字ピッカーを開く"
               onClick={(e) => {
@@ -97,8 +99,9 @@ export function ActionBar({
               onEmojiSelect={(emoji) => {
                 onEmojiSelect(emoji);
               }}
+              anchorRef={emojiButtonRef}
             />
-          </div>
+          </>
         )}
       </div>
     </div>

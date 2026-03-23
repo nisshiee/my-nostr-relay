@@ -1,6 +1,7 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { EmojiPicker } from "frimousse";
 
 interface EmojiPickerPopoverProps {
@@ -10,19 +11,42 @@ interface EmojiPickerPopoverProps {
   onClose: () => void;
   /** 絵文字が選択されたときのハンドラ */
   onEmojiSelect: (emoji: string) => void;
+  /** ピッカーのアンカー要素（位置計算用） */
+  anchorRef: React.RefObject<HTMLElement | null>;
 }
 
-/** 絵文字ピッカーポップオーバーコンポーネント */
+/** 絵文字ピッカーポップオーバーコンポーネント（Portal描画） */
 export function EmojiPickerPopover({
   isOpen,
   onClose,
   onEmojiSelect,
+  anchorRef,
 }: EmojiPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+
+  /** アンカー要素の位置からポップオーバーの位置を計算する */
+  const updatePosition = useCallback(() => {
+    if (!anchorRef.current) return;
+    const rect = anchorRef.current.getBoundingClientRect();
+    const pickerWidth = Math.min(320, window.innerWidth * 0.9);
+    // アンカーの上に表示。画面左端からはみ出さないように調整
+    let left = rect.left;
+    if (left + pickerWidth > window.innerWidth - 8) {
+      left = window.innerWidth - pickerWidth - 8;
+    }
+    if (left < 8) left = 8;
+    setPosition({
+      top: rect.top + window.scrollY - 8, // mb-2 相当
+      left: left + window.scrollX,
+    });
+  }, [anchorRef]);
 
   // ピッカー外クリックで閉じる
   useEffect(() => {
     if (!isOpen) return;
+
+    updatePosition();
 
     const handleMouseDown = (e: MouseEvent) => {
       if (
@@ -38,21 +62,34 @@ export function EmojiPickerPopover({
       if (e.key === "Escape") onClose();
     };
 
+    // スクロール・リサイズ時に位置を更新
+    const handleScroll = () => updatePosition();
+
     document.addEventListener("mousedown", handleMouseDown);
     document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("resize", updatePosition);
     return () => {
       document.removeEventListener("mousedown", handleMouseDown);
       document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("resize", updatePosition);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, updatePosition]);
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div
       ref={popoverRef}
-      className="absolute bottom-full mb-2 z-50 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
-      style={{ width: "min(320px, 90vw)", maxHeight: "320px" }}
+      className="fixed z-50 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
+      style={{
+        width: "min(320px, 90vw)",
+        maxHeight: "320px",
+        top: position.top,
+        left: position.left,
+        transform: "translateY(-100%)",
+      }}
       onClick={(e) => e.stopPropagation()}
     >
       <EmojiPicker.Root
@@ -97,6 +134,7 @@ export function EmojiPickerPopover({
           />
         </EmojiPicker.Viewport>
       </EmojiPicker.Root>
-    </div>
+    </div>,
+    document.body,
   );
 }
