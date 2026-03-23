@@ -42,6 +42,8 @@ interface NoteCardProps {
   myPubkey?: string;
   /** リアクション送信ハンドラ */
   onReaction?: (emoji: string, imageUrl?: string) => void;
+  /** リポスト送信ハンドラ */
+  onRepost?: () => void | Promise<void>;
   /** EventCache インスタンス（引用ノード表示用） */
   cache?: EventCache;
   /** pubkey → NostrProfile のマップ（引用ノード表示用） */
@@ -51,7 +53,7 @@ interface NoteCardProps {
   onRelease?: () => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, cache, profiles, onHeightChange, onHold, onRelease }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -151,8 +153,8 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       onClick={handleCardClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
-        isActionBarOpen ? "z-10" : ""
+      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 pt-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
+        isActionBarOpen ? "z-10 pb-2" : "pb-4"
       }`}
     >
       {/* リポスト情報（カード最上部） */}
@@ -252,6 +254,19 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           }
         }}
         isAlreadyReacted={!!(myPubkey && reactions?.get("+")?.pubkeys?.has(myPubkey))}
+        onRepost={async () => {
+          try {
+            if (onRepost) {
+              await onRepost();
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            setIsActionBarOpen(false);
+            onRelease?.();
+          }
+        }}
+        isAlreadyReposted={false}
       />
     </div>
   );

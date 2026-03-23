@@ -375,6 +375,10 @@ function ThreadNoteItem({
           isAlreadyReacted={
             !!(myPubkey && noteReactions?.get("+")?.pubkeys?.has(myPubkey))
           }
+          onRepost={() => {
+            // スレッド内ノートのリポストは未実装（将来対応）
+          }}
+          isAlreadyReposted={false}
         />
       </div>
     </>

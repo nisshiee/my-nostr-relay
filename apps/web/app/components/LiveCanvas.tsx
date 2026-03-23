@@ -38,6 +38,8 @@ interface LiveCanvasProps {
   publishedSlotMapRef: React.RefObject<Map<string, string>>;
   /** リアクション送信ハンドラ */
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
+  /** リポスト送信ハンドラ */
+  sendRepost: (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => Promise<void>;
   /** EventCache インスタンス（引用ノード表示用） */
   cache: EventCache;
   onLogout: () => void;
@@ -48,7 +50,7 @@ function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, cache, onLogout, isProcessing }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -264,6 +266,18 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               myPubkey={pubkey}
                               onReaction={(emoji, imageUrl) => {
                                 sendReaction(note.eventId, note.pubkey, emoji, imageUrl).catch(console.error);
+                              }}
+                              onRepost={() => {
+                                const originalEvent: NostrEvent = {
+                                  kind: 1,
+                                  content: note.content,
+                                  tags: note.tags,
+                                  created_at: note.created_at,
+                                  pubkey: note.pubkey,
+                                  id: note.eventId,
+                                  sig: note.sig,
+                                };
+                                sendRepost(note.eventId, note.pubkey, originalEvent).catch(console.error);
                               }}
                               cache={cache}
                               profiles={profiles}
