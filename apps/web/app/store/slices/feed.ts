@@ -58,7 +58,18 @@ function rebuildCards(
   repostMeta: Map<string, RepostMeta>,
   pubkey: string | null,
   now: number,
+  existingCards?: ReadonlyArray<{ type: string; slotId: string; eventId?: string }>,
 ): NoteCard[] {
+  // 既存カードの slotId を eventId で引けるようにする（NoteCard のみ）
+  const slotIdByEventId = new Map<string, string>();
+  if (existingCards) {
+    for (const card of existingCards) {
+      if (card.type === "note" && "eventId" in card && card.eventId) {
+        slotIdByEventId.set(card.eventId, card.slotId);
+      }
+    }
+  }
+
   const cards: NoteCard[] = [];
   for (const [, event] of events) {
     if (event.kind !== 1) continue;
@@ -68,6 +79,8 @@ function rebuildCards(
         event,
         ownerPubkey: pubkey,
         now,
+        // 既存カードの slotId を維持（安定化）。なければ eventId を使う。
+        slotId: slotIdByEventId.get(event.id) ?? event.id,
         repostInfo: repostInfo
           ? {
               reposterPubkey: repostInfo.reposterPubkey,
@@ -199,6 +212,7 @@ export const createFeedSlice: StateCreator<
                 nextRepostMeta,
                 state.pubkey,
                 now,
+                state.cards,
               ),
             };
           });
@@ -288,6 +302,7 @@ export const createFeedSlice: StateCreator<
             get().repostMeta,
             pubkey,
             now,
+            get().cards,
           );
 
           set({
@@ -473,6 +488,7 @@ export const createFeedSlice: StateCreator<
             nextRepostMeta,
             state.pubkey,
             now,
+            get().cards,
           ),
         };
       });
@@ -528,6 +544,7 @@ export const createFeedSlice: StateCreator<
                 nextRepostMeta,
                 state.pubkey,
                 now,
+                state.cards,
               ),
             };
           });
