@@ -218,6 +218,27 @@ export function ComposeCard({
     }
   }, [text, onClose, slotId]);
 
+  /** クリップボードから画像をペーストした場合にアップロードフローを開始 */
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            imageUpload.selectFile(file);
+            return;
+          }
+        }
+      }
+      // 画像が見つからなければテキストの通常ペーストとして処理
+    },
+    [imageUpload],
+  );
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -287,6 +308,7 @@ export function ComposeCard({
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
         onFocus={handleFocus}
         onBlur={handleBlur}
         placeholder="いまどうしてる？"
