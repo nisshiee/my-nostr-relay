@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import Image from "next/image";
 import useCanvasStore from "../../store";
-import { useProfile, useEvent, useActions } from "../../store/selectors";
+import { useProfile, useEvent } from "../../store/selectors";
 import { parseNostrUri } from "../../lib/nip19";
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ export function QuoteNode({ uri }: QuoteNodeProps) {
   const eventPubkey = event?.pubkey ?? "";
   const profileRaw = useCanvasStore(useProfile(eventPubkey));
   const profile = event ? profileRaw : undefined;
-  const { fetchQuoted } = useCanvasStore(useActions);
+  const fetchQuoted = useCanvasStore((s) => s.fetchQuoted);
 
   const [fetchState, setFetchState] = useState<"idle" | "loading" | "done" | "error">("idle");
 

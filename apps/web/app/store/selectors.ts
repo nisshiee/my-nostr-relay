@@ -188,8 +188,14 @@ export const useThreadGroups = (
 // ---------------------------------------------------------------------------
 
 /**
- * アクション群をまとめて返す。再レンダリングを起こさない。
- * @example const { connect, disconnect, publishEvent } = useCanvasStore(useActions);
+ * アクション群をまとめて返す。
+ *
+ * ⚠️ useShallow と組み合わせて使うこと。素の useCanvasStore(useActions) は
+ * 毎回新しいオブジェクトを返すため無限再レンダリングを引き起こす。
+ *
+ * @example
+ *   import { useShallow } from "zustand/react/shallow";
+ *   const actions = useCanvasStore(useShallow(useActions));
  */
 export const useActions = (state: CanvasStore) => ({
   connect: state.connect,

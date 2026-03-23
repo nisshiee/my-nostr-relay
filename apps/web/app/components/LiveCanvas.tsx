@@ -11,6 +11,7 @@ import {
 } from "../lib/constants";
 import { useDraftNotes } from "../hooks/useDraftNotes";
 import useCanvasStore from "../store";
+import { useShallow } from "zustand/react/shallow";
 import {
   useCards,
   usePhase,
@@ -68,7 +69,7 @@ export function LiveCanvas({ pubkey, npub, onLogout }: LiveCanvasProps) {
     holdCard,
     releaseCard,
     tick,
-  } = useCanvasStore(useActions);
+  } = useCanvasStore(useShallow(useActions));
 
   // publishedSlotMapRef は useDraftNotes 用に維持
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());

@@ -6,7 +6,7 @@ import type { NoteCard as NoteCardType } from "../lib/types";
 import { ContentRenderer } from "./content/ContentRenderer";
 import { ActionBar } from "./ActionBar";
 import useCanvasStore from "../store";
-import { useProfile, useReactionsFor, useActions } from "../store/selectors";
+import { useProfile, useReactionsFor } from "../store/selectors";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -48,7 +48,7 @@ export function NoteCard({ note, myPubkey, onHeightChange, onHold, onRelease }: 
   const reposterProfileRaw = useCanvasStore(useProfile(reposterPubkey));
   const reposterProfile = note.repostInfo ? reposterProfileRaw : undefined;
   const reactions = useCanvasStore(useReactionsFor(note.eventId));
-  const { sendReaction } = useCanvasStore(useActions);
+  const sendReaction = useCanvasStore((s) => s.sendReaction);
 
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);

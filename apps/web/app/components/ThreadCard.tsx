@@ -10,7 +10,7 @@ import type {
 import { ContentRenderer } from "./content/ContentRenderer";
 import { ActionBar } from "./ActionBar";
 import useCanvasStore from "../store";
-import { useProfiles, useAllReactions, useActions } from "../store/selectors";
+import { useProfiles, useAllReactions } from "../store/selectors";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -65,7 +65,7 @@ export function ThreadCard({
   // --- Store セレクター ---
   const profiles = useCanvasStore(useProfiles);
   const reactions = useCanvasStore(useAllReactions);
-  const { sendReaction } = useCanvasStore(useActions);
+  const sendReaction = useCanvasStore((s) => s.sendReaction);
 
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
