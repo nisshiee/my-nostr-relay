@@ -153,8 +153,8 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       onClick={handleCardClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
-        isActionBarOpen ? "z-10" : ""
+      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 pt-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
+        isActionBarOpen ? "z-10 pb-2" : "pb-4"
       }`}
     >
       {/* リポスト情報（カード最上部） */}
