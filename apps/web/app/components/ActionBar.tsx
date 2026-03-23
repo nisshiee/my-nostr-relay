@@ -19,6 +19,8 @@ interface ActionBarProps {
   isAlreadyReposted: boolean;
   /** 絵文字ピッカーから絵文字が選択されたときのハンドラ */
   onEmojiSelect?: (emoji: string) => void;
+  /** 絵文字ピッカーの開閉状態が変わったときのコールバック */
+  onPickerOpenChange?: (isOpen: boolean) => void;
 }
 
 export function ActionBar({
@@ -28,9 +30,16 @@ export function ActionBar({
   onRepost,
   isAlreadyReposted,
   onEmojiSelect,
+  onPickerOpenChange,
 }: ActionBarProps) {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+
+  /** ピッカーの開閉状態を更新し、親に通知する */
+  const updatePickerOpen = (open: boolean) => {
+    setIsPickerOpen(open);
+    onPickerOpenChange?.(open);
+  };
 
   return (
     <div
@@ -87,7 +96,7 @@ export function ActionBar({
               aria-label="絵文字ピッカーを開く"
               onClick={(e) => {
                 e.stopPropagation();
-                setIsPickerOpen((prev) => !prev);
+                updatePickerOpen(!isPickerOpen);
               }}
               className="p-1.5 rounded transition-colors text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300"
             >
@@ -95,7 +104,7 @@ export function ActionBar({
             </button>
             <EmojiPickerPopover
               isOpen={isPickerOpen}
-              onClose={() => setIsPickerOpen(false)}
+              onClose={() => updatePickerOpen(false)}
               onEmojiSelect={(emoji) => {
                 onEmojiSelect(emoji);
               }}

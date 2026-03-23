@@ -65,6 +65,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
   const cardRef = useRef<HTMLDivElement>(null);
   const [isActionBarOpen, setIsActionBarOpen] = useState(false);
   const isHoveringRef = useRef(false);
+  const isEmojiPickerOpenRef = useRef(false);
 
   // ResizeObserver でカードの高さを測定して親に通知
   useEffect(() => {
@@ -137,7 +138,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
   const handleMouseLeave = () => {
     isHoveringRef.current = false;
     leaveTimerRef.current = setTimeout(() => {
-      if (!isHoveringRef.current) {
+      if (!isHoveringRef.current && !isEmojiPickerOpenRef.current) {
         setIsActionBarOpen(false);
         onRelease?.();
       }
@@ -273,6 +274,9 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           }
         }}
         isAlreadyReposted={false}
+        onPickerOpenChange={(open) => {
+          isEmojiPickerOpenRef.current = open;
+        }}
         onEmojiSelect={async (emoji) => {
           try {
             if (onReaction) {

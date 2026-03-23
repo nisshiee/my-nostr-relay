@@ -148,6 +148,7 @@ export function ThreadCard({
   // ホバー外れ → 少し遅延してからアクションバーを閉じる
   const isHoveringRef = useRef(false);
   const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isEmojiPickerOpenRef = useRef(false);
 
   const handleMouseEnter = () => {
     isHoveringRef.current = true;
@@ -160,7 +161,7 @@ export function ThreadCard({
   const handleMouseLeave = () => {
     isHoveringRef.current = false;
     leaveTimerRef.current = setTimeout(() => {
-      if (!isHoveringRef.current) {
+      if (!isHoveringRef.current && !isEmojiPickerOpenRef.current) {
         setActiveNoteId(null);
         onRelease?.();
       }
@@ -212,6 +213,9 @@ export function ThreadCard({
             }}
             onHold={onHold}
             onRelease={onRelease}
+            onPickerOpenChange={(open) => {
+              isEmojiPickerOpenRef.current = open;
+            }}
             cache={cache}
           />
         );
@@ -244,6 +248,8 @@ interface ThreadNoteItemProps {
   onActionComplete?: () => void;
   onHold?: () => void;
   onRelease?: () => void;
+  /** 絵文字ピッカーの開閉状態が変わったときのコールバック */
+  onPickerOpenChange?: (isOpen: boolean) => void;
   cache?: EventCache;
 }
 
@@ -260,6 +266,7 @@ function ThreadNoteItem({
   onActionComplete,
   onHold,
   onRelease,
+  onPickerOpenChange,
   cache,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
@@ -395,6 +402,7 @@ function ThreadNoteItem({
             // スレッド内ノートのリポストは未実装（将来対応）
           }}
           isAlreadyReposted={false}
+          onPickerOpenChange={onPickerOpenChange}
           onEmojiSelect={async (emoji) => {
             try {
               if (onReaction) {
