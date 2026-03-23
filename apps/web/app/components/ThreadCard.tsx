@@ -316,6 +316,7 @@ function ThreadNoteItem({
             onRelease={onRelease}
             cache={cache}
             profiles={profiles}
+            tags={note.tags}
           />
         </div>
 

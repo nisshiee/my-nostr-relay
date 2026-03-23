@@ -195,7 +195,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       </div>
 
       {/* テキスト内容（ContentRendererでリッチコンテンツを描画） */}
-      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} cache={cache} profiles={profiles} />
+      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} cache={cache} profiles={profiles} tags={note.tags} />
 
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (

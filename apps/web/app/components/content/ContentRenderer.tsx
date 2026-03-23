@@ -5,6 +5,7 @@ import { TextNode } from "./TextNode";
 import { ImageNode } from "./ImageNode";
 import { LinkNode } from "./LinkNode";
 import { QuoteNode } from "./QuoteNode";
+import { EmojiNode } from "./EmojiNode";
 import type { ComponentType } from "react";
 import type { EventCache } from "../../hooks/useEventCache";
 import type { NostrProfile } from "../../lib/types";
@@ -19,6 +20,7 @@ const NODE_RENDERERS: Record<ContentNode["type"], ComponentType<any>> = {
   image: ImageNode,
   link: LinkNode,
   quote: QuoteNode,
+  emoji: EmojiNode,
 };
 
 interface ContentRendererProps {
@@ -29,11 +31,13 @@ interface ContentRendererProps {
   cache?: EventCache;
   /** pubkey → NostrProfile のマップ（引用ノード表示用） */
   profiles?: Map<string, NostrProfile>;
+  /** イベントタグ（カスタム絵文字等の解決に使用） */
+  tags?: string[][];
 }
 
 /** コンテンツをパースしてノードごとに適切なコンポーネントで描画する */
-export function ContentRenderer({ content, onHold, onRelease, cache, profiles }: ContentRendererProps) {
-  const nodes = parseContent(content);
+export function ContentRenderer({ content, onHold, onRelease, cache, profiles, tags }: ContentRendererProps) {
+  const nodes = parseContent(content, tags);
 
   // 画像URLリストを抽出
   const imageUrls = nodes
