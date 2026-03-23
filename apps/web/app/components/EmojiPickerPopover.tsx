@@ -23,23 +23,40 @@ export function EmojiPickerPopover({
   anchorRef,
 }: EmojiPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [position, setPosition] = useState<{ top: number; left: number; placement: "above" | "below" }>({ top: 0, left: 0, placement: "above" });
 
-  /** アンカー要素の位置からポップオーバーの位置を計算する */
+  /** アンカー要素の位置からポップオーバーの位置を計算する（上下自動切り替え） */
   const updatePosition = useCallback(() => {
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
     const pickerWidth = Math.min(320, window.innerWidth * 0.9);
-    // アンカーの上に表示。画面左端からはみ出さないように調整
+    const pickerHeight = 320; // maxHeight と同じ
+    const gap = 8; // アンカーとの間隔
+
+    // 左端の調整
     let left = rect.left;
     if (left + pickerWidth > window.innerWidth - 8) {
       left = window.innerWidth - pickerWidth - 8;
     }
     if (left < 8) left = 8;
-    setPosition({
-      top: rect.top + window.scrollY - 8, // mb-2 相当
-      left: left + window.scrollX,
-    });
+
+    // 上に十分なスペースがあれば上に、なければ下に表示
+    const spaceAbove = rect.top;
+    const placement = spaceAbove >= pickerHeight + gap ? "above" : "below";
+
+    if (placement === "above") {
+      setPosition({
+        top: rect.top + window.scrollY - gap,
+        left: left + window.scrollX,
+        placement,
+      });
+    } else {
+      setPosition({
+        top: rect.bottom + window.scrollY + gap,
+        left: left + window.scrollX,
+        placement,
+      });
+    }
   }, [anchorRef]);
 
   // ピッカー外クリックで閉じる
@@ -89,7 +106,7 @@ export function EmojiPickerPopover({
         maxHeight: "320px",
         top: position.top,
         left: position.left,
-        transform: "translateY(-100%)",
+        transform: position.placement === "above" ? "translateY(-100%)" : undefined,
         zIndex: 9999,
       }}
       onClick={(e) => e.stopPropagation()}
