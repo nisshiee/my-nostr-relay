@@ -82,13 +82,15 @@ export function EmojiPickerPopover({
   return createPortal(
     <div
       ref={popoverRef}
-      className="fixed z-50 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
+      className="fixed rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
+      data-emoji-picker-popover
       style={{
         width: "min(320px, 90vw)",
         maxHeight: "320px",
         top: position.top,
         left: position.left,
         transform: "translateY(-100%)",
+        zIndex: 9999,
       }}
       onClick={(e) => e.stopPropagation()}
     >
