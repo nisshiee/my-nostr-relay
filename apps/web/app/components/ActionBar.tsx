@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Repeat2, Plus, Smile } from "lucide-react";
 import { EmojiPickerPopover } from "./EmojiPickerPopover";
 
@@ -40,6 +40,13 @@ export function ActionBar({
     setIsPickerOpen(open);
     onPickerOpenChange?.(open);
   };
+
+  // アクションバーが閉じたらピッカーも閉じる
+  useEffect(() => {
+    if (!isOpen && isPickerOpen) {
+      updatePickerOpen(false);
+    }
+  }, [isOpen]);
 
   return (
     <div
