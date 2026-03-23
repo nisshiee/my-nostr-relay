@@ -267,6 +267,18 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           }
         }}
         isAlreadyReposted={false}
+        onEmojiSelect={async (emoji) => {
+          try {
+            if (onReaction) {
+              await onReaction(emoji);
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            setIsActionBarOpen(false);
+            onRelease?.();
+          }
+        }}
       />
     </div>
   );

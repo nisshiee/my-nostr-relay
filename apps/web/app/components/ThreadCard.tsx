@@ -200,6 +200,10 @@ export function ThreadCard({
             isLast={index === thread.notes.length - 1}
             showDivider={index > 0}
             onClick={(e) => handleNoteClick(note.eventId, e)}
+            onActionComplete={() => {
+              setActiveNoteId(null);
+              onRelease?.();
+            }}
             onHold={onHold}
             onRelease={onRelease}
             cache={cache}
@@ -230,6 +234,8 @@ interface ThreadNoteItemProps {
   isLast: boolean;
   showDivider: boolean;
   onClick: (e: React.MouseEvent) => void;
+  /** リアクション送信完了後のコールバック（アクションバーを閉じる等） */
+  onActionComplete?: () => void;
   onHold?: () => void;
   onRelease?: () => void;
   cache?: EventCache;
@@ -245,6 +251,7 @@ function ThreadNoteItem({
   isLast,
   showDivider,
   onClick,
+  onActionComplete,
   onHold,
   onRelease,
   cache,
@@ -371,6 +378,8 @@ function ThreadNoteItem({
               }
             } catch (e) {
               console.error(e);
+            } finally {
+              onActionComplete?.();
             }
           }}
           isAlreadyReacted={
@@ -380,6 +389,17 @@ function ThreadNoteItem({
             // スレッド内ノートのリポストは未実装（将来対応）
           }}
           isAlreadyReposted={false}
+          onEmojiSelect={async (emoji) => {
+            try {
+              if (onReaction) {
+                await onReaction(note.eventId, note.pubkey, emoji);
+              }
+            } catch (e) {
+              console.error(e);
+            } finally {
+              onActionComplete?.();
+            }
+          }}
         />
       </div>
     </>

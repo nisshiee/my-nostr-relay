@@ -1,6 +1,8 @@
 "use client";
 
-import { Repeat2, Plus } from "lucide-react";
+import { useState } from "react";
+import { Repeat2, Plus, Smile } from "lucide-react";
+import { EmojiPickerPopover } from "./EmojiPickerPopover";
 
 /** NoteCard用アクションバー（カードクリックで展開するリアクション操作UI） */
 
@@ -15,6 +17,8 @@ interface ActionBarProps {
   onRepost: () => void | Promise<void>;
   /** 自分が既にリポスト済みかどうか */
   isAlreadyReposted: boolean;
+  /** 絵文字ピッカーから絵文字が選択されたときのハンドラ */
+  onEmojiSelect?: (emoji: string) => void;
 }
 
 export function ActionBar({
@@ -23,7 +27,10 @@ export function ActionBar({
   isAlreadyReacted,
   onRepost,
   isAlreadyReposted,
+  onEmojiSelect,
 }: ActionBarProps) {
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
+
   return (
     <div
       role="toolbar"
@@ -70,7 +77,29 @@ export function ActionBar({
         >
           <Plus size={18} />
         </button>
-        {/* 将来的に他のアクションボタンをここに追加 */}
+        {/* 絵文字ピッカーボタン */}
+        {onEmojiSelect && (
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="絵文字ピッカーを開く"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsPickerOpen((prev) => !prev);
+              }}
+              className="p-1.5 rounded transition-colors text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              <Smile size={18} />
+            </button>
+            <EmojiPickerPopover
+              isOpen={isPickerOpen}
+              onClose={() => setIsPickerOpen(false)}
+              onEmojiSelect={(emoji) => {
+                onEmojiSelect(emoji);
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
