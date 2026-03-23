@@ -1,5 +1,7 @@
 "use client";
 
+import { Repeat2, Plus } from "lucide-react";
+
 /** NoteCard用アクションバー（カードクリックで展開するリアクション操作UI） */
 
 interface ActionBarProps {
@@ -33,7 +35,7 @@ export function ActionBar({
       }`}
     >
       <div className="flex items-center gap-1.5">
-        {/* 🔁 リポストボタン */}
+        {/* リポストボタン */}
         <button
           type="button"
           aria-label={isAlreadyReposted ? "既にリポスト済み" : "リポスト"}
@@ -42,15 +44,15 @@ export function ActionBar({
             e.stopPropagation();
             onRepost();
           }}
-          className={`text-lg leading-none p-1 rounded transition-colors ${
+          className={`p-1.5 rounded transition-colors ${
             isAlreadyReposted
               ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
-              : "text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300"
+              : "text-gray-400 dark:text-gray-500 cursor-pointer hover:text-green-500 dark:hover:text-green-400"
           }`}
         >
-          🔁
+          <Repeat2 size={18} />
         </button>
-        {/* + リアクション追加ボタン（アイコンのみ、ボーダーなし） */}
+        {/* リアクション追加ボタン */}
         <button
           type="button"
           aria-label={isAlreadyReacted ? "既にリアクション済み" : "リアクションを追加"}
@@ -60,13 +62,13 @@ export function ActionBar({
             e.stopPropagation();
             onThumbsUp();
           }}
-          className={`text-lg leading-none p-1 rounded transition-colors ${
+          className={`p-1.5 rounded transition-colors ${
             isAlreadyReacted
               ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
               : "text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300"
           }`}
         >
-          +
+          <Plus size={18} />
         </button>
         {/* 将来的に他のアクションボタンをここに追加 */}
       </div>
