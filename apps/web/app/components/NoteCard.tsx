@@ -42,6 +42,8 @@ interface NoteCardProps {
   myPubkey?: string;
   /** リアクション送信ハンドラ */
   onReaction?: (emoji: string, imageUrl?: string) => void;
+  /** リポスト送信ハンドラ */
+  onRepost?: () => void | Promise<void>;
   /** EventCache インスタンス（引用ノード表示用） */
   cache?: EventCache;
   /** pubkey → NostrProfile のマップ（引用ノード表示用） */
@@ -51,7 +53,7 @@ interface NoteCardProps {
   onRelease?: () => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, cache, profiles, onHeightChange, onHold, onRelease }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -252,6 +254,19 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           }
         }}
         isAlreadyReacted={!!(myPubkey && reactions?.get("+")?.pubkeys?.has(myPubkey))}
+        onRepost={async () => {
+          try {
+            if (onRepost) {
+              await onRepost();
+            }
+          } catch (e) {
+            console.error(e);
+          } finally {
+            setIsActionBarOpen(false);
+            onRelease?.();
+          }
+        }}
+        isAlreadyReposted={false}
       />
     </div>
   );

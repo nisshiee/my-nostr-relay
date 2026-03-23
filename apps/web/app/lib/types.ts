@@ -15,6 +15,8 @@ export interface NoteCard extends CardBase {
   type: "note";
   /** NostrイベントID */
   eventId: string;
+  /** Nostrイベント署名（リポスト時のcontent構築に必要） */
+  sig?: string;
   content: string;
   /** Nostrイベントのタグ配列 */
   tags: string[][];

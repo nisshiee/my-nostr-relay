@@ -29,6 +29,7 @@ export function createNoteCard(params: CreateNoteCardParams): NoteCard {
     type: "note",
     slotId: slotId ?? crypto.randomUUID(),
     eventId: event.id,
+    sig: event.sig,
     pubkey: event.pubkey,
     content: event.content,
     tags: event.tags,

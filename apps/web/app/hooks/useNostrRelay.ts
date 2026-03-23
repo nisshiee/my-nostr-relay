@@ -24,6 +24,7 @@ interface UseNostrRelayResult {
   cache: EventCache;
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
+  sendRepost: (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => Promise<void>;
 }
 
 /**
@@ -118,5 +119,34 @@ export function useNostrRelay(
     [publishEvent, addReaction],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction };
+  /** NIP-18準拠のリポストイベントを構築・署名・送信する */
+  const sendRepost = useCallback(
+    async (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => {
+      // NIP-07拡張の存在チェック（sendReactionと同じパターン）
+      const nostrExt = (window as unknown as { nostr?: { signEvent: (event: Record<string, unknown>) => Promise<SignedNostrEvent> } }).nostr;
+      if (!nostrExt) {
+        throw new Error("NIP-07拡張（window.nostr）が見つかりません");
+      }
+
+      // NIP-18準拠のkind:6リポストイベントを構築
+      const unsignedEvent = {
+        kind: 6,
+        content: JSON.stringify(originalEvent), // 元イベントのJSON文字列
+        tags: [
+          ["e", targetEventId, relayUrls[0] ?? ""],
+          ["p", targetPubkey],
+        ],
+        created_at: Math.floor(Date.now() / 1000),
+      };
+
+      // NIP-07拡張で署名
+      const signedEvent = await nostrExt.signEvent(unsignedEvent);
+
+      // リレーに送信
+      await publishEvent(signedEvent as unknown as NostrEvent);
+    },
+    [publishEvent, relayUrls],
+  );
+
+  return { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction, sendRepost };
 }

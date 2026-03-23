@@ -9,12 +9,18 @@ interface ActionBarProps {
   onThumbsUp: () => void | Promise<void>;
   /** 自分が既に「👍」リアクション済みかどうか */
   isAlreadyReacted: boolean;
+  /** リポストボタンクリック時のハンドラ */
+  onRepost: () => void | Promise<void>;
+  /** 自分が既にリポスト済みかどうか */
+  isAlreadyReposted: boolean;
 }
 
 export function ActionBar({
   isOpen,
   onThumbsUp,
   isAlreadyReacted,
+  onRepost,
+  isAlreadyReposted,
 }: ActionBarProps) {
   return (
     <div
@@ -27,6 +33,23 @@ export function ActionBar({
       }`}
     >
       <div className="flex items-center gap-1.5">
+        {/* 🔁 リポストボタン */}
+        <button
+          type="button"
+          aria-label={isAlreadyReposted ? "既にリポスト済み" : "リポスト"}
+          disabled={isAlreadyReposted}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRepost();
+          }}
+          className={`text-lg leading-none p-1 rounded transition-colors ${
+            isAlreadyReposted
+              ? "text-gray-300 dark:text-gray-600 cursor-not-allowed"
+              : "text-gray-400 dark:text-gray-500 cursor-pointer hover:text-gray-600 dark:hover:text-gray-300"
+          }`}
+        >
+          🔁
+        </button>
         {/* + リアクション追加ボタン（アイコンのみ、ボーダーなし） */}
         <button
           type="button"
