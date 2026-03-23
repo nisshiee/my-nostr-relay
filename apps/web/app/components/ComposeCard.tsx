@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import Image from "next/image";
 import type { NoteCard, NostrProfile } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
+import { useImageUpload } from "../hooks/useImageUpload";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -45,6 +46,68 @@ export function ComposeCard({
   const [error, setError] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const imageUpload = useImageUpload();
+
+  // プレビューURL生成（メモ化して不要な再生成を防止）
+  const previewUrl = useMemo(
+    () =>
+      imageUpload.state.file
+        ? URL.createObjectURL(imageUpload.state.file)
+        : null,
+    [imageUpload.state.file],
+  );
+
+  // プレビューURLのクリーンアップ
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  // アップロード完了時にURLをテキストエリアに挿入
+  useEffect(() => {
+    if (imageUpload.state.uploadedUrl) {
+      const url = imageUpload.state.uploadedUrl;
+      setText((prev) => {
+        const separator = prev.length > 0 && !prev.endsWith("\n") ? "\n" : "";
+        return `${prev}${separator}${url}`;
+      });
+      imageUpload.reset();
+      onInput(slotId);
+    }
+  }, [imageUpload.state.uploadedUrl, imageUpload, onInput, slotId]);
+
+  /** ファイル選択ダイアログを開く */
+  const handleFileButtonClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  /** ファイル選択時のハンドラ */
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        imageUpload.selectFile(file);
+      }
+      // 同じファイルを再選択できるようにリセット
+      e.target.value = "";
+    },
+    [imageUpload],
+  );
+
+  /** 画像アップロード実行 */
+  const handleImageUpload = useCallback(async () => {
+    await imageUpload.uploadImage();
+  }, [imageUpload]);
+
+  /** 選択した画像をクリア */
+  const handleImageClear = useCallback(() => {
+    imageUpload.clearImage();
+  }, [imageUpload]);
 
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(pubkey);
@@ -232,16 +295,117 @@ export function ComposeCard({
         disabled={publishing}
       />
 
+      {/* 画像アップロードセクション */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/gif,image/webp"
+        onChange={handleFileChange}
+        className="hidden"
+        disabled={publishing}
+      />
+
+      {/* 画像プレビュー */}
+      {previewUrl && imageUpload.state.file && (
+        <div className="mt-2 relative inline-block">
+          <img
+            src={previewUrl}
+            alt="プレビュー"
+            className="max-h-40 rounded-lg border border-gray-200 dark:border-gray-600 object-contain"
+          />
+          {!imageUpload.state.uploading && (
+            <button
+              type="button"
+              onClick={handleImageClear}
+              className="absolute -top-2 -right-2 rounded-full bg-gray-700 dark:bg-gray-600 text-white w-5 h-5 flex items-center justify-center text-xs hover:bg-gray-800 dark:hover:bg-gray-500 transition-colors"
+              title="画像を削除"
+            >
+              ×
+            </button>
+          )}
+          {imageUpload.state.uploading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-lg">
+              <svg
+                className="animate-spin h-6 w-6 text-white"
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <circle
+                  className="opacity-25"
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  strokeWidth="4"
+                />
+                <path
+                  className="opacity-75"
+                  fill="currentColor"
+                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+                />
+              </svg>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 画像アップロードエラー */}
+      {imageUpload.state.error && (
+        <p className="mt-1 text-xs text-red-500 dark:text-red-400">
+          {imageUpload.state.error}
+        </p>
+      )}
+
       {/* エラーメッセージ */}
       {error && (
         <p className="mt-1 text-xs text-red-500 dark:text-red-400">{error}</p>
       )}
 
-      {/* フッター: 文字数 + Publishボタン */}
+      {/* フッター: 画像ボタン + 文字数 + Publishボタン */}
       <div className="flex items-center justify-between mt-2">
-        <span className="text-xs text-gray-400 dark:text-gray-500">
-          {text.length > 0 ? `${text.length} 文字` : ""}
-        </span>
+        <div className="flex items-center gap-2">
+          {/* 画像添付ボタン */}
+          <button
+            type="button"
+            onClick={handleFileButtonClick}
+            disabled={publishing || imageUpload.state.uploading}
+            className="text-gray-400 hover:text-purple-500 dark:text-gray-500 dark:hover:text-purple-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="画像を添付"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="h-5 w-5"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
+              <path
+                fillRule="evenodd"
+                d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+          {/* アップロードボタン（ファイル選択済み & 未アップロード時） */}
+          {imageUpload.state.file &&
+            !imageUpload.state.uploading &&
+            !imageUpload.state.uploadedUrl && (
+              <button
+                type="button"
+                onClick={() => void handleImageUpload()}
+                className="rounded-lg bg-purple-400 px-3 py-1 text-xs font-medium text-white hover:bg-purple-500 transition-colors"
+              >
+                アップロード
+              </button>
+            )}
+          {imageUpload.state.uploading && (
+            <span className="text-xs text-gray-400 dark:text-gray-500">
+              アップロード中…
+            </span>
+          )}
+          <span className="text-xs text-gray-400 dark:text-gray-500">
+            {text.length > 0 ? `${text.length} 文字` : ""}
+          </span>
+        </div>
         <button
           type="button"
           onClick={() => void handlePublish()}
