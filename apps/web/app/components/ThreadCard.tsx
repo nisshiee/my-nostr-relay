@@ -96,12 +96,18 @@ export function ThreadCard({
   }, [thread.slotId, onHeightChange]);
 
   // Click outside でアクションバーを閉じる
+  // ※ 絵文字ピッカー（Portal描画）内のクリックはカード内扱いにする
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node;
       if (
         cardRef.current &&
-        !cardRef.current.contains(event.target as Node)
+        !cardRef.current.contains(target)
       ) {
+        // 絵文字ピッカーPopover内のクリックは無視する
+        const popover = document.querySelector("[data-emoji-picker-popover]");
+        if (popover && popover.contains(target)) return;
+
         setActiveNoteId(null);
         onRelease?.();
       }
