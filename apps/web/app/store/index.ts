@@ -81,6 +81,7 @@ useCanvasStore.subscribe((state) => {
   // layout が空 → シナリオ A: 初期配置
   if (state.layout.size === 0) {
     const result = buildInitialLayout(state.cards, state.columnCount, state.heights);
+    console.log(`[layout] シナリオA: 初期配置 cards=${state.cards.length} layout=${result.grid.size}`);
     useCanvasStore.setState({
       layout: result.grid as Map<string, Placement>,
       delays: new Map(),
@@ -95,6 +96,7 @@ useCanvasStore.subscribe((state) => {
 
   if (newCards.length > 0) {
     // シナリオ B: 新規カード挿入（差分）
+    console.log(`[layout] シナリオB: 新規${newCards.length}枚挿入 既存layout=${state.layout.size} cards=${state.cards.length}`);
     let grid = state.layout;
     const mergedChainOrder = new Map<string, number>();
 
@@ -118,9 +120,11 @@ useCanvasStore.subscribe((state) => {
       delays.set(id, order * DOMINO_DELAY);
     }
 
+    console.log(`[layout] シナリオB完了: cleanGrid=${cleanGrid.size} cards=${currentCardIds.size} 差分=${currentCardIds.size - cleanGrid.size}`);
     useCanvasStore.setState({ layout: cleanGrid, delays });
   } else {
     // シナリオ C: カード削除のみ → reflow（列割り当て維持）
+    console.log(`[layout] シナリオC: reflow cards=${state.cards.length}`);
     const result = reflow(state.layout, state.cards, state.columnCount, state.heights);
 
     // 削除済みカードを grid から除去
