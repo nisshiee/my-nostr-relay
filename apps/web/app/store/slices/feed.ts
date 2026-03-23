@@ -19,7 +19,7 @@ import type { SubCloser } from "nostr-tools/abstract-pool";
 import type { StateCreator } from "zustand";
 import type { CanvasStore, Unsubscribe, RepostMeta } from "../types";
 import type { NoteCard } from "../../lib/types";
-import { createNoteCard, resolveSlotId } from "../pure/buildCards";
+import { createNoteCard } from "../pure/buildCards";
 import { sortByScore } from "../pure/scoring";
 import {
   INITIAL_NOTES_LIMIT,
@@ -418,7 +418,7 @@ export const createFeedSlice: StateCreator<
    * 5. 関連プロフィールを ensureProfiles
    */
   resolveReposts: async (repostEvents: Event[]) => {
-    const { _pool, relayUrls, pubkey, followPubkeys } = get();
+    const { _pool, relayUrls, followPubkeys } = get();
     if (!_pool || relayUrls.length === 0) return;
 
     // originalEventId → 最新リポストイベント のマップ

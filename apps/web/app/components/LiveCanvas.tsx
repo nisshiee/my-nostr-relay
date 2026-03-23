@@ -16,7 +16,6 @@ import {
   useCards,
   usePhase,
   useProfiles,
-  useAllReactions,
   useActions,
   useLayout,
   useColumnCount,
@@ -52,7 +51,6 @@ export function LiveCanvas({ pubkey, npub, onLogout }: LiveCanvasProps) {
   const cards = useCanvasStore(useCards);
   const phase = useCanvasStore(usePhase);
   const profiles = useCanvasStore(useProfiles);
-  const reactions = useCanvasStore(useAllReactions);
   const layout = useCanvasStore(useLayout);
   const columnCount = useCanvasStore(useColumnCount);
   const holdSet = useCanvasStore(useHoldSet);
@@ -63,7 +61,6 @@ export function LiveCanvas({ pubkey, npub, onLogout }: LiveCanvasProps) {
     connect,
     disconnect,
     publishEvent,
-    sendReaction,
     setHeight,
     setColumnCount: storeSetColumnCount,
     holdCard,

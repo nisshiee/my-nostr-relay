@@ -80,7 +80,7 @@ export function resolveReplyAuthors(notes: ThreadNote[]): ThreadNote[] {
  */
 export function buildThreadCard(
   notes: ThreadNote[],
-  _ownerPubkey: string,
+  _ownerPubkey: string, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): ThreadCard {
   // created_at でソート
   const sorted = [...notes].sort((a, b) => a.created_at - b.created_at);

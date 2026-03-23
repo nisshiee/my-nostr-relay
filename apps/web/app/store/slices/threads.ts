@@ -22,8 +22,8 @@ import {
   eventToThreadNote,
   resolveReplyAuthors,
   collectMissingEventIds,
-  findOverlappingThreads,
-  mergeThreadCards,
+
+
   MAX_THREAD_DEPTH,
 } from "../pure/buildThreads";
 import { calcFreshnessScore } from "../pure/scoring";

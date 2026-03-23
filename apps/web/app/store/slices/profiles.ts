@@ -5,7 +5,6 @@
  * hooks/useNostrProfiles.ts からの移植。
  */
 
-import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import type { StateCreator } from "zustand";
 import type { CanvasStore } from "../types";

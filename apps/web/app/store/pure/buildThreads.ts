@@ -93,7 +93,7 @@ export function resolveReplyAuthors(notes: ThreadNote[]): ThreadNote[] {
  */
 export function buildThreadCard(
   notes: ThreadNote[],
-  _ownerPubkey: string,
+  _ownerPubkey: string, // eslint-disable-line @typescript-eslint/no-unused-vars
 ): ThreadCard {
   const sorted = [...notes].sort((a, b) => a.created_at - b.created_at);
   const resolved = resolveReplyAuthors(sorted);

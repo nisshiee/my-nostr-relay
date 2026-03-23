@@ -14,12 +14,12 @@ import type { Card } from "../../lib/types";
 import type { Placement } from "../../lib/layoutTypes";
 import {
   buildInitialLayout,
-  insertCard,
+
   reflow,
 } from "../pure/layoutEngine";
 import { calcFreshnessScore, sortByScore } from "../pure/scoring";
 import {
-  DEFAULT_CARD_HEIGHT,
+
   DOMINO_DELAY,
   FADEOUT_THRESHOLD,
   MAX_NOTES,

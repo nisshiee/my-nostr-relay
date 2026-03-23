@@ -88,17 +88,27 @@ export function QuoteNode({ uri }: QuoteNodeProps) {
   const profile = event ? profileRaw : undefined;
   const fetchQuoted = useCanvasStore((s) => s.fetchQuoted);
 
-  const [fetchState, setFetchState] = useState<"idle" | "loading" | "done" | "error">("idle");
+  // フェッチ状態: "idle" | "loading" | "done" | "error"
+  // effect 内で同期的に setState("loading") を呼ぶことを避けるため、
+  // fetchQuoted の Promise チェーン内のコールバックでのみ setState する。
+  const [fetchState, setFetchState] = useState<"idle" | "loading" | "done" | "error">(
+    // 初期値: decoded があり event がなければ即 loading 開始予定
+    decoded && !event ? "loading" : "idle",
+  );
 
-  // フェッチ実行
   useEffect(() => {
     if (!decoded || event) return; // 既にキャッシュにあればスキップ
-    if (fetchState !== "idle") return;
+    if (fetchState !== "loading") return; // idle / done / error ならスキップ
 
-    setFetchState("loading");
+    let cancelled = false;
+
     fetchQuoted(decoded.eventId, decoded.relayHints).then((result) => {
-      setFetchState(result ? "done" : "error");
+      if (!cancelled) {
+        setFetchState(result ? "done" : "error");
+      }
     });
+
+    return () => { cancelled = true; };
   }, [decoded, event, fetchState, fetchQuoted]);
 
   const linkUrl = njumpUrl(uri);
