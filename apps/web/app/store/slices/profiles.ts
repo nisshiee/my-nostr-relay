@@ -6,6 +6,7 @@
  */
 
 import type { Filter } from "nostr-tools/filter";
+import type { SubCloser } from "nostr-tools/abstract-pool";
 import type { StateCreator } from "zustand";
 import type { CanvasStore } from "../types";
 import type { NostrProfile } from "../../lib/types";
@@ -21,6 +22,7 @@ export interface ProfilesSlice {
   _inflight: Set<string>;
 
   // actions
+  subscribeProfiles: () => import("../types").Unsubscribe;
   ensureProfiles: (pubkeys: string[]) => Promise<void>;
 }
 
@@ -39,6 +41,52 @@ export const createProfilesSlice: StateCreator<
   _inflight: new Set(),
 
   // --- actions ---
+
+  /**
+   * フォロー中ユーザーの kind:0 を subscribe する。
+   * connect() から呼ばれる。受信したプロフィールは profiles Map に upsert される。
+   *
+   * @returns 購読解除関数
+   */
+  subscribeProfiles: () => {
+    const { _pool, relayUrls, followPubkeys } = get();
+    if (!_pool || relayUrls.length === 0 || followPubkeys.length === 0) {
+      return () => {};
+    }
+
+    let cancelled = false;
+
+    const profileSub: SubCloser = _pool.subscribeMany(
+      relayUrls,
+      { kinds: [0], authors: followPubkeys } as Filter,
+      {
+        onevent(event) {
+          if (cancelled) return;
+          try {
+            const data = JSON.parse(event.content) as NostrProfile;
+            const current = get().profiles;
+            const next = new Map(current);
+            next.set(event.pubkey, data);
+            set({ profiles: next });
+          } catch {
+            // JSON パース失敗は無視
+          }
+        },
+        oneose() {
+          // プロフィール初期ロード完了
+        },
+      },
+    );
+
+    return () => {
+      cancelled = true;
+      try {
+        profileSub.close();
+      } catch {
+        // already closed
+      }
+    };
+  },
 
   /**
    * 不足しているプロフィールを一括取得する。

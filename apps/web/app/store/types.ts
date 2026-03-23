@@ -105,6 +105,8 @@ export interface CanvasStoreActions {
   resolveReposts: (repostEvents: Event[]) => Promise<void>;
   /** スレッド祖先ノートを取得する */
   fetchAncestors: (eventIds: string[]) => Promise<void>;
+  /** フォロー中ユーザーの kind:0 を subscribe する */
+  subscribeProfiles: () => Unsubscribe;
   /** 不足しているプロフィールを一括取得する */
   ensureProfiles: (pubkeys: string[]) => Promise<void>;
   /** 引用先イベント（+ プロフィール）を取得する */

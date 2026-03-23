@@ -135,6 +135,11 @@ export const createConnectionSlice: StateCreator<
         followPubkeys: resolvedFollowPubkeys,
         phase: "loading",
       });
+
+      // --- 連鎖: subscribeFeed → (onEose) → subscribeReactions ---
+      // プロフィール購読も開始
+      get().subscribeProfiles();
+      get().subscribeFeed();
     } catch {
       set({ phase: "error" });
     }
