@@ -57,7 +57,9 @@ export function useQuotedEvent(
   const eventId = decoded?.eventId ?? null;
   const cachedEvent = eventId ? cache.getEvent(eventId) ?? null : null;
 
-  const [loading, setLoading] = useState(false);
+  // loading 状態: decoded があり cachedEvent がなければ初期値 true（フェッチ開始予定）
+  const needsFetch = !!decoded && !cachedEvent;
+  const [loading, setLoading] = useState(needsFetch);
   const [error, setError] = useState<string | null>(null);
 
   // URI が切り替わったときに前回のフェッチをキャンセルするための ref
@@ -65,13 +67,10 @@ export function useQuotedEvent(
 
   useEffect(() => {
     if (!decoded || cachedEvent) {
-      setLoading(false);
       return;
     }
 
     const fetchId = ++cancelRef.current;
-    setLoading(true);
-    setError(null);
 
     cache
       .fetchEvents(

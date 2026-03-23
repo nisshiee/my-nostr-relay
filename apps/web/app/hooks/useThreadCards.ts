@@ -115,12 +115,16 @@ export function useThreadCards(
   const [isProcessing, setIsProcessing] = useState(true);
   const initialProcessingDoneRef = useRef(false);
 
-  // スレッドに含まれる全eventIdの集合（フィルタリング用）
-  const threadEventIdsRef = useRef<Set<string>>(new Set());
+  // スレッドに含まれる全eventIdの集合（filteredNotes計算用）
+  const [threadEventIds, setThreadEventIds] = useState<Set<string>>(new Set());
   // 処理済みリプライeventId（再処理防止）
   const processedReplyIdsRef = useRef<Set<string>>(new Set());
 
-  /** 祖先イベントを再帰的にフェッチ */
+  /** 祖先イベントを再帰的にフェッチ（ref 経由で再帰呼び出し） */
+  const fetchThreadAncestorsRef = useRef<(ids: string[], depth?: number) => Promise<Event[]>>(
+    async () => [],
+  );
+
   const fetchThreadAncestors = useCallback(
     async (
       eventIdsToFetch: string[],
@@ -151,7 +155,7 @@ export function useThreadCards(
         // さらに遡る必要のある未知の参照を収集
         const nextMissing = collectMissingEventIds(knownIds, events);
         if (nextMissing.length > 0) {
-          const deeper = await fetchThreadAncestors(nextMissing, depth + 1);
+          const deeper = await fetchThreadAncestorsRef.current(nextMissing, depth + 1);
           return [...events, ...deeper];
         }
 
@@ -164,13 +168,19 @@ export function useThreadCards(
     [cache],
   );
 
+  // ref を最新に同期（再帰呼び出し用）
+  useEffect(() => {
+    fetchThreadAncestorsRef.current = fetchThreadAncestors;
+  }, [fetchThreadAncestors]);
+
   // notes変更時のスレッド処理（デバウンス付き）
   useEffect(() => {
     if (notes.length === 0 || relayUrls.length === 0) {
       // EOSE到達後（connected）にnotesが空 → 初回処理完了
       if (status === "connected" && !initialProcessingDoneRef.current) {
         initialProcessingDoneRef.current = true;
-        setIsProcessing(false);
+        // queueMicrotask で同期 setState を回避
+        queueMicrotask(() => setIsProcessing(false));
       }
       return;
     }
@@ -414,7 +424,7 @@ export function useThreadCards(
               allThreadEventIds.add(eid);
             }
           }
-          threadEventIdsRef.current = allThreadEventIds;
+          setThreadEventIds(allThreadEventIds);
 
           return updatedCards;
         });
@@ -450,8 +460,8 @@ export function useThreadCards(
   // filteredNotes: スレッドに含まれないノートだけを返す
   const filteredNotes = useMemo(() => {
     if (threadCards.length === 0) return notes;
-    return notes.filter((note) => !threadEventIdsRef.current.has(note.eventId));
-  }, [notes, threadCards]);
+    return notes.filter((note) => !threadEventIds.has(note.eventId));
+  }, [notes, threadCards, threadEventIds]);
 
   return { filteredNotes, threadCards, isProcessing };
 }
