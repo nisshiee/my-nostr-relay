@@ -5,8 +5,9 @@ import { TextNode } from "./TextNode";
 import { ImageNode } from "./ImageNode";
 import { LinkNode } from "./LinkNode";
 import { QuoteNode } from "./QuoteNode";
-import type { SimplePool } from "nostr-tools/pool";
 import type { ComponentType } from "react";
+import type { EventCache } from "../../hooks/useEventCache";
+import type { NostrProfile } from "../../lib/types";
 
 /**
  * ノードタイプ → レンダラーコンポーネントのマッピング
@@ -24,14 +25,14 @@ interface ContentRendererProps {
   content: string;
   onHold?: () => void;
   onRelease?: () => void;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool?: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls?: string[];
+  /** EventCache インスタンス（引用ノード表示用） */
+  cache?: EventCache;
+  /** pubkey → NostrProfile のマップ（引用ノード表示用） */
+  profiles?: Map<string, NostrProfile>;
 }
 
 /** コンテンツをパースしてノードごとに適切なコンポーネントで描画する */
-export function ContentRenderer({ content, onHold, onRelease, pool, relayUrls }: ContentRendererProps) {
+export function ContentRenderer({ content, onHold, onRelease, cache, profiles }: ContentRendererProps) {
   const nodes = parseContent(content);
 
   // 画像URLリストを抽出
@@ -55,7 +56,7 @@ export function ContentRenderer({ content, onHold, onRelease, pool, relayUrls }:
           node.type === "image"
             ? { imageUrls, imageIndex: imageIndexMap[index], onHold, onRelease }
             : node.type === "quote"
-              ? { pool: pool ?? null, relayUrls: relayUrls ?? [] }
+              ? { cache, profiles: profiles ?? new Map<string, NostrProfile>() }
               : {};
         return <Renderer key={index} {...props} {...extraProps} />;
       })}

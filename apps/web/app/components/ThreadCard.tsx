@@ -8,8 +8,8 @@ import type {
   NostrProfile,
   Reactions,
 } from "../lib/types";
-import type { SimplePool } from "nostr-tools/pool";
 import { ContentRenderer } from "./content/ContentRenderer";
+import type { EventCache } from "../hooks/useEventCache";
 import { ActionBar } from "./ActionBar";
 
 /** npubの省略表示を生成 */
@@ -63,10 +63,8 @@ interface ThreadCardProps {
   onHeightChange?: (slotId: string, height: number) => void;
   onHold?: () => void;
   onRelease?: () => void;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool?: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls?: string[];
+  /** EventCache インスタンス（引用ノード表示用） */
+  cache?: EventCache;
 }
 
 export function ThreadCard({
@@ -78,8 +76,7 @@ export function ThreadCard({
   onHeightChange,
   onHold,
   onRelease,
-  pool,
-  relayUrls,
+  cache,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -205,8 +202,7 @@ export function ThreadCard({
             onClick={(e) => handleNoteClick(note.eventId, e)}
             onHold={onHold}
             onRelease={onRelease}
-            pool={pool}
-            relayUrls={relayUrls}
+            cache={cache}
           />
         );
       })}
@@ -236,8 +232,7 @@ interface ThreadNoteItemProps {
   onClick: (e: React.MouseEvent) => void;
   onHold?: () => void;
   onRelease?: () => void;
-  pool?: SimplePool | null;
-  relayUrls?: string[];
+  cache?: EventCache;
 }
 
 function ThreadNoteItem({
@@ -252,8 +247,7 @@ function ThreadNoteItem({
   onClick,
   onHold,
   onRelease,
-  pool,
-  relayUrls,
+  cache,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
   const displayName =
@@ -320,8 +314,8 @@ function ThreadNoteItem({
             content={note.content}
             onHold={onHold}
             onRelease={onRelease}
-            pool={pool}
-            relayUrls={relayUrls}
+            cache={cache}
+            profiles={profiles}
           />
         </div>
 

@@ -7,6 +7,8 @@ import type { ConnectionStatus } from "./useNostrConnection";
 import { useNostrProfiles } from "./useNostrProfiles";
 import { useNostrNotes } from "./useNostrNotes";
 import { useNostrReactions } from "./useNostrReactions";
+import { useEventCache } from "./useEventCache";
+import type { EventCache } from "./useEventCache";
 import { SimplePool } from "nostr-tools/pool";
 
 /** NIP-07拡張(window.nostr)の署名済みイベント型 */
@@ -19,6 +21,7 @@ interface UseNostrRelayResult {
   status: ConnectionStatus;
   relayUrls: string[];
   pool: SimplePool | null;
+  cache: EventCache;
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
 }
@@ -37,6 +40,7 @@ export function useNostrRelay(
 ): UseNostrRelayResult {
   const { pool, relayUrls, followPubkeys, status, setStatus } = useNostrConnection(pubkey);
   const { profiles, upsertProfile, fetchProfiles, profilesRef } = useNostrProfiles(pool, relayUrls, followPubkeys);
+  const cache = useEventCache(pool, relayUrls, fetchProfiles);
 
   // initialEventIds を管理するstate
   const [initialEventIds, setInitialEventIds] = useState<string[]>([]);
@@ -47,6 +51,7 @@ export function useNostrRelay(
   const { notes, notesRef, newNotesMinCreatedAtRef } = useNostrNotes(
     pool, relayUrls, followPubkeys, pubkey, publishedSlotMapRef,
     setStatus, profilesRef, fetchProfiles, onInitialNotesReady,
+    cache,
   );
 
   const { reactions, addReaction } = useNostrReactions(
@@ -113,5 +118,5 @@ export function useNostrRelay(
     [publishEvent, addReaction],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, pool, publishEvent, sendReaction };
+  return { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction };
 }

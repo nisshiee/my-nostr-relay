@@ -1,10 +1,8 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
-import type { Filter } from "nostr-tools/filter";
 import { parseNostrUri } from "../lib/nip19";
 import type { NostrProfile } from "../lib/types";
-import { BOOTSTRAP_EOSE_TIMEOUT } from "../lib/constants";
+import type { EventCache } from "./useEventCache";
 
 // ---------------------------------------------------------------------------
 // 型定義
@@ -17,108 +15,10 @@ export interface UseQuotedEventResult {
   error: string | null;
 }
 
-/** キャッシュエントリ */
-interface CacheEntry {
-  event: Event;
-  profile: NostrProfile | null;
-}
-
-// ---------------------------------------------------------------------------
-// モジュールレベルのメモリキャッシュ（eventId → CacheEntry）
-// ---------------------------------------------------------------------------
-
-const cache = new Map<string, CacheEntry>();
-
-/** 進行中のフェッチを重複排除するための Promise キャッシュ */
-const inflight = new Map<string, Promise<CacheEntry | null>>();
-
 // ---------------------------------------------------------------------------
 // 内部ヘルパー
 // ---------------------------------------------------------------------------
 
-/**
- * eventId でイベントを取得し、そのイベントの pubkey でプロフィールもフェッチする。
- * 結果をキャッシュに保存して返す。
- */
-async function fetchEventAndProfile(
-  pool: SimplePool,
-  relayUrls: string[],
-  eventId: string,
-  relayHints: string[],
-): Promise<CacheEntry | null> {
-  // キャッシュヒット
-  const cached = cache.get(eventId);
-  if (cached) return cached;
-
-  // 重複フェッチ排除
-  const existing = inflight.get(eventId);
-  if (existing) return existing;
-
-  const promise = (async (): Promise<CacheEntry | null> => {
-    try {
-      // リレーヒントがあれば優先的に使い、通常のリレーも含める
-      const targetRelays = [...new Set([...relayHints, ...relayUrls])];
-
-      // イベントをフェッチ
-      const events = await pool.querySync(
-        targetRelays,
-        { ids: [eventId] } as Filter,
-        { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
-      );
-
-      if (events.length === 0) return null;
-
-      const event = events[0];
-
-      // プロフィールをフェッチ
-      let profile: NostrProfile | null = null;
-      try {
-        const profileEvents = await pool.querySync(
-          targetRelays,
-          { kinds: [0], authors: [event.pubkey] } as Filter,
-          { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
-        );
-        if (profileEvents.length > 0) {
-          // 最新のプロフィールを使用
-          const latestProfile = profileEvents.reduce((a, b) =>
-            a.created_at > b.created_at ? a : b,
-          );
-          profile = JSON.parse(latestProfile.content) as NostrProfile;
-        }
-      } catch {
-        // プロフィール取得失敗は無視（event は返す）
-      }
-
-      const entry: CacheEntry = { event, profile };
-      cache.set(eventId, entry);
-      return entry;
-    } catch {
-      return null;
-    } finally {
-      inflight.delete(eventId);
-    }
-  })();
-
-  inflight.set(eventId, promise);
-  return promise;
-}
-
-// ---------------------------------------------------------------------------
-// Hook
-// ---------------------------------------------------------------------------
-
-/**
- * Nostr URI（nostr:nevent1... / nostr:note1...）を受け取り、
- * 引用先イベントとそのプロフィールをフェッチするhook。
- *
- * - モジュールレベルのメモリキャッシュでパフォーマンス最適化
- * - 同一 eventId の重複フェッチを排除
- * - useNostrRelay の pool / relayUrls を活用
- *
- * @param nostrUri  nostr: URI 文字列（例: "nostr:nevent1..."）。null/undefined で無効化
- * @param pool      SimplePool インスタンス（useNostrRelay から取得）
- * @param relayUrls 接続先リレーURL配列（useNostrRelay から取得）
- */
 /** URI をデコードして eventId / relayHints を抽出する（純粋関数） */
 function decodeUri(nostrUri: string | null | undefined): {
   eventId: string;
@@ -135,64 +35,79 @@ function decodeUri(nostrUri: string | null | undefined): {
   return { eventId, relayHints };
 }
 
+// ---------------------------------------------------------------------------
+// Hook
+// ---------------------------------------------------------------------------
+
+/**
+ * Nostr URI（nostr:nevent1... / nostr:note1...）を受け取り、
+ * 引用先イベントとそのプロフィールを EventCache 経由でフェッチするhook。
+ *
+ * @param nostrUri  nostr: URI 文字列（例: "nostr:nevent1..."）。null/undefined で無効化
+ * @param cache     EventCache インスタンス（useEventCache から取得）
+ * @param profiles  pubkey → NostrProfile のマップ（useNostrProfiles から取得）
+ */
 export function useQuotedEvent(
   nostrUri: string | null | undefined,
-  pool: SimplePool | null,
-  relayUrls: string[],
+  cache: EventCache,
+  profiles: Map<string, NostrProfile>,
 ): UseQuotedEventResult {
-  // URI のデコードとキャッシュ確認はレンダリング中に行う（副作用なし）
   const decoded = useMemo(() => decodeUri(nostrUri), [nostrUri]);
-  const cached = decoded ? cache.get(decoded.eventId) ?? null : null;
 
-  // フェッチが必要かどうかをレンダリング中に判定
-  const needsFetch = !!decoded && !!pool && relayUrls.length > 0 && !cached;
+  const eventId = decoded?.eventId ?? null;
+  const cachedEvent = eventId ? cache.getEvent(eventId) ?? null : null;
 
-  const [fetchResult, setFetchResult] = useState<{
-    event: Event | null;
-    profile: NostrProfile | null;
-    error: string | null;
-    /** どの eventId に対する結果か */
-    forEventId: string | null;
-  }>({ event: null, profile: null, error: null, forEventId: null });
+  // loading 状態: decoded があり cachedEvent がなければ初期値 true（フェッチ開始予定）
+  const needsFetch = !!decoded && !cachedEvent;
+  const [loading, setLoading] = useState(needsFetch);
+  const [error, setError] = useState<string | null>(null);
 
   // URI が切り替わったときに前回のフェッチをキャンセルするための ref
   const cancelRef = useRef(0);
 
-  // eventId が変わったら fetchResult をリセット（render-time state update）
-  const currentEventId = decoded?.eventId ?? null;
-  if (currentEventId !== fetchResult.forEventId && fetchResult.forEventId !== null) {
-    setFetchResult({ event: null, profile: null, error: null, forEventId: null });
-  }
-
   useEffect(() => {
-    if (!needsFetch || !decoded || !pool) return;
+    if (!decoded || cachedEvent) {
+      return;
+    }
 
     const fetchId = ++cancelRef.current;
 
-    fetchEventAndProfile(pool, relayUrls, decoded.eventId, decoded.relayHints).then(
-      (entry) => {
-        if (cancelRef.current !== fetchId) return; // stale
-        if (entry) {
-          setFetchResult({ event: entry.event, profile: entry.profile, error: null, forEventId: decoded.eventId });
+    cache
+      .fetchEvents(
+        { ids: [decoded.eventId] },
+        decoded.relayHints.length > 0
+          ? { relayHints: decoded.relayHints }
+          : undefined,
+      )
+      .then((events) => {
+        if (cancelRef.current !== fetchId) return;
+        if (events.length > 0) {
+          // プロフィールを確保
+          cache.ensureProfiles([events[0].pubkey]);
+          setError(null);
         } else {
-          setFetchResult({ event: null, profile: null, error: "引用先イベントが見つかりませんでした", forEventId: decoded.eventId });
+          setError("引用先イベントが見つかりませんでした");
         }
-      },
-    );
-  }, [needsFetch, decoded, pool, relayUrls]);
+      })
+      .catch(() => {
+        if (cancelRef.current !== fetchId) return;
+        setError("引用先イベントの取得に失敗しました");
+      })
+      .finally(() => {
+        if (cancelRef.current !== fetchId) return;
+        setLoading(false);
+      });
+  }, [decoded, cachedEvent, cache]);
 
-  // キャッシュがあればそれを優先、なければ fetch 結果を使う
-  if (cached) {
-    return { event: cached.event, profile: cached.profile, loading: false, error: null };
-  }
-
+  // デコード失敗
   if (!decoded) {
     const noError = !nostrUri ? null : "サポートされていない Nostr URI です";
     return { event: null, profile: null, loading: false, error: noError };
   }
 
-  // loading: フェッチが必要だがまだ結果が来ていない
-  const loading = needsFetch && fetchResult.forEventId !== currentEventId;
+  // イベントを取得（fetchEvents 完了後は cache.getEvent で取れる）
+  const event = cachedEvent ?? cache.getEvent(decoded.eventId) ?? null;
+  const profile = event ? profiles.get(event.pubkey) ?? null : null;
 
-  return { event: fetchResult.event, profile: fetchResult.profile, loading, error: fetchResult.error };
+  return { event, profile, loading, error };
 }

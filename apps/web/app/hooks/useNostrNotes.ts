@@ -12,6 +12,7 @@ import { sortByScore } from "../lib/scoring";
 import { createNoteCard, resolveSlotId } from "../lib/createNoteCard";
 import type { NoteCard, NostrProfile } from "../lib/types";
 import type { ConnectionStatus } from "./useNostrConnection";
+import type { EventCache } from "./useEventCache";
 
 export interface UseNostrNotesResult {
   notes: NoteCard[];
@@ -32,13 +33,11 @@ export function useNostrNotes(
   profilesRef: React.RefObject<Map<string, NostrProfile>>,
   fetchProfiles: (pubkeys: string[]) => void,
   onInitialNotesReady: (eventIds: string[]) => void,
+  cache: EventCache,
 ): UseNostrNotesResult {
   const [notes, setNotes] = useState<NoteCard[]>([]);
   const notesRef = useRef<NoteCard[]>([]);
   const newNotesMinCreatedAtRef = useRef<number | undefined>(undefined);
-
-  // リアルタイムリポスト: 元ノート取得中のeventIDを管理（重複REQ防止）
-  const inflightOriginalNotesRef = useRef<Set<string>>(new Set());
 
   // コールバックをRefで保持（subscription内から最新の値を参照するため）
   const onInitialNotesReadyRef = useRef(onInitialNotesReady);
@@ -145,22 +144,16 @@ export function useNostrNotes(
     /**
      * リアルタイムリポスト処理: EOSE後に受信したkind:6イベントの元ノートを個別REQで取得する
      */
-    const handleRealtimeRepost = async (repostEvent: Event, currentPool: SimplePool, relays: string[]) => {
+    const handleRealtimeRepost = async (repostEvent: Event) => {
       // "e" タグから元ノートのeventIDを抽出
       const eTags = repostEvent.tags.filter((tag) => tag[0] === "e" && tag[1]);
       if (eTags.length === 0) return;
       const originalEventId = eTags[eTags.length - 1]![1]!;
 
-      // インフライトチェック: 既にREQ中なら重複発行しない
-      if (inflightOriginalNotesRef.current.has(originalEventId)) return;
-      inflightOriginalNotesRef.current.add(originalEventId);
-
       try {
-        // 個別REQで元ノートを取得
-        const originalEvents = await currentPool.querySync(
-          relays,
+        // cache.fetchEvents で元ノートを取得（inflight重複排除はcache側で処理）
+        const originalEvents = await cache.fetchEvents(
           { kinds: [1], ids: [originalEventId] } as Filter,
-          { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
         );
 
         if (cancelled) return;
@@ -182,8 +175,6 @@ export function useNostrNotes(
         }
       } catch (err) {
         console.error(`[useNostrNotes] リアルタイムリポスト元ノート取得エラー:`, err);
-      } finally {
-        inflightOriginalNotesRef.current.delete(originalEventId);
       }
     };
 
@@ -207,9 +198,10 @@ export function useNostrNotes(
           } else {
             // リアルタイム処理
             if (event.kind === 1) {
+              cache.addEvents([event]);
               addNote(event);
             } else if (event.kind === 6) {
-              handleRealtimeRepost(event, pool, relayUrls);
+              handleRealtimeRepost(event);
             }
           }
         },
@@ -218,6 +210,12 @@ export function useNostrNotes(
           initialLoading = false;
           // バッファを一括で state に反映
           let displayedNotes: NoteCard[] = [];
+          // 初期ロードで受信したkind:1イベントをキャッシュに追加
+          const kind1Events = initialBuffer.filter((e) => e.kind === 1);
+          if (kind1Events.length > 0) {
+            cache.addEvents(kind1Events);
+          }
+
           if (initialBuffer.length > 0) {
             const now = Math.floor(Date.now() / 1000);
             const seen = new Set<string>();
@@ -276,10 +274,8 @@ export function useNostrNotes(
             if (missingEventIds.length > 0) {
               console.log(`[useNostrNotes] リポスト元ノート取得開始: ${missingEventIds.length}件`);
               try {
-                const originalEvents = await pool.querySync(
-                  relayUrls,
+                const originalEvents = await cache.fetchEvents(
                   { kinds: [1], ids: missingEventIds } as Filter,
-                  { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
                 );
                 if (!cancelled && originalEvents.length > 0) {
                   const now = Math.floor(Date.now() / 1000);
@@ -343,10 +339,9 @@ export function useNostrNotes(
       } catch {
         // 既に閉じている場合は無視
       }
-      inflightOriginalNotesRef.current.clear();
       setNotes([]);
     };
-  }, [pool, relayUrls, followPubkeys, pubkey, publishedSlotMapRef, addNote, processOriginalNote, profilesRef, setStatus]);
+  }, [pool, relayUrls, followPubkeys, pubkey, publishedSlotMapRef, addNote, processOriginalNote, profilesRef, setStatus, cache]);
 
   return { notes, notesRef, newNotesMinCreatedAtRef };
 }

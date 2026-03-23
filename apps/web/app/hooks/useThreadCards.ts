@@ -3,6 +3,7 @@ import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import type { NoteCard, ThreadCard, ThreadNote } from "../lib/types";
+import type { EventCache } from "./useEventCache";
 import { BOOTSTRAP_EOSE_TIMEOUT, MAX_THREAD_DEPTH, SCORE_HALF_LIFE, OWNER_SCORE_HALF_LIFE } from "../lib/constants";
 import { calcFreshnessScore } from "../lib/scoring";
 import { resolveReplyAuthors } from "../lib/threadBuilder";
@@ -108,56 +109,53 @@ export function useThreadCards(
   relayUrls: string[],
   pool: SimplePool | null,
   status: "connecting" | "loading" | "connected" | "error",
+  cache: EventCache,
 ): UseThreadCardsResult {
   const [threadCards, setThreadCards] = useState<ThreadCard[]>([]);
   const [isProcessing, setIsProcessing] = useState(true);
   const initialProcessingDoneRef = useRef(false);
 
-  // スレッドに含まれる全eventIdの集合（フィルタリング用）
-  const threadEventIdsRef = useRef<Set<string>>(new Set());
+  // スレッドに含まれる全eventIdの集合（filteredNotes計算用）
+  const [threadEventIds, setThreadEventIds] = useState<Set<string>>(new Set());
   // 処理済みリプライeventId（再処理防止）
   const processedReplyIdsRef = useRef<Set<string>>(new Set());
-  // フェッチ済み・インフライトのeventId
-  const knownEventIdsRef = useRef<Set<string>>(new Set());
-  const inflightRef = useRef<Set<string>>(new Set());
 
-  /** 祖先イベントを再帰的にフェッチ */
+  /** 祖先イベントを再帰的にフェッチ（ref 経由で再帰呼び出し） */
+  const fetchThreadAncestorsRef = useRef<(ids: string[], depth?: number) => Promise<Event[]>>(
+    async () => [],
+  );
+
   const fetchThreadAncestors = useCallback(
     async (
       eventIdsToFetch: string[],
       depth: number = 0,
     ): Promise<Event[]> => {
-      if (!pool || depth >= MAX_THREAD_DEPTH || eventIdsToFetch.length === 0 || relayUrls.length === 0) {
+      if (depth >= MAX_THREAD_DEPTH || eventIdsToFetch.length === 0) {
         return [];
       }
 
-      // インフライト重複排除
-      const toFetch = eventIdsToFetch.filter((id) => !inflightRef.current.has(id));
-      if (toFetch.length === 0) return [];
-
-      for (const id of toFetch) {
-        inflightRef.current.add(id);
-      }
-
       try {
-        const events = await pool.querySync(
-          relayUrls,
-          { kinds: [1], ids: toFetch } as Filter,
+        const events = await cache.fetchEvents(
+          { kinds: [1], ids: eventIdsToFetch } as Filter,
           { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
         );
 
-        // knownに追加
-        for (const id of toFetch) {
-          knownEventIdsRef.current.add(id);
+        // 祖先のプロフィールを確保（フォロー外ユーザー対応）
+        const ancestorPubkeys = [...new Set(events.map((e) => e.pubkey))];
+        if (ancestorPubkeys.length > 0) {
+          cache.ensureProfiles(ancestorPubkeys);
         }
+
+        // 取得済みIDを収集（cache内部 + 今回取得分）
+        const knownIds = new Set<string>(eventIdsToFetch);
         for (const event of events) {
-          knownEventIdsRef.current.add(event.id);
+          knownIds.add(event.id);
         }
 
         // さらに遡る必要のある未知の参照を収集
-        const nextMissing = collectMissingEventIds(knownEventIdsRef.current, events);
+        const nextMissing = collectMissingEventIds(knownIds, events);
         if (nextMissing.length > 0) {
-          const deeper = await fetchThreadAncestors(nextMissing, depth + 1);
+          const deeper = await fetchThreadAncestorsRef.current(nextMissing, depth + 1);
           return [...events, ...deeper];
         }
 
@@ -165,14 +163,15 @@ export function useThreadCards(
       } catch (err) {
         console.error("[useThreadCards] 祖先フェッチエラー:", err);
         return [];
-      } finally {
-        for (const id of toFetch) {
-          inflightRef.current.delete(id);
-        }
       }
     },
-    [relayUrls, pool],
+    [cache],
   );
+
+  // ref を最新に同期（再帰呼び出し用）
+  useEffect(() => {
+    fetchThreadAncestorsRef.current = fetchThreadAncestors;
+  }, [fetchThreadAncestors]);
 
   // notes変更時のスレッド処理（デバウンス付き）
   useEffect(() => {
@@ -180,7 +179,8 @@ export function useThreadCards(
       // EOSE到達後（connected）にnotesが空 → 初回処理完了
       if (status === "connected" && !initialProcessingDoneRef.current) {
         initialProcessingDoneRef.current = true;
-        setIsProcessing(false);
+        // queueMicrotask で同期 setState を回避
+        queueMicrotask(() => setIsProcessing(false));
       }
       return;
     }
@@ -204,10 +204,16 @@ export function useThreadCards(
         return;
       }
 
-      // notes の eventId を knownに登録
-      for (const note of notes) {
-        knownEventIdsRef.current.add(note.eventId);
-      }
+      // notes をキャッシュに登録
+      cache.addEvents(notes.map((note) => ({
+        id: note.eventId,
+        pubkey: note.pubkey,
+        content: note.content,
+        created_at: note.created_at,
+        tags: note.tags,
+        kind: 1,
+        sig: "",
+      } satisfies Event)));
 
       // 各リプライについてスレッド構築
       const processReplies = async () => {
@@ -218,11 +224,11 @@ export function useThreadCards(
           replyGroups.push({ note, refIds });
         }
 
-        // 未フェッチの祖先eventIdを収集
+        // 未フェッチの祖先eventIdを収集（cache が既知イベントを管理）
         const allMissingIds = new Set<string>();
         for (const { refIds } of replyGroups) {
           for (const id of refIds) {
-            if (!knownEventIdsRef.current.has(id)) {
+            if (!cache.getEvent(id)) {
               allMissingIds.add(id);
             }
           }
@@ -418,7 +424,7 @@ export function useThreadCards(
               allThreadEventIds.add(eid);
             }
           }
-          threadEventIdsRef.current = allThreadEventIds;
+          setThreadEventIds(allThreadEventIds);
 
           return updatedCards;
         });
@@ -449,13 +455,13 @@ export function useThreadCards(
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [notes, relayUrls, fetchThreadAncestors, status]);
+  }, [notes, relayUrls, fetchThreadAncestors, status, cache]);
 
   // filteredNotes: スレッドに含まれないノートだけを返す
   const filteredNotes = useMemo(() => {
     if (threadCards.length === 0) return notes;
-    return notes.filter((note) => !threadEventIdsRef.current.has(note.eventId));
-  }, [notes, threadCards]);
+    return notes.filter((note) => !threadEventIds.has(note.eventId));
+  }, [notes, threadCards, threadEventIds]);
 
   return { filteredNotes, threadCards, isProcessing };
 }

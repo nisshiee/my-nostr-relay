@@ -23,7 +23,7 @@ import { ComposeCard } from "./ComposeCard";
 import { CanvasHeader } from "./CanvasHeader";
 import { EmptyState } from "./EmptyState";
 import type { NostrEvent } from "../types/nostr";
-import type { SimplePool } from "nostr-tools/pool";
+import type { EventCache } from "../hooks/useEventCache";
 
 interface LiveCanvasProps {
   notes: NoteCardType[];
@@ -38,10 +38,8 @@ interface LiveCanvasProps {
   publishedSlotMapRef: React.RefObject<Map<string, string>>;
   /** リアクション送信ハンドラ */
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls: string[];
+  /** EventCache インスタンス（引用ノード表示用） */
+  cache: EventCache;
   onLogout: () => void;
   isProcessing: boolean;
 }
@@ -50,7 +48,7 @@ function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, pool, relayUrls, onLogout, isProcessing }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, cache, onLogout, isProcessing }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -255,8 +253,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               onHeightChange={handleHeightChange}
                               onHold={() => holdCard(note.slotId)}
                               onRelease={() => releaseCard(note.slotId)}
-                              pool={pool}
-                              relayUrls={relayUrls}
+                              cache={cache}
                             />
                           ) : (
                             <NoteCard
@@ -268,8 +265,8 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               onReaction={(emoji, imageUrl) => {
                                 sendReaction(note.eventId, note.pubkey, emoji, imageUrl).catch(console.error);
                               }}
-                              pool={pool}
-                              relayUrls={relayUrls}
+                              cache={cache}
+                              profiles={profiles}
                               onHeightChange={handleHeightChange}
                               onHold={() => holdCard(note.slotId)}
                               onRelease={() => releaseCard(note.slotId)}
