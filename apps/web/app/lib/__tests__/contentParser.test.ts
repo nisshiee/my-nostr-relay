@@ -349,4 +349,104 @@ describe("parseContent", () => {
       { type: "link", url: linkUrl, text: "example.com" },
     ]);
   });
+
+  // ===== カスタム絵文字（NIP-30）テスト =====
+
+  // 基本: emoji タグありで :shortcode: を emoji ノードに変換
+  it("emoji タグがある場合、:shortcode: を emoji ノードに変換する", () => {
+    const tags = [["emoji", "sushi", "https://example.com/sushi.png"]];
+    const result = parseContent("美味しい :sushi: だね", tags);
+    expect(result).toEqual([
+      { type: "text", text: "美味しい " },
+      { type: "emoji", shortcode: "sushi", url: "https://example.com/sushi.png" },
+      { type: "text", text: " だね" },
+    ]);
+  });
+
+  // 複数の絵文字
+  it("複数のカスタム絵文字を含む場合、それぞれ emoji ノードに変換する", () => {
+    const tags = [
+      ["emoji", "sushi", "https://example.com/sushi.png"],
+      ["emoji", "beer", "https://example.com/beer.png"],
+    ];
+    const result = parseContent(":sushi: と :beer:", tags);
+    expect(result).toEqual([
+      { type: "emoji", shortcode: "sushi", url: "https://example.com/sushi.png" },
+      { type: "text", text: " と " },
+      { type: "emoji", shortcode: "beer", url: "https://example.com/beer.png" },
+    ]);
+  });
+
+  // 未定義 shortcode はテキストのまま
+  it("emoji タグに定義されていない :shortcode: はテキストのまま残す", () => {
+    const tags = [["emoji", "sushi", "https://example.com/sushi.png"]];
+    const result = parseContent(":sushi: と :unknown:", tags);
+    expect(result).toEqual([
+      { type: "emoji", shortcode: "sushi", url: "https://example.com/sushi.png" },
+      { type: "text", text: " と :unknown:" },
+    ]);
+  });
+
+  // tags 省略時（後方互換）
+  it("tags を省略した場合、:shortcode: はテキストのまま残る（後方互換）", () => {
+    const result = parseContent("hello :world:");
+    expect(result).toEqual([
+      { type: "text", text: "hello :world:" },
+    ]);
+  });
+
+  // 画像URLとカスタム絵文字の混在
+  it("画像URLとカスタム絵文字が混在する場合、それぞれ正しいノードタイプに変換する", () => {
+    const tags = [["emoji", "cat", "https://example.com/cat-emoji.png"]];
+    const result = parseContent(":cat: https://example.com/photo.jpg", tags);
+    expect(result).toEqual([
+      { type: "emoji", shortcode: "cat", url: "https://example.com/cat-emoji.png" },
+      { type: "text", text: " " },
+      { type: "image", url: "https://example.com/photo.jpg" },
+    ]);
+  });
+
+  // Nostr URIとカスタム絵文字の混在
+  it("Nostr URIとカスタム絵文字が混在する場合、それぞれ正しいノードタイプに変換する", () => {
+    const nostrUri = "nostr:nevent1qqsabc123def456ghi789jkl012mno345pqr";
+    const tags = [["emoji", "fire", "https://example.com/fire.png"]];
+    const result = parseContent(`:fire: ${nostrUri}`, tags);
+    expect(result).toEqual([
+      { type: "emoji", shortcode: "fire", url: "https://example.com/fire.png" },
+      { type: "text", text: " " },
+      { type: "quote", uri: nostrUri },
+    ]);
+  });
+
+  // emoji タグ以外のタグは無視
+  it("emoji タグ以外のタグは無視する", () => {
+    const tags = [
+      ["p", "pubkey123"],
+      ["emoji", "heart", "https://example.com/heart.png"],
+      ["t", "nostr"],
+    ];
+    const result = parseContent(":heart:", tags);
+    expect(result).toEqual([
+      { type: "emoji", shortcode: "heart", url: "https://example.com/heart.png" },
+    ]);
+  });
+
+  // 空の tags 配列
+  it("空の tags 配列の場合、:shortcode: はテキストのまま残る", () => {
+    const result = parseContent(":hello:", []);
+    expect(result).toEqual([
+      { type: "text", text: ":hello:" },
+    ]);
+  });
+
+  // 同じ shortcode が複数回出現
+  it("同じ shortcode が複数回出現する場合、すべて emoji ノードに変換する", () => {
+    const tags = [["emoji", "star", "https://example.com/star.png"]];
+    const result = parseContent(":star: good :star:", tags);
+    expect(result).toEqual([
+      { type: "emoji", shortcode: "star", url: "https://example.com/star.png" },
+      { type: "text", text: " good " },
+      { type: "emoji", shortcode: "star", url: "https://example.com/star.png" },
+    ]);
+  });
 });

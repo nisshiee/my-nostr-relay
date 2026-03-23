@@ -8,7 +8,8 @@ export type ContentNode =
   | { type: "text"; text: string }
   | { type: "image"; url: string }
   | { type: "link"; url: string; text: string }
-  | { type: "quote"; uri: string };
+  | { type: "quote"; uri: string }
+  | { type: "emoji"; shortcode: string; url: string };
 // 今後追加予定: | { type: "video"; url: string } | { type: "ogp"; url: string; title: string }
 
 /** 画像URLにマッチする正規表現パターン（パス途中の拡張子誤検出を防ぐため末尾に先読みを追加） */
@@ -147,14 +148,71 @@ function splitTextWithNostrAndLinks(text: string): ContentNode[] {
 }
 
 /**
+ * textノード内の :shortcode: パターンを検出し、emojiMapに存在すればemojiノードに分割する
+ */
+function splitTextWithEmoji(
+  nodes: ContentNode[],
+  emojiMap: Map<string, string>,
+): ContentNode[] {
+  const result: ContentNode[] = [];
+  const emojiPattern = /:([\w-]+):/g;
+
+  for (const node of nodes) {
+    if (node.type !== "text") {
+      result.push(node);
+      continue;
+    }
+
+    let lastIdx = 0;
+    let match: RegExpExecArray | null;
+    emojiPattern.lastIndex = 0;
+
+    while ((match = emojiPattern.exec(node.text)) !== null) {
+      const shortcode = match[1];
+      const url = emojiMap.get(shortcode);
+      if (!url) continue;
+
+      // マッチ前のテキスト
+      if (match.index > lastIdx) {
+        result.push({ type: "text", text: node.text.slice(lastIdx, match.index) });
+      }
+
+      result.push({ type: "emoji", shortcode, url });
+      lastIdx = match.index + match[0].length;
+    }
+
+    // 残りのテキスト
+    if (lastIdx < node.text.length) {
+      result.push({ type: "text", text: node.text.slice(lastIdx) });
+    } else if (lastIdx === 0) {
+      // マッチなし: 元のノードをそのまま追加
+      result.push(node);
+    }
+  }
+
+  return result;
+}
+
+/**
  * content文字列をパースし、ContentNode配列を返す
  *
  * - 画像URL（.jpg, .jpeg, .png, .gif, .webp で終わるHTTP(S) URL）を検出
  * - クエリパラメータ付きURLにも対応
  * - 空のtextノードは生成しない
+ * - tagsにemojiタグが含まれていれば、:shortcode: をカスタム絵文字ノードに変換する（NIP-30）
  */
-export function parseContent(content: string): ContentNode[] {
+export function parseContent(content: string, tags?: string[][]): ContentNode[] {
   if (!content) return [];
+
+  // tagsからemojiマップを構築
+  const emojiMap = new Map<string, string>();
+  if (tags) {
+    for (const tag of tags) {
+      if (tag[0] === "emoji" && tag[1] && tag[2]) {
+        emojiMap.set(tag[1], tag[2]);
+      }
+    }
+  }
 
   const nodes: ContentNode[] = [];
   let lastIndex = 0;
@@ -184,6 +242,11 @@ export function parseContent(content: string): ContentNode[] {
     if (text.length > 0) {
       nodes.push(...splitTextWithNostrAndLinks(text));
     }
+  }
+
+  // カスタム絵文字の後処理（emojiMapが空でない場合のみ）
+  if (emojiMap.size > 0) {
+    return splitTextWithEmoji(nodes, emojiMap);
   }
 
   return nodes;
