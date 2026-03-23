@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { Repeat2, Plus, Smile } from "lucide-react";
 import { EmojiPickerPopover } from "./EmojiPickerPopover";
 
@@ -35,18 +35,18 @@ export function ActionBar({
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
 
+  // アクションバーが閉じたらピッカーもリセット（レンダー中の条件付きsetState）
+  // React 19: 条件付きsetStateはレンダー中に安全にバッチされる
+  if (!isOpen && isPickerOpen) {
+    setIsPickerOpen(false);
+    onPickerOpenChange?.(false);
+  }
+
   /** ピッカーの開閉状態を更新し、親に通知する */
   const updatePickerOpen = (open: boolean) => {
     setIsPickerOpen(open);
     onPickerOpenChange?.(open);
   };
-
-  // アクションバーが閉じたらピッカーも閉じる
-  useEffect(() => {
-    if (!isOpen && isPickerOpen) {
-      updatePickerOpen(false);
-    }
-  }, [isOpen]);
 
   return (
     <div
