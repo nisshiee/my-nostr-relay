@@ -1,4 +1,4 @@
-import { placeCard, gridToColumns } from "../layoutEngine";
+import { placeCard, gridToColumns } from "../../store/pure/layoutEngine";
 import { GAP, DEFAULT_CARD_HEIGHT } from "../constants";
 
 describe("placeCard - 隣列の場合は上優先ロジック", () => {

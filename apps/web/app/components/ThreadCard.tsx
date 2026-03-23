@@ -6,11 +6,11 @@ import type {
   ThreadCard as ThreadCardType,
   ThreadNote,
   NostrProfile,
-  Reactions,
 } from "../lib/types";
-import type { SimplePool } from "nostr-tools/pool";
 import { ContentRenderer } from "./content/ContentRenderer";
 import { ActionBar } from "./ActionBar";
+import useCanvasStore from "../store";
+import { useProfiles, useAllReactions, useActions } from "../store/selectors";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -48,39 +48,25 @@ function resolveDisplayName(
 
 interface ThreadCardProps {
   thread: ThreadCardType;
-  profiles: Map<string, NostrProfile>;
-  /** リアクション集計: eventId → (絵文字 → {件数, 画像URL, 送信者pubkey集合}) */
-  reactions: Reactions;
   /** 自分のpubkey（リアクション済み判定用） */
   myPubkey?: string;
-  /** リアクション送信ハンドラ */
-  onReaction?: (
-    targetEventId: string,
-    targetPubkey: string,
-    emoji: string,
-    imageUrl?: string,
-  ) => void;
   onHeightChange?: (slotId: string, height: number) => void;
   onHold?: () => void;
   onRelease?: () => void;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool?: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls?: string[];
 }
 
 export function ThreadCard({
   thread,
-  profiles,
-  reactions,
   myPubkey,
-  onReaction,
   onHeightChange,
   onHold,
   onRelease,
-  pool,
-  relayUrls,
 }: ThreadCardProps) {
+  // --- Store セレクター ---
+  const profiles = useCanvasStore(useProfiles);
+  const reactions = useCanvasStore(useAllReactions);
+  const { sendReaction } = useCanvasStore(useActions);
+
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
 
@@ -172,6 +158,16 @@ export function ThreadCard({
     };
   }, []);
 
+  /** リアクション送信ハンドラ */
+  const handleReaction = (
+    targetEventId: string,
+    targetPubkey: string,
+    emoji: string,
+    imageUrl?: string,
+  ) => {
+    sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
+  };
+
   return (
     <div
       ref={cardRef}
@@ -198,15 +194,13 @@ export function ThreadCard({
             profiles={profiles}
             noteReactions={noteReactions}
             myPubkey={myPubkey}
-            onReaction={onReaction}
+            onReaction={handleReaction}
             isActive={isActive}
             isLast={index === thread.notes.length - 1}
             showDivider={index > 0}
             onClick={(e) => handleNoteClick(note.eventId, e)}
             onHold={onHold}
             onRelease={onRelease}
-            pool={pool}
-            relayUrls={relayUrls}
           />
         );
       })}
@@ -236,8 +230,6 @@ interface ThreadNoteItemProps {
   onClick: (e: React.MouseEvent) => void;
   onHold?: () => void;
   onRelease?: () => void;
-  pool?: SimplePool | null;
-  relayUrls?: string[];
 }
 
 function ThreadNoteItem({
@@ -252,8 +244,6 @@ function ThreadNoteItem({
   onClick,
   onHold,
   onRelease,
-  pool,
-  relayUrls,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
   const displayName =
@@ -320,8 +310,6 @@ function ThreadNoteItem({
             content={note.content}
             onHold={onHold}
             onRelease={onRelease}
-            pool={pool}
-            relayUrls={relayUrls}
           />
         </div>
 

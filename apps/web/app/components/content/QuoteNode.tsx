@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState, useMemo } from "react";
 import Image from "next/image";
-import type { SimplePool } from "nostr-tools/pool";
-import { useQuotedEvent } from "../../hooks/useQuotedEvent";
+import useCanvasStore from "../../store";
+import { useProfile, useEvent, useActions } from "../../store/selectors";
+import { parseNostrUri } from "../../lib/nip19";
 
 // ---------------------------------------------------------------------------
 // ヘルパー
@@ -50,6 +52,21 @@ function njumpUrl(nostrUri: string): string {
   return `https://njump.me/${identifier}`;
 }
 
+/** URI をデコードして eventId / relayHints を抽出する（純粋関数） */
+function decodeUri(nostrUri: string): {
+  eventId: string;
+  relayHints: string[];
+} | null {
+  const decoded = parseNostrUri(nostrUri);
+  if (!decoded || decoded.type === "naddr") return null;
+  const eventId = decoded.data.eventId;
+  const relayHints =
+    decoded.type === "nevent" && decoded.data.relays
+      ? decoded.data.relays
+      : [];
+  return { eventId, relayHints };
+}
+
 // ---------------------------------------------------------------------------
 // コンポーネント
 // ---------------------------------------------------------------------------
@@ -57,17 +74,35 @@ function njumpUrl(nostrUri: string): string {
 interface QuoteNodeProps {
   /** nostr: URI 文字列（例: "nostr:nevent1..."） */
   uri: string;
-  /** SimplePool インスタンス（useNostrRelay から取得） */
-  pool: SimplePool | null;
-  /** 接続先リレーURL配列（useNostrRelay から取得） */
-  relayUrls: string[];
 }
 
 /** 引用ノートをカード形式で表示するコンポーネント */
-export function QuoteNode({ uri, pool, relayUrls }: QuoteNodeProps) {
-  const { event, profile, loading, error } = useQuotedEvent(uri, pool, relayUrls);
+export function QuoteNode({ uri }: QuoteNodeProps) {
+  const decoded = useMemo(() => decodeUri(uri), [uri]);
+  const eventId = decoded?.eventId ?? "";
+
+  // Store セレクター
+  const event = useCanvasStore(useEvent(eventId));
+  const eventPubkey = event?.pubkey ?? "";
+  const profileRaw = useCanvasStore(useProfile(eventPubkey));
+  const profile = event ? profileRaw : undefined;
+  const { fetchQuoted } = useCanvasStore(useActions);
+
+  const [fetchState, setFetchState] = useState<"idle" | "loading" | "done" | "error">("idle");
+
+  // フェッチ実行
+  useEffect(() => {
+    if (!decoded || event) return; // 既にキャッシュにあればスキップ
+    if (fetchState !== "idle") return;
+
+    setFetchState("loading");
+    fetchQuoted(decoded.eventId, decoded.relayHints).then((result) => {
+      setFetchState(result ? "done" : "error");
+    });
+  }, [decoded, event, fetchState, fetchQuoted]);
 
   const linkUrl = njumpUrl(uri);
+  const loading = fetchState === "loading" && !event;
 
   // ローディング中
   if (loading) {
@@ -90,7 +125,7 @@ export function QuoteNode({ uri, pool, relayUrls }: QuoteNodeProps) {
   }
 
   // エラー or イベント取得失敗 → URIをリンクとして表示
-  if (error || !event) {
+  if (!event) {
     return (
       <a
         href={linkUrl}

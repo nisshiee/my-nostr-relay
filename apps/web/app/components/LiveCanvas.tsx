@@ -1,96 +1,105 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useRef, useEffect, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
+import type { Card } from "../lib/types";
 import {
   COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
-  FADEOUT_THRESHOLD,
   COLUMN_GAP,
-  SCORE_HALF_LIFE,
-  OWNER_SCORE_HALF_LIFE,
+  DEFAULT_CARD_HEIGHT,
 } from "../lib/constants";
-import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { useDraftNotes } from "../hooks/useDraftNotes";
-
-/** isProcessing中にuseCardLayoutに渡す空配列（参照を安定させて無限ループ防止） */
-const EMPTY_CARDS: Card[] = [];
-import { useCardLayout } from "../hooks/useCardLayout";
+import useCanvasStore from "../store";
+import {
+  useCards,
+  usePhase,
+  useProfiles,
+  useAllReactions,
+  useActions,
+  useLayout,
+  useColumnCount,
+  useHoldSet,
+} from "../store/selectors";
 import { NoteCard } from "./NoteCard";
 import { ThreadCard } from "./ThreadCard";
 import { ComposeCard } from "./ComposeCard";
 import { CanvasHeader } from "./CanvasHeader";
 import { EmptyState } from "./EmptyState";
+import type { Phase } from "../store/types";
 import type { NostrEvent } from "../types/nostr";
-import type { SimplePool } from "nostr-tools/pool";
+import type { Event } from "nostr-tools/core";
 
 interface LiveCanvasProps {
-  notes: NoteCardType[];
-  threadCards: ThreadCardType[];
-  profiles: Map<string, NostrProfile>;
-  /** リアクション集計: eventId → (絵文字 → 件数) */
-  reactions: Reactions;
-  status: "connecting" | "loading" | "connected" | "error";
   pubkey: string;
   npub: string | null;
-  publishEvent: (event: NostrEvent) => Promise<void>;
-  publishedSlotMapRef: React.RefObject<Map<string, string>>;
-  /** リアクション送信ハンドラ */
-  sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls: string[];
   onLogout: () => void;
-  isProcessing: boolean;
+}
+
+/** Store の Phase → CanvasHeader/EmptyState の status 文字列に変換 */
+function phaseToStatus(phase: Phase): "connecting" | "loading" | "connected" | "error" {
+  if (phase === "ready") return "connected";
+  return phase;
 }
 
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, pool, relayUrls, onLogout, isProcessing }: LiveCanvasProps) {
-  const [columnCount, setColumnCount] = useState(1);
-  const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
+export function LiveCanvas({ pubkey, npub, onLogout }: LiveCanvasProps) {
+  // --- Store セレクター ---
+  const cards = useCanvasStore(useCards);
+  const phase = useCanvasStore(usePhase);
+  const profiles = useCanvasStore(useProfiles);
+  const reactions = useCanvasStore(useAllReactions);
+  const layout = useCanvasStore(useLayout);
+  const columnCount = useCanvasStore(useColumnCount);
+  const holdSet = useCanvasStore(useHoldSet);
+  const heights = useCanvasStore((s) => s.heights);
+  const delays = useCanvasStore((s) => s.delays);
+  
+  const {
+    connect,
+    disconnect,
+    publishEvent,
+    sendReaction,
+    setHeight,
+    setColumnCount: storeSetColumnCount,
+    holdCard,
+    releaseCard,
+    tick,
+  } = useCanvasStore(useActions);
 
-  /** カードをホールド状態にする */
-  const holdCard = useCallback((slotId: string) => {
-    setHoldSet(prev => {
-      const next = new Set(prev);
-      next.add(slotId);
-      return next;
-    });
-  }, []);
+  // publishedSlotMapRef は useDraftNotes 用に維持
+  const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
 
-  /** カードのホールドを解除する */
-  const releaseCard = useCallback((slotId: string) => {
-    setHoldSet(prev => {
-      if (!prev.has(slotId)) return prev;
-      const next = new Set(prev);
-      next.delete(slotId);
-      return next;
-    });
-  }, []);
-  const [nowEpoch, setNowEpoch] = useState(() =>
-    Math.floor(Date.now() / 1000),
-  );
-
+  // --- Store 接続 ---
   useEffect(() => {
-    const update = () => setColumnCount(calcColumnCount(window.innerWidth));
+    connect(pubkey);
+    return () => {
+      disconnect();
+    };
+  }, [pubkey, connect, disconnect]);
+
+  // --- ウィンドウリサイズ → カラム数更新 ---
+  useEffect(() => {
+    const update = () => storeSetColumnCount(calcColumnCount(window.innerWidth));
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
-  }, []);
+  }, [storeSetColumnCount]);
 
+  // --- スコア定期 tick ---
   useEffect(() => {
     const timer = setInterval(() => {
-      setNowEpoch(Math.floor(Date.now() / 1000));
+      tick(Math.floor(Date.now() / 1000));
     }, SCORE_UPDATE_INTERVAL);
     return () => clearInterval(timer);
-  }, []);
+  }, [tick]);
 
-  // 下書き・Publish管理
+  // 下書き・Publish管理（store の cards (NoteCard[]) から notes を抽出）
+  const notes = cards.filter((c): c is import("../lib/types").NoteCard => c.type === "note");
+
   const {
     draftNotes,
     publishedNotes,
@@ -100,71 +109,42 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     handleDraftPublish,
   } = useDraftNotes({ pubkey, notes, publishedSlotMapRef });
 
-  const scoredCards = useMemo((): Card[] => {
-    // notes + publishedNotes をマージ（eventIdで重複排除）
+  // ドラフトと publishedNotes を store cards にマージ（表示用）
+  // store の cards には NoteCard + ThreadCard が入っている
+  // ここに ComposeCard（drafts）と publishedNotes（まだ store に到着していないもの）を追加
+  const displayCards = React.useMemo((): Card[] => {
     const noteEventIds = new Set(notes.map((n) => n.eventId));
     const uniquePublished = publishedNotes.filter((n) => !noteEventIds.has(n.eventId));
-    const allNotes = [...notes, ...uniquePublished];
+    return [...draftNotes, ...uniquePublished, ...cards];
+  }, [draftNotes, publishedNotes, notes, cards]);
 
-    const updatedNotes: Card[] = allNotes.map((note) => {
-      const halfLife = note.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-      // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
-      const scoreTimestamp = note.repostInfo?.repostedAt ?? note.created_at;
-      const score = calcFreshnessScore(scoreTimestamp, nowEpoch, halfLife);
-      return {
-        ...note,
-        score,
-        fadingOut: holdSet.has(note.slotId) ? false : (note.fadingOut || score <= FADEOUT_THRESHOLD),
-      };
-    });
+  const status = phaseToStatus(phase);
 
-    // draftNotes にスコアを再計算
-    const scoredDrafts: Card[] = draftNotes.map((d) => {
-      const score = calcFreshnessScore(d.created_at, nowEpoch, OWNER_SCORE_HALF_LIFE);
-      return {
-        ...d,
-        score,
-        fadingOut: holdSet.has(d.slotId) ? false : score <= FADEOUT_THRESHOLD,
-      };
-    });
+  // 高さ変更ハンドラ（store の setHeight に直接渡す）
+  const onHeightChange = useCallback((slotId: string, height: number) => {
+    setHeight(slotId, height);
+  }, [setHeight]);
 
-    // threadCards にスコアを再計算
-    const scoredThreads: Card[] = threadCards.map((thread) => {
-      // スレッド内に自分のノートがあれば OWNER_SCORE_HALF_LIFE を使用
-      const hasOwnerNote = thread.notes.some((n) => n.pubkey === pubkey);
-      const halfLife = hasOwnerNote ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-      // スレッド内最新リプライの created_at をベースにスコア計算
-      const score = calcFreshnessScore(thread.created_at, nowEpoch, halfLife);
-      return {
-        ...thread,
-        score,
-        fadingOut: holdSet.has(thread.slotId) ? false : (thread.fadingOut || score <= FADEOUT_THRESHOLD),
-      };
-    });
-
-    return sortByScore([...scoredDrafts, ...updatedNotes, ...scoredThreads]);
-  }, [notes, publishedNotes, draftNotes, threadCards, nowEpoch, holdSet, pubkey]);
-
-  // レイアウト計算
-  // isProcessing中は空配列を渡してレイアウトエンジンを停止する
-  // 参照を安定させるため、モジュールスコープの定数を使用
-  const layoutCards = isProcessing ? EMPTY_CARDS : scoredCards;
-
-  const {
-    handleHeightChange,
-    displayLayout,
-    delayMap,
-    computeColumnHeight,
-  } = useCardLayout(layoutCards, columnCount, holdSet);
+  // カラム高さ計算（useCardLayoutから移植）
+  const computeColumnHeight = useCallback((colIdx: number): number => {
+    let maxBottom = 0;
+    for (const [id, placement] of layout) {
+      if (placement.col !== colIdx) continue;
+      const h = heights.get(id) ?? DEFAULT_CARD_HEIGHT;
+      const bottom = placement.y + h;
+      if (bottom > maxBottom) maxBottom = bottom;
+    }
+    return maxBottom;
+  }, [layout, heights]);
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
       <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
 
       <main className="flex-1 overflow-y-auto p-4">
-        <EmptyState status={status} hasNotes={notes.length > 0} isProcessing={isProcessing} />
+        <EmptyState status={status} hasNotes={notes.length > 0} isProcessing={false} />
 
-        {scoredCards.length > 0 && !isProcessing && (() => {
+        {displayCards.length > 0 && (() => {
           const containerHeight = Math.max(
             ...Array.from({ length: columnCount }, (_, i) => computeColumnHeight(i)),
             0,
@@ -179,13 +159,13 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                 }}
               >
                 <AnimatePresence>
-                  {scoredCards
-                    .filter((n) => displayLayout.has(n.slotId))
+                  {displayCards
+                    .filter((n) => layout.has(n.slotId))
                     .map((note, idx, arr) => {
-                      const placement = displayLayout.get(note.slotId)!;
+                      const placement = layout.get(note.slotId)!;
                       const x = placement.col * (COLUMN_WIDTH + COLUMN_GAP);
                       const y = placement.y;
-                      const delay = delayMap.get(note.slotId) ?? 0;
+                      const delay = delays.get(note.slotId) ?? 0;
                       const zIndex = holdSet.has(note.slotId)
                         ? arr.length + 1000 // ホールド中は最前面
                         : arr.length - idx;
@@ -234,11 +214,11 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               slotId={note.slotId}
                               pubkey={note.pubkey}
                               profile={profiles.get(note.pubkey)}
-                              onHeightChange={handleHeightChange}
+                              onHeightChange={onHeightChange}
                               onPublish={(slotId, event) => { releaseCard(slotId); handleDraftPublish(slotId, event); }}
                               onInput={handleDraftInput}
                               onClose={(slotId) => { releaseCard(slotId); handleDraftClose(slotId); }}
-                              publishEvent={publishEvent}
+                              publishEvent={(event: NostrEvent) => publishEvent(event as unknown as Event)}
                               onHold={holdCard}
                               onRelease={releaseCard}
                               autoFocus
@@ -246,31 +226,16 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                           ) : note.type === "thread" ? (
                             <ThreadCard
                               thread={note}
-                              profiles={profiles}
-                              reactions={reactions}
                               myPubkey={pubkey}
-                              onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
-                                sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
-                              }}
-                              onHeightChange={handleHeightChange}
+                              onHeightChange={onHeightChange}
                               onHold={() => holdCard(note.slotId)}
                               onRelease={() => releaseCard(note.slotId)}
-                              pool={pool}
-                              relayUrls={relayUrls}
                             />
                           ) : (
                             <NoteCard
                               note={note}
-                              profile={profiles.get(note.pubkey)}
-                              reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
-                              reactions={reactions.get(note.eventId)}
                               myPubkey={pubkey}
-                              onReaction={(emoji, imageUrl) => {
-                                sendReaction(note.eventId, note.pubkey, emoji, imageUrl).catch(console.error);
-                              }}
-                              pool={pool}
-                              relayUrls={relayUrls}
-                              onHeightChange={handleHeightChange}
+                              onHeightChange={onHeightChange}
                               onHold={() => holdCard(note.slotId)}
                               onRelease={() => releaseCard(note.slotId)}
                             />
