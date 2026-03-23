@@ -123,8 +123,8 @@ export function EmojiPickerPopover({
           className="w-full px-3 py-2 text-sm border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400"
         />
         <EmojiPicker.Viewport className="h-[280px]">
-          <EmojiPicker.Loading>読み込み中...</EmojiPicker.Loading>
-          <EmojiPicker.Empty>見つかりません</EmojiPicker.Empty>
+          <EmojiPicker.Loading className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">読み込み中...</EmojiPicker.Loading>
+          <EmojiPicker.Empty className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">見つかりません</EmojiPicker.Empty>
           <EmojiPicker.List
             components={{
               CategoryHeader: ({ category, ...props }) => (
