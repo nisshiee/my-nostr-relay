@@ -10,8 +10,8 @@ export default function Home() {
   const { pubkey, npub, nip07Available, autoLoading, login, logout } = useAuth();
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
-  const { notes, profiles, reactions, status, relayUrls, pool, publishEvent, sendReaction } = useNostrRelay(pubkey, publishedSlotMapRef);
-  const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status);
+  const { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction } = useNostrRelay(pubkey, publishedSlotMapRef);
+  const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status, cache);
 
   // 認証済み → LiveCanvas を全画面表示
   if (pubkey) {
@@ -27,8 +27,7 @@ export default function Home() {
         publishEvent={publishEvent}
         publishedSlotMapRef={publishedSlotMapRef}
         sendReaction={sendReaction}
-        pool={pool}
-        relayUrls={relayUrls}
+        cache={cache}
         onLogout={logout}
         isProcessing={isProcessing}
       />

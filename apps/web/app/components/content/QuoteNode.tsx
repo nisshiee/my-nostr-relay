@@ -1,8 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import type { SimplePool } from "nostr-tools/pool";
 import { useQuotedEvent } from "../../hooks/useQuotedEvent";
+import type { EventCache } from "../../hooks/useEventCache";
+import type { NostrProfile } from "../../lib/types";
 
 // ---------------------------------------------------------------------------
 // ヘルパー
@@ -57,15 +58,15 @@ function njumpUrl(nostrUri: string): string {
 interface QuoteNodeProps {
   /** nostr: URI 文字列（例: "nostr:nevent1..."） */
   uri: string;
-  /** SimplePool インスタンス（useNostrRelay から取得） */
-  pool: SimplePool | null;
-  /** 接続先リレーURL配列（useNostrRelay から取得） */
-  relayUrls: string[];
+  /** EventCache インスタンス（useEventCache から取得） */
+  cache: EventCache;
+  /** pubkey → NostrProfile のマップ（useNostrProfiles から取得） */
+  profiles: Map<string, NostrProfile>;
 }
 
 /** 引用ノートをカード形式で表示するコンポーネント */
-export function QuoteNode({ uri, pool, relayUrls }: QuoteNodeProps) {
-  const { event, profile, loading, error } = useQuotedEvent(uri, pool, relayUrls);
+export function QuoteNode({ uri, cache, profiles }: QuoteNodeProps) {
+  const { event, profile, loading, error } = useQuotedEvent(uri, cache, profiles);
 
   const linkUrl = njumpUrl(uri);
 

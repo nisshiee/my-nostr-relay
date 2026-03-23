@@ -5,7 +5,7 @@ import Image from "next/image";
 import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
 import { ContentRenderer } from "./content/ContentRenderer";
 import { ActionBar } from "./ActionBar";
-import type { SimplePool } from "nostr-tools/pool";
+import type { EventCache } from "../hooks/useEventCache";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -42,16 +42,16 @@ interface NoteCardProps {
   myPubkey?: string;
   /** リアクション送信ハンドラ */
   onReaction?: (emoji: string, imageUrl?: string) => void;
-  /** SimplePool インスタンス（引用ノード表示用） */
-  pool?: SimplePool | null;
-  /** 接続先リレーURL配列（引用ノード表示用） */
-  relayUrls?: string[];
+  /** EventCache インスタンス（引用ノード表示用） */
+  cache?: EventCache;
+  /** pubkey → NostrProfile のマップ（引用ノード表示用） */
+  profiles?: Map<string, NostrProfile>;
   onHeightChange?: (slotId: string, height: number) => void;
   onHold?: () => void;
   onRelease?: () => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, pool, relayUrls, onHeightChange, onHold, onRelease }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, cache, profiles, onHeightChange, onHold, onRelease }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -195,7 +195,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       </div>
 
       {/* テキスト内容（ContentRendererでリッチコンテンツを描画） */}
-      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} pool={pool} relayUrls={relayUrls} />
+      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} cache={cache} profiles={profiles} />
 
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (
