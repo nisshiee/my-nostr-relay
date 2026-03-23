@@ -57,3 +57,9 @@ export const REACTION_SINCE_SAFETY_MARGIN = 10;
 
 /** スレッド再帰フェッチの最大深度 */
 export const MAX_THREAD_DEPTH = 10;
+
+/** Blossomアップロード先URL (BUD-02) */
+export const BLOSSOM_UPLOAD_URL = "https://share.yabu.me/upload";
+
+/** Blossom認証イベントの有効期限（秒） */
+export const BLOSSOM_AUTH_EXPIRATION = 60;
