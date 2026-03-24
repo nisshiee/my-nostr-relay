@@ -10,6 +10,7 @@ import { useNostrReactions } from "./useNostrReactions";
 import { useEventCache } from "./useEventCache";
 import type { EventCache } from "./useEventCache";
 import { SimplePool } from "nostr-tools/pool";
+import { CLIENT_TAG } from "../lib/constants";
 
 /** NIP-07拡張(window.nostr)の署名済みイベント型 */
 type SignedNostrEvent = NostrEvent & { id: string; sig: string };
@@ -90,6 +91,7 @@ export function useNostrRelay(
         ["e", targetEventId, "", targetPubkey],
         ["p", targetPubkey],
         ["k", "1"],
+        CLIENT_TAG,
       ];
 
       // カスタム絵文字（:shortcode: 形式）の場合はemojiタグを追加
@@ -135,6 +137,7 @@ export function useNostrRelay(
         tags: [
           ["e", targetEventId, relayUrls[0] ?? ""],
           ["p", targetPubkey],
+          CLIENT_TAG,
         ],
         created_at: Math.floor(Date.now() / 1000),
       };

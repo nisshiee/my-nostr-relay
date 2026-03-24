@@ -5,6 +5,7 @@ import Image from "next/image";
 import type { NostrProfile } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
 import { useImageUpload } from "../hooks/useImageUpload";
+import { CLIENT_TAG } from "../lib/constants";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -157,7 +158,7 @@ export function ReplyCompose({
         throw new Error("NIP-07 拡張機能が見つかりません");
       }
 
-      const tags = buildReplyTags();
+      const tags = [...buildReplyTags(), CLIENT_TAG];
 
       const unsignedEvent: NostrEvent = {
         kind: 1,

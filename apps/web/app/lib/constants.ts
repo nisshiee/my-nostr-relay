@@ -63,3 +63,11 @@ export const BLOSSOM_UPLOAD_URL = "https://share.yabu.me/upload";
 
 /** Blossom認証イベントの有効期限（秒） */
 export const BLOSSOM_AUTH_EXPIRATION = 60;
+
+/** NIP-89 client tag — アプリ識別用 */
+export const CLIENT_TAG = [
+  "client",
+  "Nostr Live Canvas",
+  "31990:73491509b8e2d80840873b5a13ba98a5d1ac3a16c9292e106b1f2eda31152c52:nostr-live-canvas",
+  "wss://relay.nostr.nisshiee.org",
+];
