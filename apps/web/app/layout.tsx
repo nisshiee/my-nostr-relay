@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Nostr Relay",
-  description: "Nostr Relay management",
+  title: "Nostr Live Canvas",
+  description: "Nostr Live Canvas — A spatial canvas client for Nostr",
 };
 
 export default function RootLayout({

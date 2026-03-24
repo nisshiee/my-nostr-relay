@@ -21,6 +21,7 @@ export function CanvasHeader({ status, npub, onAddDraft, onLogout }: CanvasHeade
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-white px-6 py-3 dark:border-gray-800 dark:bg-gray-900">
       <div className="flex items-center gap-4">
+        <img src="/icon.svg" alt="" width={28} height={28} className="rounded-md" />
         <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100">
           Nostr Live Canvas
         </h1>

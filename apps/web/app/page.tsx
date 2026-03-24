@@ -39,8 +39,9 @@ export default function Home() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-zinc-950">
       <main className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+        <img src="/icon.svg" alt="Nostr Live Canvas" width={48} height={48} className="mx-auto mb-2" />
         <h1 className="mb-6 text-center text-2xl font-bold text-zinc-900 dark:text-zinc-100">
-          Nostr Relay
+          Nostr Live Canvas
         </h1>
 
         {/* 自動ログイン中 */}
