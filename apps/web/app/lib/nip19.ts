@@ -107,6 +107,24 @@ export function decodeNaddr(naddr: string): NaddrData | null {
   }
 }
 
+// ---------------------------------------------------------------------------
+// エンコード関数
+// ---------------------------------------------------------------------------
+
+/**
+ * eventId (と任意のpubkey) を nevent1... 文字列にエンコードする
+ *
+ * @param eventId hex形式のイベントID
+ * @param pubkey hex形式のpubkey（オプション）
+ * @returns bech32エンコードされた nevent 文字列
+ */
+export function encodeNevent(eventId: string, pubkey?: string): string {
+  return nip19.neventEncode({
+    id: eventId,
+    ...(pubkey ? { author: pubkey } : {}),
+  });
+}
+
 /**
  * nostr: URI をパースしてデコード結果を返す
  *
