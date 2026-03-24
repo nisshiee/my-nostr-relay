@@ -12,6 +12,7 @@ HOME_RELAY="wss://relay.nostr.nisshiee.org"
 APP_NAME="Nostr Live Canvas"
 APP_ABOUT="A live, canvas-style Nostr client"
 APP_PICTURE="https://nostr.nisshiee.org/icon.png"
+APP_WEBSITE="https://nostr.nisshiee.org"
 D_TAG="nostr-live-canvas"
 # 対応 event kinds
 KINDS=("1" "7" "6")
@@ -56,7 +57,8 @@ CONTENT=$(jq -cn \
   --arg name "$APP_NAME" \
   --arg about "$APP_ABOUT" \
   --arg picture "$APP_PICTURE" \
-  '{name: $name, about: $about, picture: $picture}')
+  --arg website "$APP_WEBSITE" \
+  '{name: $name, about: $about, picture: $picture, website: $website}')
 
 echo "📝 イベント内容:"
 echo "  kind: 31990"
