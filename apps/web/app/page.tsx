@@ -11,7 +11,7 @@ export default function Home() {
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
   const { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction, sendRepost } = useNostrRelay(pubkey, publishedSlotMapRef);
-  const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status, cache);
+  const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status, cache, publishedSlotMapRef);
 
   // 認証済み → LiveCanvas を全画面表示
   if (pubkey) {
