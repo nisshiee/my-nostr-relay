@@ -12,7 +12,7 @@ interface UseDraftNotesProps {
 interface UseDraftNotesResult {
   draftNotes: ComposeCardType[];
   publishedNotes: NoteCardType[];
-  addDraft: () => void;
+  addDraft: (opts?: { quotedEvent?: ComposeCardType["quotedEvent"] }) => void;
   handleDraftInput: (slotId: string) => void;
   handleDraftClose: (slotId: string) => void;
   handleDraftPublish: (slotId: string, noteCard: NoteCardType) => void;
@@ -37,7 +37,7 @@ export function useDraftNotes({
   const [publishedNotes, setPublishedNotes] = useState<NoteCardType[]>([]);
 
   // 下書きカードを追加する共通関数（nキー & ボタン共用）
-  const addDraft = useCallback(() => {
+  const addDraft = useCallback((opts?: { quotedEvent?: ComposeCardType["quotedEvent"] }) => {
     setDraftNotes((prev) => {
       const newDraft: ComposeCardType = {
         type: "compose",
@@ -46,6 +46,7 @@ export function useDraftNotes({
         created_at: Math.floor(Date.now() / 1000),
         score: 1,
         fadingOut: false,
+        ...(opts?.quotedEvent ? { quotedEvent: opts.quotedEvent } : {}),
       };
       return [...prev, newDraft];
     });
