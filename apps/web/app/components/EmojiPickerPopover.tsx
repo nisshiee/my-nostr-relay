@@ -23,6 +23,7 @@ export function EmojiPickerPopover({
   anchorRef,
 }: EmojiPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number; placement: "above" | "below" }>({ top: 0, left: 0, placement: "above" });
 
   /** アンカー要素の位置からポップオーバーの位置を計算する（上下自動切り替え） */
@@ -58,6 +59,15 @@ export function EmojiPickerPopover({
       });
     }
   }, [anchorRef]);
+
+  // 検索ボックスに自動フォーカス
+  useEffect(() => {
+    if (isOpen) {
+      requestAnimationFrame(() => {
+        searchRef.current?.focus();
+      });
+    }
+  }, [isOpen]);
 
   // ピッカー外クリックで閉じる
   useEffect(() => {
@@ -119,6 +129,7 @@ export function EmojiPickerPopover({
         }}
       >
         <EmojiPicker.Search
+          ref={searchRef}
           placeholder="絵文字を検索..."
           className="w-full px-3 py-2 text-sm border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400"
         />
