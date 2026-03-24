@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { Repeat2, Plus, Smile } from "lucide-react";
+import { MessageSquare, Repeat2, Plus, Smile } from "lucide-react";
 import { EmojiPickerPopover } from "./EmojiPickerPopover";
 
 /** NoteCard用アクションバー（カードクリックで展開するリアクション操作UI） */
@@ -13,6 +13,8 @@ interface ActionBarProps {
   onThumbsUp: () => void | Promise<void>;
   /** 自分が既に「👍」リアクション済みかどうか */
   isAlreadyReacted: boolean;
+  /** リプライボタンクリック時のハンドラ */
+  onReply?: () => void | Promise<void>;
   /** リポストボタンクリック時のハンドラ */
   onRepost: () => void | Promise<void>;
   /** 自分が既にリポスト済みかどうか */
@@ -25,6 +27,7 @@ interface ActionBarProps {
 
 export function ActionBar({
   isOpen,
+  onReply,
   onThumbsUp,
   isAlreadyReacted,
   onRepost,
@@ -59,6 +62,20 @@ export function ActionBar({
       }`}
     >
       <div className="flex items-center gap-1.5">
+        {/* リプライボタン */}
+        {onReply && (
+          <button
+            type="button"
+            aria-label="返信"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReply();
+            }}
+            className="p-1.5 rounded transition-colors text-gray-400 dark:text-gray-500 cursor-pointer hover:text-blue-500 dark:hover:text-blue-400"
+          >
+            <MessageSquare size={18} />
+          </button>
+        )}
         {/* リポストボタン */}
         <button
           type="button"

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo, type RefObject } from "react";
 import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
@@ -110,6 +110,7 @@ export function useThreadCards(
   pool: SimplePool | null,
   status: "connecting" | "loading" | "connected" | "error",
   cache: EventCache,
+  publishedSlotMapRef: RefObject<Map<string, string>>,
 ): UseThreadCardsResult {
   const [threadCards, setThreadCards] = useState<ThreadCard[]>([]);
   const [isProcessing, setIsProcessing] = useState(true);
@@ -398,9 +399,31 @@ export function useThreadCards(
               const hasOwnerNote = sortedNotes.some(n => n.pubkey === pubkey);
               const halfLife = hasOwnerNote ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
 
+              // slotId解決: publishedSlotMapRef → 構成ノートの既存slotId → 新規UUID
+              // ※ createNoteCard.ts の resolveSlotId は単一eventId用のため、
+              //   複数eventIdをループで試す必要があるここではインライン実装
+              let resolvedSlotId: string | undefined;
+
+              // 自分がpublishしたリプライのslotIdマッピングを確認
+              for (const eid of eventIds) {
+                resolvedSlotId = publishedSlotMapRef.current?.get(eid);
+                if (resolvedSlotId) break;
+              }
+
+              // 構成ノートがキャンバス上にNoteCardとして既に存在すればそのslotIdを引き継ぐ
+              if (!resolvedSlotId) {
+                for (const n of sortedNotes) {
+                  const existingNoteCard = notesMap.get(n.eventId);
+                  if (existingNoteCard?.slotId) {
+                    resolvedSlotId = existingNoteCard.slotId;
+                    break;
+                  }
+                }
+              }
+
               const newCard: ThreadCard = {
                 type: "thread",
-                slotId: crypto.randomUUID(),
+                slotId: resolvedSlotId ?? crypto.randomUUID(),
                 pubkey: sortedNotes[0]?.pubkey ?? note.pubkey,
                 score: calcFreshnessScore(latestCreatedAt, now, halfLife),
                 fadingOut: false,

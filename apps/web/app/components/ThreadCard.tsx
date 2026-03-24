@@ -8,9 +8,11 @@ import type {
   NostrProfile,
   Reactions,
 } from "../lib/types";
+import type { NostrEvent } from "../types/nostr";
 import { ContentRenderer } from "./content/ContentRenderer";
 import type { EventCache } from "../hooks/useEventCache";
 import { ActionBar } from "./ActionBar";
+import { ReplyCompose } from "./ReplyCompose";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -65,6 +67,17 @@ interface ThreadCardProps {
   onRelease?: () => void;
   /** EventCache インスタンス（引用ノード表示用） */
   cache?: EventCache;
+  /** リプライPublish時のコールバック */
+  onReplyPublish?: (
+    signedEvent: NostrEvent & { id: string; sig: string },
+    noteCard: { eventId: string; pubkey: string; content: string; tags: string[][]; created_at: number },
+    /** リプライ対象のスレッドslotId（仮ノート追加用） */
+    threadSlotId: string,
+  ) => void;
+  /** イベント送信関数 */
+  publishEvent?: (event: NostrEvent) => Promise<void>;
+  /** 自分のプロフィール（ReplyCompose で表示用） */
+  myProfile?: NostrProfile;
 }
 
 export function ThreadCard({
@@ -77,9 +90,14 @@ export function ThreadCard({
   onHold,
   onRelease,
   cache,
+  onReplyPublish,
+  publishEvent,
+  myProfile,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
+  /** リプライ対象のノートID（nullの場合はリプライ非表示） */
+  const [replyTargetNoteId, setReplyTargetNoteId] = useState<string | null>(null);
 
   // ResizeObserver でカードの高さを測定して親に通知
   useEffect(() => {
@@ -94,6 +112,23 @@ export function ThreadCard({
     observer.observe(el);
     return () => observer.disconnect();
   }, [thread.slotId, onHeightChange]);
+
+  // replyTargetNoteId がセットされたらホールド、解除されたらリリース
+  const prevReplyTargetRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevReplyTargetRef.current;
+    prevReplyTargetRef.current = replyTargetNoteId;
+    // 初回マウント時（prev === null, current === null）はスキップ
+    if (prev === null && replyTargetNoteId === null) return;
+
+    if (replyTargetNoteId !== null) {
+      setActiveNoteId(null);
+      onHold?.();
+    } else {
+      onRelease?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replyTargetNoteId]);
 
   // Click outside でアクションバーを閉じる
   // ※ 絵文字ピッカー（Portal描画）内のクリックはカード内扱いにする
@@ -129,10 +164,13 @@ export function ThreadCard({
     }
   }, [activeNoteId, onRelease]);
 
-  /** ノートクリック → アクションバーのトグル */
+  /** ノートクリック → アクションバーのトグル（リプライ入力中はトグルしない） */
   const handleNoteClick = (noteEventId: string, e: React.MouseEvent) => {
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) return;
+
+    // リプライ入力中はアクションバーのトグルを無視
+    if (replyTargetNoteId !== null) return;
 
     setActiveNoteId((prev) => {
       const next = prev === noteEventId ? null : noteEventId;
@@ -204,7 +242,7 @@ export function ThreadCard({
             myPubkey={myPubkey}
             onReaction={onReaction}
             isActive={isActive}
-            isLast={index === thread.notes.length - 1}
+            isLast={index === thread.notes.length - 1 && replyTargetNoteId === null}
             showDivider={index > 0}
             onClick={(e) => handleNoteClick(note.eventId, e)}
             onActionComplete={() => {
@@ -216,10 +254,45 @@ export function ThreadCard({
             onPickerOpenChange={(open) => {
               isEmojiPickerOpenRef.current = open;
             }}
+            onReply={
+              onReplyPublish && publishEvent && myPubkey
+                ? () => setReplyTargetNoteId(note.eventId)
+                : undefined
+            }
             cache={cache}
           />
         );
       })}
+
+      {/* リプライ入力エリア */}
+      {replyTargetNoteId !== null && myPubkey && publishEvent && onReplyPublish && (() => {
+        const targetNote = thread.notes.find((n) => n.eventId === replyTargetNoteId);
+        if (!targetNote) return null;
+        const replyToDisplayName = resolveDisplayName(targetNote.pubkey, profiles);
+        return (
+          <div className="px-3 pb-3">
+            <ReplyCompose
+              replyTarget={{
+                targetEventId: replyTargetNoteId,
+                targetPubkey: targetNote.pubkey,
+                rootEventId: thread.notes[0].eventId,
+              }}
+              replyToDisplayName={replyToDisplayName}
+              myPubkey={myPubkey}
+              myProfile={myProfile}
+              onPublish={(signedEvent, noteCard) => {
+                onReplyPublish(signedEvent, noteCard, thread.slotId);
+                setReplyTargetNoteId(null);
+              }}
+              onClose={() => setReplyTargetNoteId(null)}
+              publishEvent={publishEvent}
+              onHold={onHold}
+              onRelease={onRelease}
+              autoFocus
+            />
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -250,6 +323,8 @@ interface ThreadNoteItemProps {
   onRelease?: () => void;
   /** 絵文字ピッカーの開閉状態が変わったときのコールバック */
   onPickerOpenChange?: (isOpen: boolean) => void;
+  /** リプライボタンクリック時のハンドラ */
+  onReply?: () => void;
   cache?: EventCache;
 }
 
@@ -267,6 +342,7 @@ function ThreadNoteItem({
   onHold,
   onRelease,
   onPickerOpenChange,
+  onReply,
   cache,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
@@ -384,6 +460,7 @@ function ThreadNoteItem({
         {/* アクションバー（アクティブなノートのみ） */}
         <ActionBar
           isOpen={isActive}
+          onReply={onReply}
           onThumbsUp={async () => {
             try {
               if (onReaction) {

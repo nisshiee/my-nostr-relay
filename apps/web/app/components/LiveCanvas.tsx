@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../lib/constants";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { useDraftNotes } from "../hooks/useDraftNotes";
+import { useReplyDrafts } from "../hooks/useReplyDrafts";
 
 /** isProcessing中にuseCardLayoutに渡す空配列（参照を安定させて無限ループ防止） */
 const EMPTY_CARDS: Card[] = [];
@@ -100,13 +101,29 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     handleDraftPublish,
   } = useDraftNotes({ pubkey, notes, publishedSlotMapRef });
 
+  // リプライ仮データ管理
+  const {
+    pendingNoteReplies,
+    pendingThreadReplies,
+    addNoteReply,
+    addThreadReply,
+  } = useReplyDrafts({ threadCards, pubkey, publishedSlotMapRef });
+
   const scoredCards = useMemo((): Card[] => {
-    // notes + publishedNotes をマージ（eventIdで重複排除）
+    // pendingNoteReplies の originalNote.eventId を収集（仮ThreadCardに変換されるため notes から除外する）
+    const pendingOriginalEventIds = new Set<string>();
+    for (const pending of pendingNoteReplies.values()) {
+      pendingOriginalEventIds.add(pending.originalNote.eventId);
+    }
+
+    // notes + publishedNotes をマージ（eventIdで重複排除、pendingNoteRepliesの元ノートは除外）
     const noteEventIds = new Set(notes.map((n) => n.eventId));
     const uniquePublished = publishedNotes.filter((n) => !noteEventIds.has(n.eventId));
-    const allNotes = [...notes, ...uniquePublished];
+    const allNotes = [...notes, ...uniquePublished].filter(
+      (n) => !pendingOriginalEventIds.has(n.eventId),
+    );
 
-    const updatedNotes: Card[] = allNotes.map((note) => {
+    let updatedNotes: Card[] = allNotes.map((note) => {
       const halfLife = note.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
       // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
       const scoreTimestamp = note.repostInfo?.repostedAt ?? note.created_at;
@@ -128,22 +145,97 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
       };
     });
 
-    // threadCards にスコアを再計算
+    // pendingNoteReplies から仮ThreadCard を生成
+    const fakeThreads: Card[] = Array.from(pendingNoteReplies.values()).map(
+      (pending) => ({
+        type: "thread" as const,
+        slotId: pending.slotId,
+        pubkey: pending.originalNote.pubkey,
+        score: calcFreshnessScore(
+          pending.replyNote.created_at,
+          nowEpoch,
+          OWNER_SCORE_HALF_LIFE,
+        ),
+        fadingOut: false,
+        created_at: pending.replyNote.created_at,
+        notes: [
+          // 元のNoteCardをThreadNoteに変換
+          {
+            eventId: pending.originalNote.eventId,
+            pubkey: pending.originalNote.pubkey,
+            content: pending.originalNote.content,
+            created_at: pending.originalNote.created_at,
+            tags: pending.originalNote.tags,
+          },
+          // リプライ
+          pending.replyNote,
+        ],
+        eventIds: new Set([
+          pending.originalNote.eventId,
+          pending.replyNote.eventId,
+        ]),
+      }),
+    );
+
+    // 本物のthreadCardsに同じslotIdが存在する仮ThreadCardは除外（重複によるアニメーション発火防止）
+    const threadSlotIds = new Set(threadCards.map((tc) => tc.slotId));
+    const dedupedFakeThreads = fakeThreads.filter((ft) => !threadSlotIds.has(ft.slotId));
+
+    // ThreadCard（本物 or 仮）と同じslotIdのNoteCardを除外
+    // - fakeThreadSlotIds: pendingNoteRepliesから生成された仮ThreadCard（NoteCard→ThreadCard変化時の重複防止）
+    // - threadSlotIds: 本物のthreadCards（filteredNotesのeventIdベース除外だけでは
+    //   タイミングずれでNoteCardが残る場合があるため、slotIdベースでも除外する）
+    const allThreadSlotIds = new Set([
+      ...threadSlotIds,
+      ...dedupedFakeThreads.map((ft) => ft.slotId),
+    ]);
+    if (allThreadSlotIds.size > 0) {
+      updatedNotes = updatedNotes.filter((n) => !allThreadSlotIds.has(n.slotId));
+    }
+
+    // threadCards にスコアを再計算（pendingThreadReplies の仮ノートをマージ）
     const scoredThreads: Card[] = threadCards.map((thread) => {
+      // pendingThreadReplies の仮ノートを追加
+      // ※ threadCards更新後、pendingThreadRepliesクリア前の1レンダーで重複マージされるのを防ぐため、
+      //    すでにthreadCards.eventIdsに含まれるリプライは除外する
+      const pendingReplies = pendingThreadReplies.get(thread.slotId);
+      let mergedThread = thread;
+      if (pendingReplies && pendingReplies.length > 0) {
+        const newPending = pendingReplies.filter((p) => !thread.eventIds.has(p.replyEventId));
+        if (newPending.length > 0) {
+          const latestCreatedAt = Math.max(
+            thread.created_at,
+            ...newPending.map((p) => p.replyNote.created_at),
+          );
+          mergedThread = {
+            ...thread,
+            notes: [
+              ...thread.notes,
+              ...newPending.map((p) => p.replyNote),
+            ],
+            eventIds: new Set([
+              ...thread.eventIds,
+              ...newPending.map((p) => p.replyEventId),
+            ]),
+            created_at: latestCreatedAt,
+          };
+        }
+      }
+
       // スレッド内に自分のノートがあれば OWNER_SCORE_HALF_LIFE を使用
-      const hasOwnerNote = thread.notes.some((n) => n.pubkey === pubkey);
+      const hasOwnerNote = mergedThread.notes.some((n) => n.pubkey === pubkey);
       const halfLife = hasOwnerNote ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
       // スレッド内最新リプライの created_at をベースにスコア計算
-      const score = calcFreshnessScore(thread.created_at, nowEpoch, halfLife);
+      const score = calcFreshnessScore(mergedThread.created_at, nowEpoch, halfLife);
       return {
-        ...thread,
+        ...mergedThread,
         score,
-        fadingOut: holdSet.has(thread.slotId) ? false : (thread.fadingOut || score <= FADEOUT_THRESHOLD),
+        fadingOut: holdSet.has(mergedThread.slotId) ? false : (mergedThread.fadingOut || score <= FADEOUT_THRESHOLD),
       };
     });
 
-    return sortByScore([...scoredDrafts, ...updatedNotes, ...scoredThreads]);
-  }, [notes, publishedNotes, draftNotes, threadCards, nowEpoch, holdSet, pubkey]);
+    return sortByScore([...scoredDrafts, ...updatedNotes, ...scoredThreads, ...dedupedFakeThreads]);
+  }, [notes, publishedNotes, draftNotes, threadCards, pendingNoteReplies, pendingThreadReplies, nowEpoch, holdSet, pubkey]);
 
   // レイアウト計算
   // isProcessing中は空配列を渡してレイアウトエンジンを停止する
@@ -157,6 +249,13 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     computeColumnHeight,
   } = useCardLayout(layoutCards, columnCount, holdSet);
 
+  // 前回レンダーに存在したslotIdを追跡（既知カードの initial アニメーションをスキップするため）
+  const prevSlotIdsRef = useRef<Set<string>>(new Set());
+  const knownSlotIds = prevSlotIdsRef.current;
+  useEffect(() => {
+    prevSlotIdsRef.current = new Set(scoredCards.map((c) => c.slotId));
+  });
+
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
       <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
@@ -164,6 +263,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
       <main className="flex-1 overflow-y-auto p-4">
         <EmptyState status={status} hasNotes={notes.length > 0} isProcessing={isProcessing} />
 
+        {/* eslint-disable-next-line react-hooks/refs -- knownSlotIds is captured from ref before JSX intentionally */}
         {scoredCards.length > 0 && !isProcessing && (() => {
           const containerHeight = Math.max(
             ...Array.from({ length: columnCount }, (_, i) => computeColumnHeight(i)),
@@ -189,11 +289,14 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                       const zIndex = holdSet.has(note.slotId)
                         ? arr.length + 1000 // ホールド中は最前面
                         : arr.length - idx;
+                      // 前回レンダーに存在していたslotIdはinitialアニメーションをスキップ
+                      // （NoteCard→ThreadCard変化やリプライ追加時のズームを防止）
+                      const isKnownCard = knownSlotIds.has(note.slotId);
                       return (
                         <motion.div
                           key={note.slotId}
                           layout={false}
-                          initial={{ opacity: 0, scale: 0.8, x, y }}
+                          initial={isKnownCard ? false : { opacity: 0, scale: 0.8, x, y }}
                           animate={{
                             opacity: note.fadingOut ? 0 : 1,
                             scale: note.fadingOut ? 0.95 : 1,
@@ -256,6 +359,11 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               onHold={() => holdCard(note.slotId)}
                               onRelease={() => releaseCard(note.slotId)}
                               cache={cache}
+                              onReplyPublish={(signedEvent, noteCard, threadSlotId) => {
+                                addThreadReply(signedEvent, noteCard, threadSlotId);
+                              }}
+                              publishEvent={publishEvent}
+                              myProfile={profiles.get(pubkey)}
                             />
                           ) : (
                             <NoteCard
@@ -284,6 +392,11 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               onHeightChange={handleHeightChange}
                               onHold={() => holdCard(note.slotId)}
                               onRelease={() => releaseCard(note.slotId)}
+                              onReplyPublish={(signedEvent, noteCard, originalNote) => {
+                                addNoteReply(signedEvent, noteCard, originalNote);
+                              }}
+                              publishEvent={publishEvent}
+                              myProfile={profiles.get(pubkey)}
                             />
                           )}
                         </motion.div>

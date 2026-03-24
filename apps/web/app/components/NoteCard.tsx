@@ -3,8 +3,10 @@
 import { useRef, useEffect, useState } from "react";
 import Image from "next/image";
 import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
+import type { NostrEvent } from "../types/nostr";
 import { ContentRenderer } from "./content/ContentRenderer";
 import { ActionBar } from "./ActionBar";
+import { ReplyCompose } from "./ReplyCompose";
 import type { EventCache } from "../hooks/useEventCache";
 
 /** npubの省略表示を生成 */
@@ -51,9 +53,20 @@ interface NoteCardProps {
   onHeightChange?: (slotId: string, height: number) => void;
   onHold?: () => void;
   onRelease?: () => void;
+  /** リプライPublish時のコールバック */
+  onReplyPublish?: (
+    signedEvent: NostrEvent & { id: string; sig: string },
+    noteCard: { eventId: string; pubkey: string; content: string; tags: string[][]; created_at: number },
+    /** リプライ対象のNoteCard情報（仮ThreadCard構築用） */
+    originalNote: NoteCardType,
+  ) => void;
+  /** イベント送信関数 */
+  publishEvent?: (event: NostrEvent) => Promise<void>;
+  /** 自分のプロフィール（ReplyCompose で表示用） */
+  myProfile?: NostrProfile;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -64,6 +77,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
   const avatarUrl = profile?.picture;
   const cardRef = useRef<HTMLDivElement>(null);
   const [isActionBarOpen, setIsActionBarOpen] = useState(false);
+  const [isReplyMode, setIsReplyMode] = useState(false);
   const isHoveringRef = useRef(false);
   const isEmojiPickerOpenRef = useRef(false);
 
@@ -107,7 +121,9 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
   }, [isActionBarOpen]);
 
   // カードクリック → アクションバーのトグル（テキスト選択中は無視）
+  // リプライモード中はアクションバーをトグルしない
   const handleCardClick = (e: React.MouseEvent) => {
+    if (isReplyMode) return;
     const selection = window.getSelection();
     if (selection && selection.toString().length > 0) {
       return;
@@ -160,10 +176,18 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       onClick={handleCardClick}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-4 pt-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
-        isActionBarOpen ? "z-10 pb-2" : "pb-4"
+      className={`rounded-xl border bg-white dark:bg-gray-800 px-4 pt-4 hover:shadow-md dark:hover:shadow-gray-900/50 cursor-pointer relative ${
+        isReplyMode
+          ? "border-purple-200 dark:border-purple-800 border-l-[3px] border-l-purple-400 dark:border-l-purple-500 z-10 pb-4"
+          : `border-gray-200 dark:border-gray-700 ${isActionBarOpen ? "z-10 pb-2" : "pb-4"}`
       }`}
     >
+      {/* リプライモード: スレッドヘッダー */}
+      {isReplyMode && (
+        <div className="text-xs font-semibold text-purple-600 dark:text-purple-400 mb-2">
+          🧵 スレッド
+        </div>
+      )}
       {/* リポスト情報（カード最上部） */}
       {note.repostInfo && (
         <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
@@ -245,9 +269,13 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
         </div>
       )}
 
-      {/* アクションバー */}
+      {/* アクションバー（リプライモード中は非表示） */}
       <ActionBar
-        isOpen={isActionBarOpen}
+        isOpen={isReplyMode ? false : isActionBarOpen}
+        onReply={onReplyPublish && publishEvent ? () => {
+          setIsReplyMode(true);
+          onHold?.();
+        } : undefined}
         onThumbsUp={async () => {
           try {
             if (onReaction) {
@@ -290,6 +318,33 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           }
         }}
       />
+
+      {/* リプライモード: ReplyCompose */}
+      {isReplyMode && publishEvent && myPubkey && (
+        <ReplyCompose
+          replyTarget={{
+            targetEventId: note.eventId,
+            targetPubkey: note.pubkey,
+            rootEventId: note.eventId,
+          }}
+          replyToDisplayName={displayName}
+          myPubkey={myPubkey}
+          myProfile={myProfile}
+          onPublish={(signedEvent, noteCard) => {
+            onReplyPublish?.(signedEvent, noteCard, note);
+            setIsReplyMode(false);
+            onRelease?.();
+          }}
+          onClose={() => {
+            setIsReplyMode(false);
+            onRelease?.();
+          }}
+          publishEvent={publishEvent}
+          onHold={onHold}
+          onRelease={onRelease}
+          autoFocus
+        />
+      )}
     </div>
   );
 }
