@@ -7,7 +7,7 @@ import type { NostrEvent } from "../types/nostr";
 import type { EventCache } from "../hooks/useEventCache";
 import { useImageUpload } from "../hooks/useImageUpload";
 import { QuoteNode } from "./content/QuoteNode";
-import { encodeNevent } from "../lib/nip19";
+import { encodeNevent, decodeNevent, decodeNote } from "../lib/nip19";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -56,9 +56,17 @@ export function ComposeCard({
   const [text, setText] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [internalQuotedEvent, setInternalQuotedEvent] = useState<
+    { eventId: string; pubkey?: string; sig?: string } | undefined
+  >(quotedEvent);
   const cardRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // props の quotedEvent が変わったら内部ステートも更新
+  useEffect(() => {
+    setInternalQuotedEvent(quotedEvent);
+  }, [quotedEvent]);
 
   const imageUpload = useImageUpload();
 
@@ -186,13 +194,13 @@ export function ComposeCard({
         throw new Error("NIP-07 拡張機能が見つかりません");
       }
 
-      const neventUri = quotedEvent
-        ? `nostr:${encodeNevent(quotedEvent.eventId, quotedEvent.pubkey)}`
+      const neventUri = internalQuotedEvent
+        ? `nostr:${encodeNevent(internalQuotedEvent.eventId, internalQuotedEvent.pubkey)}`
         : null;
       const finalContent = neventUri ? `${trimmed}\n${neventUri}` : trimmed;
       const tags: string[][] = [];
-      if (quotedEvent) {
-        tags.push(["q", quotedEvent.eventId, "", quotedEvent.pubkey]);
+      if (internalQuotedEvent) {
+        tags.push(["q", internalQuotedEvent.eventId, "", internalQuotedEvent.pubkey ?? ""]);
       }
 
       const unsignedEvent: NostrEvent = {
@@ -228,7 +236,7 @@ export function ComposeCard({
       setError(err instanceof Error ? err.message : "署名に失敗しました");
       setPublishing(false);
     }
-  }, [text, publishing, publishEvent, onPublish, slotId, quotedEvent]);
+  }, [text, publishing, publishEvent, onPublish, slotId, internalQuotedEvent]);
 
   const handleClose = useCallback(() => {
     if (
@@ -255,7 +263,35 @@ export function ComposeCard({
           }
         }
       }
-      // 画像が見つからなければテキストの通常ペーストとして処理
+      // 画像が見つからない場合、テキストからbech32引用を検出
+      const pastedText = e.clipboardData?.getData("text/plain")?.trim();
+      if (pastedText) {
+        // nostr: プレフィックスを剥がす（クライアントが nostr:nevent1... 形式でコピーするケース）
+        const stripped = pastedText.startsWith("nostr:") ? pastedText.slice(6) : pastedText;
+        if (stripped.startsWith("nevent1")) {
+          const decoded = decodeNevent(stripped);
+          if (decoded) {
+            e.preventDefault();
+            setInternalQuotedEvent({
+              eventId: decoded.eventId,
+              pubkey: decoded.pubkey,
+            });
+            return;
+          }
+        }
+        if (stripped.startsWith("note1")) {
+          const decoded = decodeNote(stripped);
+          if (decoded) {
+            e.preventDefault();
+            setInternalQuotedEvent({
+              eventId: decoded.eventId,
+              pubkey: undefined,
+            });
+            return;
+          }
+        }
+      }
+      // テキストの通常ペーストとして処理
     },
     [imageUpload],
   );
@@ -339,13 +375,21 @@ export function ComposeCard({
       />
 
       {/* 引用プレビュー */}
-      {quotedEvent && cache && profiles && (
-        <div className="mt-2">
+      {internalQuotedEvent && cache && profiles && (
+        <div className="mt-2 relative">
           <QuoteNode
-            uri={`nostr:${encodeNevent(quotedEvent.eventId, quotedEvent.pubkey)}`}
+            uri={`nostr:${encodeNevent(internalQuotedEvent.eventId, internalQuotedEvent.pubkey)}`}
             cache={cache}
             profiles={profiles}
           />
+          <button
+            type="button"
+            onClick={() => setInternalQuotedEvent(undefined)}
+            className="absolute -top-2 -right-2 rounded-full bg-gray-700 dark:bg-gray-600 text-white w-5 h-5 flex items-center justify-center text-xs hover:bg-gray-800 dark:hover:bg-gray-500 transition-colors"
+            title="引用を解除"
+          >
+            ×
+          </button>
         </div>
       )}
 
