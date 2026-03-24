@@ -78,6 +78,8 @@ interface ThreadCardProps {
   publishEvent?: (event: NostrEvent) => Promise<void>;
   /** 自分のプロフィール（ReplyCompose で表示用） */
   myProfile?: NostrProfile;
+  /** 引用ボタン押下時のハンドラ */
+  onQuote?: (eventId: string, pubkey: string) => void;
 }
 
 export function ThreadCard({
@@ -93,6 +95,7 @@ export function ThreadCard({
   onReplyPublish,
   publishEvent,
   myProfile,
+  onQuote,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -259,6 +262,7 @@ export function ThreadCard({
                 ? () => setReplyTargetNoteId(note.eventId)
                 : undefined
             }
+            onQuote={onQuote ? () => onQuote(note.eventId, note.pubkey) : undefined}
             cache={cache}
           />
         );
@@ -325,6 +329,8 @@ interface ThreadNoteItemProps {
   onPickerOpenChange?: (isOpen: boolean) => void;
   /** リプライボタンクリック時のハンドラ */
   onReply?: () => void;
+  /** 引用ボタンクリック時のハンドラ */
+  onQuote?: () => void;
   cache?: EventCache;
 }
 
@@ -343,6 +349,7 @@ function ThreadNoteItem({
   onRelease,
   onPickerOpenChange,
   onReply,
+  onQuote,
   cache,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
@@ -461,6 +468,7 @@ function ThreadNoteItem({
         <ActionBar
           isOpen={isActive}
           onReply={onReply}
+          onQuote={onQuote}
           onThumbsUp={async () => {
             try {
               if (onReaction) {

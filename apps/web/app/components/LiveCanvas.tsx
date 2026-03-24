@@ -367,6 +367,14 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               }}
                               publishEvent={publishEvent}
                               myProfile={profiles.get(pubkey)}
+                              onQuote={(eventId, quotePubkey) => {
+                                addDraft({
+                                  quotedEvent: {
+                                    eventId,
+                                    pubkey: quotePubkey,
+                                  },
+                                });
+                              }}
                             />
                           ) : (
                             <NoteCard
