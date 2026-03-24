@@ -64,9 +64,11 @@ interface NoteCardProps {
   publishEvent?: (event: NostrEvent) => Promise<void>;
   /** 自分のプロフィール（ReplyCompose で表示用） */
   myProfile?: NostrProfile;
+  /** 引用ボタンクリック時のコールバック */
+  onQuote?: () => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -302,6 +304,11 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           }
         }}
         isAlreadyReposted={false}
+        onQuote={onQuote ? async () => {
+          setIsActionBarOpen(false);
+          onRelease?.();
+          onQuote();
+        } : undefined}
         onPickerOpenChange={(open) => {
           isEmojiPickerOpenRef.current = open;
         }}
