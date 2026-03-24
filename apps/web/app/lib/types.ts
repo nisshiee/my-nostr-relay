@@ -32,6 +32,8 @@ export interface NoteCard extends CardBase {
 /** 投稿カード（下書き） */
 export interface ComposeCard extends CardBase {
   type: "compose";
+  /** 引用元イベント情報（引用ノート作成時に設定） */
+  quotedEvent?: { eventId: string; pubkey: string; sig?: string };
 }
 
 /** スレッド内の個別ノート */

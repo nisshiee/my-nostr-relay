@@ -4,7 +4,10 @@ import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import Image from "next/image";
 import type { NoteCard, NostrProfile } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
+import type { EventCache } from "../hooks/useEventCache";
 import { useImageUpload } from "../hooks/useImageUpload";
+import { QuoteNode } from "./content/QuoteNode";
+import { encodeNevent } from "../lib/nip19";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -26,6 +29,12 @@ interface ComposeCardProps {
   /** テキストエリアからブラーしたときホールド解除 */
   onRelease?: (slotId: string) => void;
   autoFocus?: boolean;
+  /** 引用元イベント情報 */
+  quotedEvent?: { eventId: string; pubkey: string; sig?: string };
+  /** EventCache インスタンス（引用プレビュー用） */
+  cache?: EventCache;
+  /** pubkey → NostrProfile のマップ（引用プレビュー用） */
+  profiles?: Map<string, NostrProfile>;
 }
 
 export function ComposeCard({
@@ -40,6 +49,9 @@ export function ComposeCard({
   onHold,
   onRelease,
   autoFocus,
+  quotedEvent,
+  cache,
+  profiles,
 }: ComposeCardProps) {
   const [text, setText] = useState("");
   const [publishing, setPublishing] = useState(false);
@@ -174,11 +186,20 @@ export function ComposeCard({
         throw new Error("NIP-07 拡張機能が見つかりません");
       }
 
+      const neventUri = quotedEvent
+        ? `nostr:${encodeNevent(quotedEvent.eventId, quotedEvent.pubkey)}`
+        : null;
+      const finalContent = neventUri ? `${trimmed}\n${neventUri}` : trimmed;
+      const tags: string[][] = [];
+      if (quotedEvent) {
+        tags.push(["q", quotedEvent.eventId, "", quotedEvent.pubkey]);
+      }
+
       const unsignedEvent: NostrEvent = {
         kind: 1,
         created_at: Math.floor(Date.now() / 1000),
-        tags: [],
-        content: trimmed,
+        tags,
+        content: finalContent,
       };
 
       const signedEvent = await nostr.signEvent(unsignedEvent);
@@ -207,7 +228,7 @@ export function ComposeCard({
       setError(err instanceof Error ? err.message : "署名に失敗しました");
       setPublishing(false);
     }
-  }, [text, publishing, publishEvent, onPublish, slotId]);
+  }, [text, publishing, publishEvent, onPublish, slotId, quotedEvent]);
 
   const handleClose = useCallback(() => {
     if (
@@ -316,6 +337,17 @@ export function ComposeCard({
         className="w-full resize-none overflow-hidden rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 p-3 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-400 dark:focus:ring-purple-600 leading-relaxed"
         disabled={publishing}
       />
+
+      {/* 引用プレビュー */}
+      {quotedEvent && cache && profiles && (
+        <div className="mt-2">
+          <QuoteNode
+            uri={`nostr:${encodeNevent(quotedEvent.eventId, quotedEvent.pubkey)}`}
+            cache={cache}
+            profiles={profiles}
+          />
+        </div>
+      )}
 
       {/* 画像アップロードセクション */}
       <input

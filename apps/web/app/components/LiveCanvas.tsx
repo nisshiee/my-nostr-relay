@@ -345,6 +345,9 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               onHold={holdCard}
                               onRelease={releaseCard}
                               autoFocus
+                              quotedEvent={note.quotedEvent}
+                              cache={cache}
+                              profiles={profiles}
                             />
                           ) : note.type === "thread" ? (
                             <ThreadCard
@@ -364,6 +367,14 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               }}
                               publishEvent={publishEvent}
                               myProfile={profiles.get(pubkey)}
+                              onQuote={(eventId, quotePubkey) => {
+                                addDraft({
+                                  quotedEvent: {
+                                    eventId,
+                                    pubkey: quotePubkey,
+                                  },
+                                });
+                              }}
                             />
                           ) : (
                             <NoteCard
@@ -374,6 +385,15 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               myPubkey={pubkey}
                               onReaction={(emoji, imageUrl) => {
                                 sendReaction(note.eventId, note.pubkey, emoji, imageUrl).catch(console.error);
+                              }}
+                              onQuote={() => {
+                                addDraft({
+                                  quotedEvent: {
+                                    eventId: note.eventId,
+                                    pubkey: note.pubkey,
+                                    sig: note.sig,
+                                  },
+                                });
                               }}
                               onRepost={() => {
                                 const originalEvent: NostrEvent = {
