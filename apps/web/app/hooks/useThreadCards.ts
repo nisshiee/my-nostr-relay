@@ -471,7 +471,7 @@ export function useThreadCards(
 
             // setThreadCards の updater で既存カードにマージ
             setThreadCards((prev) => {
-              let updatedCards = prev.map((card) => ({
+              const updatedCards = prev.map((card) => ({
                 ...card,
                 notes: [...card.notes],
                 eventIds: new Set(card.eventIds),
@@ -507,12 +507,12 @@ export function useThreadCards(
               let changed = false;
 
               // 追加できなくなるまでループ（深い祖先チェーンに対応）
-              let remaining = new Map(fetchedNotesMap);
+              const remaining = new Map(fetchedNotesMap);
               let lastSize = -1;
               while (remaining.size > 0 && remaining.size !== lastSize) {
                 lastSize = remaining.size;
                 for (const [fetchedId, fetchedNote] of remaining) {
-                  let cardIdx = eventIdToCardIndex.get(fetchedId)
+                  const cardIdx = eventIdToCardIndex.get(fetchedId)
                     ?? referencedIdToCardIndex.get(fetchedId);
                   if (cardIdx === undefined) continue;
 
