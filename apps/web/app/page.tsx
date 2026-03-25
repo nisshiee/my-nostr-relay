@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 import { useAuth } from "./contexts/AuthContext";
 import { useNostrRelay } from "./hooks/useNostrRelay";
 import { useThreadCards } from "./hooks/useThreadCards";
+import { useRecentEmojis } from "./hooks/useRecentEmojis";
 import { LiveCanvas } from "./components/LiveCanvas";
 
 export default function Home() {
@@ -12,6 +13,15 @@ export default function Home() {
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
   const { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction, sendRepost } = useNostrRelay(pubkey, publishedSlotMapRef);
   const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status, cache, publishedSlotMapRef);
+  const { recentEmojis, addEmoji } = useRecentEmojis(pool, relayUrls, pubkey);
+
+  const handleSendReaction = useCallback(
+    async (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => {
+      addEmoji(emoji); // 楽観的に即座に更新
+      await sendReaction(targetEventId, targetPubkey, emoji, imageUrl);
+    },
+    [sendReaction, addEmoji],
+  );
 
   // 認証済み → LiveCanvas を全画面表示
   if (pubkey) {
@@ -26,11 +36,12 @@ export default function Home() {
         npub={npub}
         publishEvent={publishEvent}
         publishedSlotMapRef={publishedSlotMapRef}
-        sendReaction={sendReaction}
+        sendReaction={handleSendReaction}
         sendRepost={sendRepost}
         cache={cache}
         onLogout={logout}
         isProcessing={isProcessing}
+        recentEmojis={recentEmojis}
       />
     );
   }

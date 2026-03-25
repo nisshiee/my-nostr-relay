@@ -80,6 +80,8 @@ interface ThreadCardProps {
   myProfile?: NostrProfile;
   /** 引用ボタン押下時のハンドラ */
   onQuote?: (eventId: string, pubkey: string) => void;
+  /** 最近使った絵文字の配列 */
+  recentEmojis?: string[];
 }
 
 export function ThreadCard({
@@ -96,6 +98,7 @@ export function ThreadCard({
   publishEvent,
   myProfile,
   onQuote,
+  recentEmojis,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -264,6 +267,7 @@ export function ThreadCard({
             }
             onQuote={onQuote ? () => onQuote(note.eventId, note.pubkey) : undefined}
             cache={cache}
+            recentEmojis={recentEmojis}
           />
         );
       })}
@@ -332,6 +336,8 @@ interface ThreadNoteItemProps {
   /** 引用ボタンクリック時のハンドラ */
   onQuote?: () => void;
   cache?: EventCache;
+  /** 最近使った絵文字の配列 */
+  recentEmojis?: string[];
 }
 
 function ThreadNoteItem({
@@ -351,6 +357,7 @@ function ThreadNoteItem({
   onReply,
   onQuote,
   cache,
+  recentEmojis,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
   const displayName =
@@ -487,6 +494,7 @@ function ThreadNoteItem({
             // スレッド内ノートのリポストは未実装（将来対応）
           }}
           isAlreadyReposted={false}
+          recentEmojis={recentEmojis}
           onPickerOpenChange={onPickerOpenChange}
           onEmojiSelect={async (emoji) => {
             try {
