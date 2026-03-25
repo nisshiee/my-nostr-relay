@@ -116,8 +116,14 @@ export function useThreadCards(
   const [isProcessing, setIsProcessing] = useState(true);
   const initialProcessingDoneRef = useRef(false);
 
-  // スレッドに含まれる全eventIdの集合（filteredNotes計算用）
-  const [threadEventIds, setThreadEventIds] = useState<Set<string>>(new Set());
+  // スレッドに含まれる全eventIdの集合（filteredNotes計算用、threadCardsから派生）
+  const threadEventIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const card of threadCards) {
+      for (const eid of card.eventIds) ids.add(eid);
+    }
+    return ids;
+  }, [threadCards]);
   // 処理済みリプライeventId（再処理防止）
   const processedReplyIdsRef = useRef<Set<string>>(new Set());
 
@@ -189,6 +195,7 @@ export function useThreadCards(
     let cancelled = false;
 
     const timer = setTimeout(() => {
+      if (cancelled) return;
       // 新しいリプライを検出
       const newReplies: NoteCard[] = [];
       for (const note of notes) {
@@ -216,8 +223,8 @@ export function useThreadCards(
         sig: "",
       } satisfies Event)));
 
-      // 各リプライについてスレッド構築
-      const processReplies = async () => {
+      // 各リプライについてスレッド構築（2フェーズ）
+      const processReplies = () => {
         // リプライをグルーピング: 共通の参照eventIdを持つリプライは同じスレッドに
         const replyGroups: { note: NoteCard; refIds: string[] }[] = [];
         for (const note of newReplies) {
@@ -225,38 +232,37 @@ export function useThreadCards(
           replyGroups.push({ note, refIds });
         }
 
-        // 未フェッチの祖先eventIdを収集（cache が既知イベントを管理）
-        const allMissingIds = new Set<string>();
-        for (const { refIds } of replyGroups) {
-          for (const id of refIds) {
-            if (!cache.getEvent(id)) {
-              allMissingIds.add(id);
-            }
-          }
-        }
+        // --- フェーズ1: ローカルデータのみでスレッド構築（同期的） ---
 
-        // 祖先を一括フェッチ
-        let fetchedEvents: Event[] = [];
-        if (allMissingIds.size > 0) {
-          fetchedEvents = await fetchThreadAncestors([...allMissingIds]);
-        }
-
-        // キャンセルチェック
-        if (cancelled) return;
-
-        // フェッチした祖先をThreadNoteに変換
-        const fetchedNotesMap = new Map<string, ThreadNote>();
-        for (const event of fetchedEvents) {
-          fetchedNotesMap.set(event.id, eventToThreadNote(event));
-        }
-
-        // 既存notesからもThreadNoteを構築（EventIDでルックアップ用）
+        // 既存notesからルックアップ用マップを構築
         const notesMap = new Map<string, NoteCard>();
         for (const note of notes) {
           notesMap.set(note.eventId, note);
         }
 
-        // スレッドを構築・マージ（immutable更新）
+        // ローカルに存在するノートと、フェッチが必要なIDを分類
+        const localNotesMap = new Map<string, ThreadNote>();
+        const missingIds = new Set<string>();
+        for (const { refIds } of replyGroups) {
+          for (const id of refIds) {
+            if (localNotesMap.has(id) || missingIds.has(id)) continue;
+            // notesMap（現在のnotes配列）から探す
+            const existingNote = notesMap.get(id);
+            if (existingNote) {
+              localNotesMap.set(id, noteCardToThreadNote(existingNote));
+              continue;
+            }
+            // cache から探す
+            const cached = cache.getEvent(id);
+            if (cached) {
+              localNotesMap.set(id, eventToThreadNote(cached));
+              continue;
+            }
+            missingIds.add(id);
+          }
+        }
+
+        // フェーズ1: ローカルデータでスレッド構築・マージ（immutable更新）
         setThreadCards((prev) => {
           // 全カードのディープコピー（immutable更新のため）
           let updatedCards: ThreadCard[] = prev.map((card) => ({
@@ -342,12 +348,12 @@ export function useThreadCards(
                 eventIdToCardIndex.set(note.eventId, targetCardIndex);
               }
 
-              // 参照先のフェッチ結果も追加
+              // 参照先のローカルデータを追加
               for (const refId of refIds) {
                 if (!newEventIds.has(refId)) {
-                  const fetched = fetchedNotesMap.get(refId);
+                  const localNote = localNotesMap.get(refId);
                   const existingNote = notesMap.get(refId);
-                  const noteToAdd = fetched ?? (existingNote ? noteCardToThreadNote(existingNote) : undefined);
+                  const noteToAdd = localNote ?? (existingNote ? noteCardToThreadNote(existingNote) : undefined);
                   if (noteToAdd) {
                     newNotes.push(noteToAdd);
                     newEventIds.add(refId);
@@ -378,12 +384,12 @@ export function useThreadCards(
               const threadNotes: ThreadNote[] = [noteCardToThreadNote(note)];
               const eventIds = new Set<string>([note.eventId]);
 
-              // 参照先を追加
+              // 参照先を追加（ローカルデータのみ）
               for (const refId of refIds) {
                 if (eventIds.has(refId)) continue;
-                const fetched = fetchedNotesMap.get(refId);
+                const localNote = localNotesMap.get(refId);
                 const existingNote = notesMap.get(refId);
-                const noteToAdd = fetched ?? (existingNote ? noteCardToThreadNote(existingNote) : undefined);
+                const noteToAdd = localNote ?? (existingNote ? noteCardToThreadNote(existingNote) : undefined);
                 if (noteToAdd) {
                   threadNotes.push(noteToAdd);
                   eventIds.add(refId);
@@ -400,8 +406,6 @@ export function useThreadCards(
               const halfLife = hasOwnerNote ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
 
               // slotId解決: publishedSlotMapRef → 構成ノートの既存slotId → 新規UUID
-              // ※ createNoteCard.ts の resolveSlotId は単一eventId用のため、
-              //   複数eventIdをループで試す必要があるここではインライン実装
               let resolvedSlotId: string | undefined;
 
               // 自分がpublishしたリプライのslotIdマッピングを確認
@@ -440,38 +444,128 @@ export function useThreadCards(
             }
           }
 
-          // threadEventIdsRef を更新（filteredNotes計算用）
-          const allThreadEventIds = new Set<string>();
-          for (const card of updatedCards) {
-            for (const eid of card.eventIds) {
-              allThreadEventIds.add(eid);
-            }
-          }
-          setThreadEventIds(allThreadEventIds);
-
           return updatedCards;
         });
 
-        // スレッド構築成功後にリプライIDを処理済みとしてマーク
-        // （updater内ではなく外に置くことで、React updaterの純粋性を保つ）
+        // フェーズ1完了: リプライIDを処理済みとしてマーク
         for (const { note } of replyGroups) {
           processedReplyIdsRef.current.add(note.eventId);
         }
 
-        // 初回処理完了
-        if (!cancelled && !initialProcessingDoneRef.current) {
+        // フェーズ1完了: isProcessing を false に（ネットワーク待ちなし）
+        if (!initialProcessingDoneRef.current) {
           initialProcessingDoneRef.current = true;
           setIsProcessing(false);
+        }
+
+        // --- フェーズ2: バックグラウンドで祖先をフェッチしてマージ ---
+        if (missingIds.size > 0) {
+          fetchThreadAncestors([...missingIds]).then((fetchedEvents) => {
+            if (cancelled) return;
+            if (fetchedEvents.length === 0) return;
+
+            const fetchedNotesMap = new Map<string, ThreadNote>();
+            for (const event of fetchedEvents) {
+              fetchedNotesMap.set(event.id, eventToThreadNote(event));
+            }
+
+            // setThreadCards の updater で既存カードにマージ
+            setThreadCards((prev) => {
+              let updatedCards = prev.map((card) => ({
+                ...card,
+                notes: [...card.notes],
+                eventIds: new Set(card.eventIds),
+              }));
+
+              // 既存カードのeventId → index マッピング
+              const eventIdToCardIndex = new Map<string, number>();
+              for (let i = 0; i < updatedCards.length; i++) {
+                for (const eid of updatedCards[i]!.eventIds) {
+                  eventIdToCardIndex.set(eid, i);
+                }
+              }
+
+              // 各カードの全ノートが参照しているeventId → カードindex のマッピング
+              // （フェッチした祖先ノートの eventId が直接カードの eventIds に入っていない場合、
+              //  そのノートを参照しているノートが所属するカードを探す必要がある）
+              const referencedIdToCardIndex = new Map<string, number>();
+              for (let i = 0; i < updatedCards.length; i++) {
+                for (const n of updatedCards[i]!.notes) {
+                  // replyTo の eventId
+                  if (n.replyTo?.eventId) {
+                    referencedIdToCardIndex.set(n.replyTo.eventId, i);
+                  }
+                  // 全ての e タグ参照
+                  for (const tag of n.tags) {
+                    if (tag[0] === "e" && tag[1]) {
+                      referencedIdToCardIndex.set(tag[1], i);
+                    }
+                  }
+                }
+              }
+
+              let changed = false;
+
+              // 追加できなくなるまでループ（深い祖先チェーンに対応）
+              let remaining = new Map(fetchedNotesMap);
+              let lastSize = -1;
+              while (remaining.size > 0 && remaining.size !== lastSize) {
+                lastSize = remaining.size;
+                for (const [fetchedId, fetchedNote] of remaining) {
+                  let cardIdx = eventIdToCardIndex.get(fetchedId)
+                    ?? referencedIdToCardIndex.get(fetchedId);
+                  if (cardIdx === undefined) continue;
+
+                  const card = updatedCards[cardIdx]!;
+                  if (!card.eventIds.has(fetchedId)) {
+                    card.notes.push(fetchedNote);
+                    card.eventIds.add(fetchedId);
+                    eventIdToCardIndex.set(fetchedId, cardIdx);
+                    // 新しいノートの参照先もマッピングに追加
+                    if (fetchedNote.replyTo?.eventId) {
+                      referencedIdToCardIndex.set(fetchedNote.replyTo.eventId, cardIdx);
+                    }
+                    for (const tag of fetchedNote.tags) {
+                      if (tag[0] === "e" && tag[1]) {
+                        referencedIdToCardIndex.set(tag[1], cardIdx);
+                      }
+                    }
+                    changed = true;
+                  }
+                  remaining.delete(fetchedId);
+                }
+              }
+
+              if (!changed) return prev;
+
+              // ソート、replyTo解決、スコア再計算
+              for (let i = 0; i < updatedCards.length; i++) {
+                const card = updatedCards[i]!;
+                const sortedNotes = resolveReplyAuthors(sortThreadNotes(card.notes));
+                const latestCreatedAt = sortedNotes.length > 0
+                  ? Math.max(...sortedNotes.map((n) => n.created_at))
+                  : card.created_at;
+                const now = Math.floor(Date.now() / 1000);
+                const hasOwnerNote = sortedNotes.some((n) => n.pubkey === pubkey);
+                const halfLife = hasOwnerNote ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
+
+                updatedCards[i] = {
+                  ...card,
+                  notes: sortedNotes,
+                  created_at: latestCreatedAt,
+                  score: calcFreshnessScore(latestCreatedAt, now, halfLife),
+                };
+              }
+
+              return updatedCards;
+            });
+          }).catch((err) => {
+            console.error("[useThreadCards] フェーズ2 祖先フェッチエラー:", err);
+          });
         }
       };
 
-      processReplies().catch((err) => {
-        console.error("[useThreadCards] スレッド処理エラー:", err);
-        if (!cancelled && !initialProcessingDoneRef.current) {
-          initialProcessingDoneRef.current = true;
-          setIsProcessing(false);
-        }
-      });
+      processReplies();
     }, THREAD_PROCESS_DEBOUNCE_MS);
 
     return () => {
