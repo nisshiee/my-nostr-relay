@@ -25,6 +25,7 @@ export function EmojiPickerPopover({
   const popoverRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number; placement: "above" | "below" }>({ top: 0, left: 0, placement: "above" });
+  const [search, setSearch] = useState("");
 
   /** アンカー要素の位置からポップオーバーの位置を計算する（上下自動切り替え） */
   const updatePosition = useCallback(() => {
@@ -130,32 +131,36 @@ export function EmojiPickerPopover({
       >
         <EmojiPicker.Search
           ref={searchRef}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
           placeholder="絵文字を検索..."
           className="w-full px-3 py-2 text-sm border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400"
         />
         <EmojiPicker.Viewport className="h-[230px]">
           {/* Quick picks section - inside viewport for unified scrolling */}
-          <div>
-            <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-800">
-              Quick picks
+          {search === "" && (
+            <div>
+              <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-800">
+                Quick picks
+              </div>
+              <div className="flex px-1">
+                {["🎉", "😢", "😇"].map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    aria-label={emoji}
+                    className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-xl cursor-pointer"
+                    onClick={() => {
+                      onEmojiSelect(emoji);
+                      onClose();
+                    }}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="flex px-1">
-              {["🎉", "😢", "😇"].map((emoji) => (
-                <button
-                  key={emoji}
-                  type="button"
-                  aria-label={emoji}
-                  className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-xl cursor-pointer"
-                  onClick={() => {
-                    onEmojiSelect(emoji);
-                    onClose();
-                  }}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
           <EmojiPicker.Loading className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">読み込み中...</EmojiPicker.Loading>
           <EmojiPicker.Empty className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">見つかりません</EmojiPicker.Empty>
           <EmojiPicker.List
