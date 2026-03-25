@@ -66,9 +66,11 @@ interface NoteCardProps {
   myProfile?: NostrProfile;
   /** 引用ボタンクリック時のコールバック */
   onQuote?: () => void;
+  /** 最近使った絵文字の配列 */
+  recentEmojis?: string[];
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -309,6 +311,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           onRelease?.();
           onQuote();
         } : undefined}
+        recentEmojis={recentEmojis}
         onPickerOpenChange={(open) => {
           isEmojiPickerOpenRef.current = open;
         }}

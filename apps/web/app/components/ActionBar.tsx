@@ -25,6 +25,8 @@ interface ActionBarProps {
   onEmojiSelect?: (emoji: string) => void;
   /** 絵文字ピッカーの開閉状態が変わったときのコールバック */
   onPickerOpenChange?: (isOpen: boolean) => void;
+  /** 最近使った絵文字の配列 */
+  recentEmojis?: string[];
 }
 
 export function ActionBar({
@@ -37,6 +39,7 @@ export function ActionBar({
   onQuote,
   onEmojiSelect,
   onPickerOpenChange,
+  recentEmojis,
 }: ActionBarProps) {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
@@ -150,6 +153,7 @@ export function ActionBar({
                 onEmojiSelect(emoji);
               }}
               anchorRef={emojiButtonRef}
+              recentEmojis={recentEmojis}
             />
           </>
         )}

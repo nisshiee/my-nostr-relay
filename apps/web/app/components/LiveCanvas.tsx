@@ -45,13 +45,14 @@ interface LiveCanvasProps {
   cache: EventCache;
   onLogout: () => void;
   isProcessing: boolean;
+  recentEmojis: string[];
 }
 
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -355,6 +356,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               profiles={profiles}
                               reactions={reactions}
                               myPubkey={pubkey}
+                              recentEmojis={recentEmojis}
                               onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
                                 sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
                               }}
@@ -380,6 +382,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                             <NoteCard
                               note={note}
                               profile={profiles.get(note.pubkey)}
+                              recentEmojis={recentEmojis}
                               reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
                               reactions={reactions.get(note.eventId)}
                               myPubkey={pubkey}
