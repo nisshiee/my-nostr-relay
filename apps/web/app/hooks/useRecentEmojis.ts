@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { SubCloser } from "nostr-tools/abstract-pool";
@@ -13,18 +13,31 @@ function isUnicodeEmoji(content: string): boolean {
   return /\p{Extended_Pictographic}/u.test(content) || /\p{Regional_Indicator}/u.test(content) || /\u20e3/u.test(content);
 }
 
+/** 最近使った絵文字として有効かを判定する（+, -, 空文字, :shortcode: を除外、Unicode絵文字のみ） */
+function isValidRecentEmoji(content: string): boolean {
+  // +, -, 空文字を除外
+  if (content === "+" || content === "-" || content === "") return false;
+
+  // :shortcode: 形式を除外
+  if (content.startsWith(":") && content.endsWith(":") && content.length > 2) return false;
+
+  // Unicode絵文字のみ対象
+  return isUnicodeEmoji(content);
+}
+
 /**
  * 自分の最近のリアクションからユニークなUnicode絵文字をMRU順で取得するhook
  *
  * - kind:7の最新50件を取得し、oneose後にサブスクリプションを閉じる
  * - `+`, `-`, 空文字, `:shortcode:` 形式は除外
  * - 最大8個を返す
+ * - `addEmoji` で楽観的にリストを更新できる
  */
 export function useRecentEmojis(
   pool: SimplePool | null,
   relayUrls: string[],
   pubkey: string | null,
-): { recentEmojis: string[] } {
+): { recentEmojis: string[]; addEmoji: (emoji: string) => void } {
   const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
 
   useEffect(() => {
@@ -56,14 +69,7 @@ export function useRecentEmojis(
           for (const evt of events) {
             const content = evt.content;
 
-            // +, -, 空文字を除外
-            if (content === "+" || content === "-" || content === "") continue;
-
-            // :shortcode: 形式を除外
-            if (content.startsWith(":") && content.endsWith(":") && content.length > 2) continue;
-
-            // Unicode絵文字のみ対象
-            if (!isUnicodeEmoji(content)) continue;
+            if (!isValidRecentEmoji(content)) continue;
 
             if (!seen.has(content)) {
               seen.add(content);
@@ -98,5 +104,14 @@ export function useRecentEmojis(
     };
   }, [pool, relayUrls, pubkey]);
 
-  return { recentEmojis };
+  const addEmoji = useCallback((emoji: string) => {
+    if (!isValidRecentEmoji(emoji)) return;
+
+    setRecentEmojis((prev) => {
+      const filtered = prev.filter((e) => e !== emoji);
+      return [emoji, ...filtered].slice(0, 8);
+    });
+  }, []);
+
+  return { recentEmojis, addEmoji };
 }
