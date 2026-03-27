@@ -183,6 +183,17 @@ export function ComposeCard({
   );
 
   const handlePublish = useCallback(async () => {
+    // 未アップロードの画像がある場合は確認ダイアログを表示
+    if (
+      imageUpload.state.file !== null &&
+      imageUpload.state.uploadedUrl === null &&
+      !imageUpload.state.uploading
+    ) {
+      if (!window.confirm("画像がアップロードされていません。このまま投稿しますか？")) {
+        return;
+      }
+    }
+
     const trimmed = text.trim();
     if (!trimmed || publishing) return;
 
@@ -237,7 +248,7 @@ export function ComposeCard({
       setError(err instanceof Error ? err.message : "署名に失敗しました");
       setPublishing(false);
     }
-  }, [text, publishing, publishEvent, onPublish, slotId, internalQuotedEvent]);
+  }, [text, publishing, publishEvent, onPublish, slotId, internalQuotedEvent, imageUpload]);
 
   const handleClose = useCallback(() => {
     if (
