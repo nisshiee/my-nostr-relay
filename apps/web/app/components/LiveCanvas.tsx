@@ -250,6 +250,43 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     computeColumnHeight,
   } = useCardLayout(layoutCards, columnCount, holdSet);
 
+  // フルスクリーンモードの状態管理
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  // フルスクリーン時のバッジ表示タイマー
+  const fullscreenBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showFullscreenBadge, setShowFullscreenBadge] = useState(false);
+
+  // フルスクリーントグル用キーボードショートカット（f のみ）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // input/textarea フォーカス中は無視
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+
+      if (e.key === "f") {
+        e.preventDefault();
+        setIsFullscreen((prev) => {
+          const next = !prev;
+          if (next) {
+            // フルスクリーン開始時: バッジを表示し、3秒後に消す
+            setShowFullscreenBadge(true);
+            if (fullscreenBadgeTimerRef.current) clearTimeout(fullscreenBadgeTimerRef.current);
+            fullscreenBadgeTimerRef.current = setTimeout(() => {
+              setShowFullscreenBadge(false);
+            }, 3000);
+          } else {
+            // フルスクリーン解除時: バッジを即座に非表示
+            setShowFullscreenBadge(false);
+            if (fullscreenBadgeTimerRef.current) clearTimeout(fullscreenBadgeTimerRef.current);
+          }
+          return next;
+        });
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // 前回レンダーに存在したslotIdを追跡（既知カードの initial アニメーションをスキップするため）
   const prevSlotIdsRef = useRef<Set<string>>(new Set());
   const knownSlotIds = prevSlotIdsRef.current;
@@ -259,7 +296,39 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
-      <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
+      {/* フルスクリーン時はヘッダーを非表示 */}
+      <AnimatePresence>
+        {!isFullscreen && (
+          <motion.div
+            key="header"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* フルスクリーン時のオーバーレイインジケーター（一定時間後に消える） */}
+      <AnimatePresence>
+        {isFullscreen && showFullscreenBadge && (
+          <motion.div
+            key="fullscreen-indicator"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            style={{ zIndex: 9999 }}
+            className="pointer-events-none fixed right-4 top-4"
+          >
+            <div className="rounded-full bg-black/40 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur-sm">
+              f で戻す
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <main className="flex-1 overflow-y-auto p-4">
         <EmptyState status={status} hasNotes={notes.length > 0} isProcessing={isProcessing} />
