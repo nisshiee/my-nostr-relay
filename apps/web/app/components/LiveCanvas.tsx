@@ -252,8 +252,11 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
 
   // フルスクリーンモードの状態管理
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // フルスクリーン時のバッジ表示タイマー
+  const fullscreenBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showFullscreenBadge, setShowFullscreenBadge] = useState(false);
 
-  // フルスクリーントグル用キーボードショートカット（f / Escape）
+  // フルスクリーントグル用キーボードショートカット（f のみ）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // input/textarea フォーカス中は無視
@@ -262,15 +265,27 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
 
       if (e.key === "f") {
         e.preventDefault();
-        setIsFullscreen((prev) => !prev);
-      } else if (e.key === "Escape" && isFullscreen) {
-        e.preventDefault();
-        setIsFullscreen(false);
+        setIsFullscreen((prev) => {
+          const next = !prev;
+          if (next) {
+            // フルスクリーン開始時: バッジを表示し、3秒後に消す
+            setShowFullscreenBadge(true);
+            if (fullscreenBadgeTimerRef.current) clearTimeout(fullscreenBadgeTimerRef.current);
+            fullscreenBadgeTimerRef.current = setTimeout(() => {
+              setShowFullscreenBadge(false);
+            }, 3000);
+          } else {
+            // フルスクリーン解除時: バッジを即座に非表示
+            setShowFullscreenBadge(false);
+            if (fullscreenBadgeTimerRef.current) clearTimeout(fullscreenBadgeTimerRef.current);
+          }
+          return next;
+        });
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isFullscreen]);
+  }, []);
 
   // 前回レンダーに存在したslotIdを追跡（既知カードの initial アニメーションをスキップするため）
   const prevSlotIdsRef = useRef<Set<string>>(new Set());
@@ -296,19 +311,20 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
         )}
       </AnimatePresence>
 
-      {/* フルスクリーン時のオーバーレイインジケーター */}
+      {/* フルスクリーン時のオーバーレイインジケーター（一定時間後に消える） */}
       <AnimatePresence>
-        {isFullscreen && (
+        {isFullscreen && showFullscreenBadge && (
           <motion.div
             key="fullscreen-indicator"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="pointer-events-none fixed right-4 top-4 z-50"
+            style={{ zIndex: 9999 }}
+            className="pointer-events-none fixed right-4 top-4"
           >
             <div className="rounded-full bg-black/40 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur-sm">
-              ESC / f で戻る
+              f で戻す
             </div>
           </motion.div>
         )}
