@@ -250,6 +250,28 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     computeColumnHeight,
   } = useCardLayout(layoutCards, columnCount, holdSet);
 
+  // フルスクリーンモードの状態管理
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // フルスクリーントグル用キーボードショートカット（f / Escape）
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // input/textarea フォーカス中は無視
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "input" || tag === "textarea") return;
+
+      if (e.key === "f") {
+        e.preventDefault();
+        setIsFullscreen((prev) => !prev);
+      } else if (e.key === "Escape" && isFullscreen) {
+        e.preventDefault();
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
+
   // 前回レンダーに存在したslotIdを追跡（既知カードの initial アニメーションをスキップするため）
   const prevSlotIdsRef = useRef<Set<string>>(new Set());
   const knownSlotIds = prevSlotIdsRef.current;
@@ -259,7 +281,38 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
 
   return (
     <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
-      <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
+      {/* フルスクリーン時はヘッダーを非表示 */}
+      <AnimatePresence>
+        {!isFullscreen && (
+          <motion.div
+            key="header"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* フルスクリーン時のオーバーレイインジケーター */}
+      <AnimatePresence>
+        {isFullscreen && (
+          <motion.div
+            key="fullscreen-indicator"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="pointer-events-none fixed right-4 top-4 z-50"
+          >
+            <div className="rounded-full bg-black/40 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur-sm">
+              ESC / f で戻る
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <main className="flex-1 overflow-y-auto p-4">
         <EmptyState status={status} hasNotes={notes.length > 0} isProcessing={isProcessing} />
