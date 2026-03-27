@@ -146,6 +146,17 @@ export function ReplyCompose({
 
   /** Publish処理 */
   const handlePublish = useCallback(async () => {
+    // 未アップロードの画像がある場合は確認ダイアログを表示
+    if (
+      imageUpload.state.file !== null &&
+      imageUpload.state.uploadedUrl === null &&
+      !imageUpload.state.uploading
+    ) {
+      if (!window.confirm("画像がアップロードされていません。このまま投稿しますか？")) {
+        return;
+      }
+    }
+
     const trimmed = text.trim();
     if (!trimmed || publishing) return;
 
@@ -189,7 +200,7 @@ export function ReplyCompose({
       setError(err instanceof Error ? err.message : "署名に失敗しました");
       setPublishing(false);
     }
-  }, [text, publishing, buildReplyTags, onPublish, publishEvent]);
+  }, [text, publishing, buildReplyTags, onPublish, publishEvent, imageUpload]);
 
   /** 閉じる処理（入力中は確認ダイアログ） */
   const handleClose = useCallback(() => {
