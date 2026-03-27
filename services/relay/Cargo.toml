@@ -44,7 +44,7 @@ secp256k1 = { version = "0.31", features = ["serde"] }
 hex = "0.4"
 
 # hash
-sha2 = "0.10"
+sha2 = "0.11"
 
 # futures (for WebSocket split)
 futures = "0.3"
