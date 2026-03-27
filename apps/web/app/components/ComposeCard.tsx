@@ -342,7 +342,7 @@ export function ComposeCard({
         <button
           type="button"
           onClick={handleClose}
-          className="ml-auto text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          className="ml-auto text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           title="閉じる (Esc)"
         >
           <svg
