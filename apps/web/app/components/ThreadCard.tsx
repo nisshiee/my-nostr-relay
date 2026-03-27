@@ -380,7 +380,7 @@ function ThreadNoteItem({
         onClick={onClick}
         className={`px-3 py-2 cursor-pointer relative ${
           isLast ? "pb-3 rounded-b-xl" : ""
-        } ${isActive ? "bg-gray-50 dark:bg-gray-750" : ""}`}
+        } ${isActive ? "bg-gray-50 dark:bg-gray-800" : ""}`}
       >
         {/* 返信先インジケータ */}
         {replyToName && (

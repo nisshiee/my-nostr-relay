@@ -50,7 +50,7 @@ function EmojiPickerContent({
         value={search}
         onChange={(e) => setSearch(e.target.value)}
         placeholder="絵文字を検索..."
-        className="w-full px-3 py-2 text-sm border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400"
+        className="w-full px-3 py-2 text-sm border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
       />
       <EmojiPicker.Viewport className="h-[280px]">
         <EmojiPicker.Loading className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">読み込み中...</EmojiPicker.Loading>
