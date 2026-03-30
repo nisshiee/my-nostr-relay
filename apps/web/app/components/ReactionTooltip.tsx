@@ -49,6 +49,14 @@ export function ReactionTooltip({
   // アニメーション用: opacity制御
   const [visible, setVisible] = useState(false);
 
+  // Render-time state sync（useEffect内の同期的setStateを避ける）
+  if (isOpen && !mounted) {
+    setMounted(true);
+  }
+  if (!isOpen && visible) {
+    setVisible(false);
+  }
+
   /** アンカー要素の位置からツールチップの位置を計算する */
   const updatePosition = useCallback(() => {
     if (!anchorRef.current || !tooltipRef.current) return;
@@ -76,26 +84,28 @@ export function ReactionTooltip({
     setPosition({ top, left });
   }, [anchorRef]);
 
-  // isOpen変化時のマウント/アンマウント制御（フェードイン/アウト）
+  // isOpen → visibleのフェードイン（DOMマウント後に次フレームで発火）
   useEffect(() => {
-    if (isOpen) {
-      // マウントしてからフェードイン
-      setMounted(true);
+    if (isOpen && mounted && !visible) {
       // 次フレームでvisibleにする（transitionを発火させるため）
-      requestAnimationFrame(() => {
+      const raf1 = requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           setVisible(true);
         });
       });
-    } else {
-      // フェードアウトしてからアンマウント
-      setVisible(false);
+      return () => cancelAnimationFrame(raf1);
+    }
+  }, [isOpen, mounted, visible]);
+
+  // !isOpen → フェードアウト後にアンマウント
+  useEffect(() => {
+    if (!isOpen && mounted && !visible) {
       const timer = setTimeout(() => {
         setMounted(false);
       }, 150); // transitionと同じ時間
       return () => clearTimeout(timer);
     }
-  }, [isOpen]);
+  }, [isOpen, mounted, visible]);
 
   // 位置の計算（マウント後 + スクロール/リサイズ時）
   useEffect(() => {
