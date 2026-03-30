@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import Image from "next/image";
 import type {
   ThreadCard as ThreadCardType,
@@ -13,6 +13,7 @@ import { ContentRenderer } from "./content/ContentRenderer";
 import type { EventCache } from "../hooks/useEventCache";
 import { ActionBar } from "./ActionBar";
 import { ReplyCompose } from "./ReplyCompose";
+import { ReactionTooltip } from "./ReactionTooltip";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -369,6 +370,89 @@ function ThreadNoteItem({
     ? resolveDisplayName(note.replyTo.pubkey, profiles)
     : null;
 
+  // リアクションツールチップ用の状態・ref
+  const [activeTooltipEmoji, setActiveTooltipEmoji] = useState<string | null>(null);
+  const badgeRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longTapTriggeredRef = useRef(false);
+
+  // タイマークリーンアップ
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) {
+        clearTimeout(hoverTimerRef.current);
+      }
+      if (longTapTimerRef.current) {
+        clearTimeout(longTapTimerRef.current);
+      }
+    };
+  }, []);
+
+  // ツールチップ表示中に画面のどこかをタップしたら閉じる（モバイル用）
+  useEffect(() => {
+    if (!activeTooltipEmoji) return;
+
+    const handleDocumentTouch = (e: TouchEvent) => {
+      // ツールチップ自体のタップは無視
+      const tooltip = document.querySelector("[data-reaction-tooltip]");
+      if (tooltip && tooltip.contains(e.target as Node)) return;
+      // アンカーバッジのタップも無視
+      const badgeEl = badgeRefs.current.get(activeTooltipEmoji);
+      if (badgeEl && badgeEl.contains(e.target as Node)) return;
+
+      setActiveTooltipEmoji(null);
+    };
+
+    document.addEventListener("touchstart", handleDocumentTouch);
+    return () => {
+      document.removeEventListener("touchstart", handleDocumentTouch);
+    };
+  }, [activeTooltipEmoji]);
+
+  // リアクションバッジのツールチップ用イベントハンドラー
+  const handleBadgeMouseEnter = useCallback((emoji: string) => {
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    hoverTimerRef.current = setTimeout(() => {
+      setActiveTooltipEmoji(emoji);
+    }, 500);
+  }, []);
+
+  const handleBadgeMouseLeave = useCallback(() => {
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+    setActiveTooltipEmoji(null);
+  }, []);
+
+  const handleBadgeTouchStart = useCallback((emoji: string) => {
+    longTapTriggeredRef.current = false;
+    if (longTapTimerRef.current) clearTimeout(longTapTimerRef.current);
+    longTapTimerRef.current = setTimeout(() => {
+      longTapTriggeredRef.current = true;
+      setActiveTooltipEmoji(emoji);
+    }, 500);
+  }, []);
+
+  const handleBadgeTouchEnd = useCallback((e: React.TouchEvent) => {
+    if (longTapTimerRef.current) {
+      clearTimeout(longTapTimerRef.current);
+      longTapTimerRef.current = null;
+    }
+    // ロングタップ成功時はリアクション送信を防ぐ
+    if (longTapTriggeredRef.current) {
+      e.preventDefault();
+    }
+  }, []);
+
+  const handleBadgeTouchMove = useCallback(() => {
+    if (longTapTimerRef.current) {
+      clearTimeout(longTapTimerRef.current);
+      longTapTimerRef.current = null;
+    }
+  }, []);
+
   return (
     <>
       {/* 区切り線 */}
@@ -440,6 +524,13 @@ function ThreadNoteItem({
                   <button
                     key={emoji}
                     type="button"
+                    ref={(el) => {
+                      if (el) {
+                        badgeRefs.current.set(emoji, el);
+                      } else {
+                        badgeRefs.current.delete(emoji);
+                      }
+                    }}
                     disabled={reacted}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -447,6 +538,12 @@ function ThreadNoteItem({
                         onReaction(note.eventId, note.pubkey, emoji, imageUrl);
                       }
                     }}
+                    onMouseEnter={() => handleBadgeMouseEnter(emoji)}
+                    onMouseLeave={handleBadgeMouseLeave}
+                    onTouchStart={() => handleBadgeTouchStart(emoji)}
+                    onTouchEnd={handleBadgeTouchEnd}
+                    onTouchCancel={handleBadgeTouchEnd}
+                    onTouchMove={handleBadgeTouchMove}
                     className={`rounded-full px-1.5 py-0.5 text-[11px] inline-flex items-center gap-0.5 transition-colors ${
                       reacted
                         ? "bg-blue-100 dark:bg-blue-900/40 border border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 cursor-not-allowed"
@@ -468,6 +565,19 @@ function ThreadNoteItem({
                 );
               },
             )}
+
+            {/* リアクションツールチップ */}
+            {(() => {
+              const tooltipData = activeTooltipEmoji ? noteReactions?.get(activeTooltipEmoji) : null;
+              return tooltipData ? (
+                <ReactionTooltip
+                  isOpen={!!activeTooltipEmoji}
+                  pubkeys={Array.from(tooltipData.pubkeys)}
+                  profiles={profiles}
+                  anchorRef={{ current: badgeRefs.current.get(activeTooltipEmoji!) ?? null }}
+                />
+              ) : null;
+            })()}
           </div>
         )}
 
