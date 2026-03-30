@@ -6,7 +6,6 @@ import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, Nost
 import {
   COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
-  FADEOUT_THRESHOLD,
   COLUMN_GAP,
   SCORE_HALF_LIFE,
   OWNER_SCORE_HALF_LIFE,
@@ -132,7 +131,6 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
       return {
         ...note,
         score,
-        fadingOut: holdSet.has(note.slotId) ? false : (note.fadingOut || score <= FADEOUT_THRESHOLD),
       };
     });
 
@@ -142,7 +140,6 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
       return {
         ...d,
         score,
-        fadingOut: holdSet.has(d.slotId) ? false : score <= FADEOUT_THRESHOLD,
       };
     });
 
@@ -157,7 +154,6 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
           nowEpoch,
           OWNER_SCORE_HALF_LIFE,
         ),
-        fadingOut: false,
         created_at: pending.replyNote.created_at,
         notes: [
           // 元のNoteCardをThreadNoteに変換
@@ -231,7 +227,6 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
       return {
         ...mergedThread,
         score,
-        fadingOut: holdSet.has(mergedThread.slotId) ? false : (mergedThread.fadingOut || score <= FADEOUT_THRESHOLD),
       };
     });
 
@@ -368,8 +363,8 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                           layout={false}
                           initial={isKnownCard ? false : { opacity: 0, scale: 0.8, x, y }}
                           animate={{
-                            opacity: note.fadingOut ? 0 : 1,
-                            scale: note.fadingOut ? 0.95 : 1,
+                            opacity: 1,
+                            scale: 1,
                             x,
                             y,
                           }}
@@ -388,10 +383,10 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               delay,
                             },
                             opacity: {
-                              duration: note.fadingOut ? 1 : 0.4,
+                              duration: 0.4,
                             },
                             scale: {
-                              duration: note.fadingOut ? 1 : 0.3,
+                              duration: 0.3,
                             },
                           }}
                           style={{

@@ -100,7 +100,6 @@ export function buildThreadCard(
     slotId: crypto.randomUUID(),
     pubkey: resolved[0]?.pubkey ?? "",
     score: 0, // スコアは LiveCanvas 側で再計算される
-    fadingOut: false,
     created_at: latestCreatedAt,
     notes: resolved,
     eventIds,

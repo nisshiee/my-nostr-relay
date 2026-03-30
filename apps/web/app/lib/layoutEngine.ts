@@ -386,11 +386,11 @@ export function insertCard(
  *
  * 列内の順序は前回のy座標順を維持する（スコア順でソートしない）。
  * スコアの役割は初回配置（buildInitialLayout）、新規挿入（insertCard）の
- * 位置決めとフェードアウト判定に限定される。
+ * 位置決めに限定される。
  *
  * 使用場面:
  *   - heightMap が変更されたとき
- *   - カードが削除（フェードアウト完了）されたとき
+ *   - カードが削除されたとき
  */
 export function reflow(
   prevGrid: Grid,
