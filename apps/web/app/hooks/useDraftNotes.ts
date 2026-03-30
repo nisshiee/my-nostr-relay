@@ -45,7 +45,6 @@ export function useDraftNotes({
         pubkey,
         created_at: Math.floor(Date.now() / 1000),
         score: 1,
-        fadingOut: false,
         ...(opts?.quotedEvent ? { quotedEvent: opts.quotedEvent } : {}),
       };
       return [...prev, newDraft];

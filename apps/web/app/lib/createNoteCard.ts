@@ -35,7 +35,6 @@ export function createNoteCard(params: CreateNoteCardParams): NoteCard {
     tags: event.tags,
     created_at: event.created_at,
     score: calcFreshnessScore(scoreTimestamp, now, halfLife),
-    fadingOut: false,
     ...(repostInfo ? { repostInfo } : {}),
   };
 }

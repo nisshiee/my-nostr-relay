@@ -35,7 +35,6 @@ function makeThreadCard(
     slotId,
     pubkey: notes[0]?.pubkey ?? "",
     score: 0,
-    fadingOut: false,
     created_at: Math.max(...notes.map(n => n.created_at), 0),
     notes,
     eventIds: new Set(eventIds),

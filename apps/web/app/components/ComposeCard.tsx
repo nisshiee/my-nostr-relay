@@ -233,7 +233,6 @@ export function ComposeCard({
         tags: signedEvent.tags,
         created_at: signedEvent.created_at,
         score: 1,
-        fadingOut: false,
       };
 
       // 署名完了の時点で即座にonPublishを呼ぶ（ComposeCard→送信済み状態に変化）

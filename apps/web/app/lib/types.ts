@@ -4,8 +4,6 @@ interface CardBase {
   slotId: string;
   pubkey: string;
   score: number;
-  /** フェードアウト中かどうか */
-  fadingOut: boolean;
   /** スコア計算用のタイムスタンプ（Unix timestamp、秒） */
   created_at: number;
 }

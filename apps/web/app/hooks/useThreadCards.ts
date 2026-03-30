@@ -430,7 +430,6 @@ export function useThreadCards(
                 slotId: resolvedSlotId ?? crypto.randomUUID(),
                 pubkey: sortedNotes[0]?.pubkey ?? note.pubkey,
                 score: calcFreshnessScore(latestCreatedAt, now, halfLife),
-                fadingOut: false,
                 created_at: latestCreatedAt,
                 notes: sortedNotes,
                 eventIds,
