@@ -328,7 +328,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
                     badgeRefs.current.delete(emoji);
                   }
                 }}
-                disabled={reacted}
+                aria-disabled={reacted || undefined}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (!reacted && onReaction) {
