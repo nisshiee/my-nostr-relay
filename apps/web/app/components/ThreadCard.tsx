@@ -531,7 +531,7 @@ function ThreadNoteItem({
                         badgeRefs.current.delete(emoji);
                       }
                     }}
-                    disabled={reacted}
+                    aria-disabled={reacted || undefined}
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!reacted && onReaction) {
