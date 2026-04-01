@@ -9,7 +9,10 @@ import {
   COLUMN_GAP,
   SCORE_HALF_LIFE,
   OWNER_SCORE_HALF_LIFE,
+  DEFAULT_CARD_HEIGHT,
 } from "../lib/constants";
+import { DEBUG } from "../lib/debug";
+import { computeAllGravityPairs } from "../lib/gravity";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { useDraftNotes } from "../hooks/useDraftNotes";
 import { useReplyDrafts } from "../hooks/useReplyDrafts";
@@ -243,6 +246,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     displayLayout,
     delayMap,
     computeColumnHeight,
+    heightMap,
   } = useCardLayout(layoutCards, columnCount, holdSet);
 
   // フルスクリーンモードの状態管理
@@ -343,6 +347,53 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                   height: containerHeight,
                 }}
               >
+                {/* デバッグ: 引力のあるカード間に破線を描画（エンジンと同じ計算を使用） */}
+                {DEBUG.gravity && (() => {
+                  const pairs = computeAllGravityPairs(scoredCards, displayLayout);
+                  if (pairs.length === 0) return null;
+                  const minPull = Math.min(...pairs.map((p) => p.pull));
+                  const maxPull = Math.max(...pairs.map((p) => p.pull));
+                  const range = maxPull - minPull;
+                  return (
+                    <svg
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        height: "100%",
+                        pointerEvents: "none",
+                        zIndex: 9999,
+                      }}
+                    >
+                      {pairs.map((p) => {
+                        const pA = displayLayout.get(p.aSlotId);
+                        const pB = displayLayout.get(p.bSlotId);
+                        if (!pA || !pB) return null;
+                        const ax = pA.col * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
+                        const ay = pA.y + (heightMap.get(p.aSlotId) ?? DEFAULT_CARD_HEIGHT) / 2;
+                        const bx = pB.col * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
+                        const by = pB.y + (heightMap.get(p.bSlotId) ?? DEFAULT_CARD_HEIGHT) / 2;
+                        // min〜maxを0〜1に正規化（全ペア同値なら0.5）
+                        const norm = range > 0 ? (p.pull - minPull) / range : 0.5;
+                        const opacity = 0.15 + norm * 0.65;
+                        const width = 1 + norm * 3.5;
+                        return (
+                          <line
+                            key={`gravity-${p.aSlotId}-${p.bSlotId}`}
+                            x1={ax}
+                            y1={ay}
+                            x2={bx}
+                            y2={by}
+                            stroke={`rgba(255, 100, 100, ${opacity})`}
+                            strokeWidth={width}
+                            strokeDasharray="4 4"
+                          />
+                        );
+                      })}
+                    </svg>
+                  );
+                })()}
                 <AnimatePresence>
                   {scoredCards
                     .filter((n) => displayLayout.has(n.slotId))
@@ -397,6 +448,27 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                             zIndex,
                           }}
                         >
+                          {/* デバッグ: スコア値オーバーレイ */}
+                          {DEBUG.scoring && (
+                            <div
+                              style={{
+                                position: "absolute",
+                                top: -18,
+                                right: 4,
+                                fontSize: 11,
+                                fontFamily: "monospace",
+                                color: "#fff",
+                                backgroundColor: "rgba(0, 0, 0, 0.7)",
+                                padding: "1px 5px",
+                                borderRadius: 4,
+                                zIndex: 10000,
+                                pointerEvents: "none",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              score: {note.score.toFixed(4)}
+                            </div>
+                          )}
                           {note.type === "compose" ? (
                             <ComposeCard
                               slotId={note.slotId}
