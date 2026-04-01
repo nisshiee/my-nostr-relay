@@ -57,6 +57,12 @@ export const BLOSSOM_UPLOAD_URL = "https://share.yabu.me/upload";
 /** Blossom認証イベントの有効期限（秒） */
 export const BLOSSOM_AUTH_EXPIRATION = 60;
 
+/** 引力（gravity）の重み係数。押し出し先選択時のスコア調整に使用 */
+export const GRAVITY_WEIGHT = 10;
+
+/** 引力計算の距離カットオフ（px）。これ以上離れたカードペアはpull=0として扱う */
+export const GRAVITY_CUTOFF = 2200;
+
 /** NIP-89 client tag — アプリ識別用 */
 export const CLIENT_TAG = [
   "client",
