@@ -7,6 +7,9 @@ import type {
 } from "./layoutTypes";
 import { DEFAULT_CARD_HEIGHT } from "./constants";
 import { GAP } from "./constants";
+import { GRAVITY_WEIGHT } from "./constants";
+import { DEBUG } from "./debug";
+import { gravityCost } from "./gravity";
 
 // ── 内部型（エクスポートしない） ──
 
@@ -93,6 +96,8 @@ function findDisplaceTarget(
   scoreMap: ReadonlyMap<string, number>,
   columnCount: number,
   chain: { movedIds: Set<string> },
+  allCards: readonly Card[],
+  grid: ReadonlyMap<string, { col: number; y: number }>,
 ): DisplaceCandidate | null {
   const candidates: DisplaceCandidate[] = [];
 
@@ -142,7 +147,41 @@ function findDisplaceTarget(
   // ステップ3: 最低スコアの候補を選択
   if (filtered.length === 0) return null;
 
-  let best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+  // victimカードを取得（gravityCost計算用）
+  const victimCard = allCards.find(c => c.slotId === victimId);
+
+  let best: DisplaceCandidate;
+  if (victimCard) {
+    // gravityCostを加味した総コストで候補を選択
+    // gravityCostは負の値（引力が強いほど負）なので、足し算すると
+    // 引力が強い候補ほどtotalCostが低くなり、victimがその方向に引っ張られる
+    if (DEBUG.layout) {
+      console.group(`[gravity] displace victim=${victimId.slice(0, 8)} (score=${victimScore.toFixed(4)})`);
+      for (const c of filtered) {
+        // 候補カード自身を除外してgravityCostを計算
+        // （候補の位置に移動 = 候補がそこからいなくなるため）
+        const exclude = new Set([c.id]);
+        const gCost = gravityCost(victimCard, { col: c.col, y: c.y }, allCards, grid, exclude);
+        const total = c.score + gCost * GRAVITY_WEIGHT;
+        console.log(`  candidate=${c.id.slice(0, 8)} col=${c.col} y=${c.y} score=${c.score.toFixed(4)} gravityCost=${gCost.toFixed(6)} totalCost=${total.toFixed(4)}`);
+      }
+    }
+    best = filtered.reduce((a, b) => {
+      // 候補カード自身を除外してgravityCostを計算
+      const excludeA = new Set([a.id]);
+      const excludeB = new Set([b.id]);
+      const aCost = a.score + gravityCost(victimCard, { col: a.col, y: a.y }, allCards, grid, excludeA) * GRAVITY_WEIGHT;
+      const bCost = b.score + gravityCost(victimCard, { col: b.col, y: b.y }, allCards, grid, excludeB) * GRAVITY_WEIGHT;
+      return aCost <= bCost ? a : b;
+    });
+    if (DEBUG.layout) {
+      console.log(`  → selected=${best.id.slice(0, 8)} col=${best.col} y=${best.y}`);
+      console.groupEnd();
+    }
+  } else {
+    // victimCardが見つからない場合はスコアのみで選択（フォールバック）
+    best = filtered.reduce((a, b) => (a.score <= b.score ? a : b));
+  }
   // 隣列の場合は上優先ロジックを適用
   best = applyTopPreferenceForAdjacentColumns(
     best,
@@ -183,6 +222,7 @@ export function placeCard(
   columnCount: number,
   chain: { movedIds: Set<string>; chainOrder: Map<string, number> },
   holdSet: ReadonlySet<string>,
+  allCards: readonly Card[],
 ): void {
   const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
 
@@ -205,23 +245,23 @@ export function placeCard(
     if (isBottomOfColumn) {
       // ホールドカードは動かない。cardId をその下に配置
       const newY = victimY + victimHeight + GAP;
-      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet);
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
       return;
     }
 
     // ステップ1〜3: 押し出し先候補を探す
     const victimScore = scoreMap.get(victimId) ?? 0;
-    const target = findDisplaceTarget(columns, victimId, targetCol, victimY, victimHeight, victimScore, heightMap, scoreMap, columnCount, chain);
+    const target = findDisplaceTarget(columns, victimId, targetCol, victimY, victimHeight, victimScore, heightMap, scoreMap, columnCount, chain, allCards, grid);
 
     if (!target) {
       // 候補がない → victim の下に cardId を配置
       const newY = victimY + victimHeight + GAP;
-      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet);
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
       return;
     }
 
     // cardId を target の位置にリダイレクト（連鎖は続く）
-    placeCard(grid, columns, cardId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet);
+    placeCard(grid, columns, cardId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
     return;
   }
 
@@ -265,7 +305,7 @@ export function placeCard(
 
   // --- ステップ1〜3: 押し出し先候補を探す ---
   const victimScore = scoreMap.get(victimId) ?? 0;
-  const target = findDisplaceTarget(columns, victimId, targetCol, victimY, victimHeight, victimScore, heightMap, scoreMap, columnCount, chain);
+  const target = findDisplaceTarget(columns, victimId, targetCol, victimY, victimHeight, victimScore, heightMap, scoreMap, columnCount, chain, allCards, grid);
 
   if (!target) {
     // 候補がない → 下に配置して終了
@@ -279,7 +319,7 @@ export function placeCard(
   }
 
   // 押し出されるカードを target の位置に配置 → target が次に押し出される
-  placeCard(grid, columns, victimId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet);
+  placeCard(grid, columns, victimId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
 }
 
 // ── 公開API ──
@@ -363,11 +403,30 @@ export function insertCard(
   // スコアマップ
   const scoreMap = new Map(allNotes.map((n) => [n.slotId, n.score]));
 
-  // リアルタイム到着は常に一番左の列
-  const bestCol = 0;
+  // 引力を考慮した列選択: 各列のy=0のgravityCostを比較
+  let bestCol = 0;
+  let bestGravityCost = 0; // gravityCostがない場合のデフォルト
+
+  if (DEBUG.layout) {
+    console.group(`[gravity] insertCard=${note.slotId.slice(0, 8)} (pubkey=${note.pubkey.slice(0, 8)})`);
+  }
+  for (let col = 0; col < columnCount; col++) {
+    const cost = gravityCost(note, { col, y: 0 }, allNotes, grid);
+    if (DEBUG.layout) {
+      console.log(`  col=${col} gravityCost=${cost.toFixed(6)}${col === bestCol && cost < bestGravityCost ? ' ← best' : ''}`);
+    }
+    if (cost < bestGravityCost) {
+      bestGravityCost = cost;
+      bestCol = col;
+    }
+  }
+  if (DEBUG.layout) {
+    console.log(`  → bestCol=${bestCol} (gravityCost=${bestGravityCost.toFixed(6)})`);
+    console.groupEnd();
+  }
 
   const chain = { movedIds: new Set<string>(), chainOrder: new Map<string, number>() };
-  placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain, holdSet);
+  placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain, holdSet, allNotes);
 
   return { grid, chain };
 }
