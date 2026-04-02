@@ -9,6 +9,8 @@ import { ActionBar } from "./ActionBar";
 import { ReplyCompose } from "./ReplyCompose";
 import { ReactionTooltip } from "./ReactionTooltip";
 import type { EventCache } from "../hooks/useEventCache";
+import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
+import type { RecentEmoji } from "../hooks/useRecentEmojis";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -68,10 +70,14 @@ interface NoteCardProps {
   /** 引用ボタンクリック時のコールバック */
   onQuote?: () => void;
   /** 最近使った絵文字の配列 */
-  recentEmojis?: string[];
+  recentEmojis?: RecentEmoji[];
+  /** カスタム絵文字セット */
+  emojiSets?: EmojiSet[];
+  /** 個別のカスタム絵文字 */
+  looseEmojis?: CustomEmoji[];
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -416,13 +422,15 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           onQuote();
         } : undefined}
         recentEmojis={recentEmojis}
+        emojiSets={emojiSets}
+        looseEmojis={looseEmojis}
         onPickerOpenChange={(open) => {
           isEmojiPickerOpenRef.current = open;
         }}
-        onEmojiSelect={async (emoji) => {
+        onEmojiSelect={async (emoji, imageUrl) => {
           try {
             if (onReaction) {
-              await onReaction(emoji);
+              await onReaction(emoji, imageUrl);
             }
           } catch (e) {
             console.error(e);

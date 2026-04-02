@@ -3,6 +3,11 @@ import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { SubCloser } from "nostr-tools/abstract-pool";
 
+export interface RecentEmoji {
+  emoji: string;       // Unicode emoji or ":shortcode:"
+  imageUrl?: string;   // Only for custom emojis
+}
+
 /** contentが単一のUnicode絵文字かを判定する（Intl.Segmenter使用） */
 function isUnicodeEmoji(content: string): boolean {
   if (content.length === 0) return false;
@@ -13,23 +18,34 @@ function isUnicodeEmoji(content: string): boolean {
   return /\p{Extended_Pictographic}/u.test(content) || /\p{Regional_Indicator}/u.test(content) || /\u20e3/u.test(content);
 }
 
-/** 最近使った絵文字として有効かを判定する（+, -, 空文字, :shortcode: を除外、Unicode絵文字のみ） */
+/** :shortcode: 形式のカスタム絵文字かを判定する */
+function isCustomEmojiShortcode(content: string): boolean {
+  return content.startsWith(":") && content.endsWith(":") && content.length > 2;
+}
+
+/** 最近使った絵文字として有効かを判定する（+, -, 空文字を除外、Unicode絵文字またはカスタム絵文字） */
 function isValidRecentEmoji(content: string): boolean {
   // +, -, 空文字を除外
   if (content === "+" || content === "-" || content === "") return false;
 
-  // :shortcode: 形式を除外
-  if (content.startsWith(":") && content.endsWith(":") && content.length > 2) return false;
+  // Unicode絵文字またはカスタム絵文字(:shortcode:形式)を対象
+  return isUnicodeEmoji(content) || isCustomEmojiShortcode(content);
+}
 
-  // Unicode絵文字のみ対象
-  return isUnicodeEmoji(content);
+/** イベントのタグからカスタム絵文字のURLを抽出する */
+function extractCustomEmojiUrl(emoji: string, tags: string[][]): string | undefined {
+  if (!isCustomEmojiShortcode(emoji)) return undefined;
+  const shortcode = emoji.slice(1, -1);
+  const emojiTag = tags.find(tag => tag[0] === "emoji" && tag[1] === shortcode && tag[2]);
+  return emojiTag?.[2];
 }
 
 /**
- * 自分の最近のリアクションからユニークなUnicode絵文字をMRU順で取得するhook
+ * 自分の最近のリアクションからユニークな絵文字をMRU順で取得するhook
  *
  * - kind:7の最新50件を取得し、oneose後にサブスクリプションを閉じる
- * - `+`, `-`, 空文字, `:shortcode:` 形式は除外
+ * - `+`, `-`, 空文字は除外
+ * - Unicode絵文字とカスタム絵文字（:shortcode:形式）を対象
  * - 最大8個を返す
  * - `addEmoji` で楽観的にリストを更新できる
  */
@@ -37,8 +53,8 @@ export function useRecentEmojis(
   pool: SimplePool | null,
   relayUrls: string[],
   pubkey: string | null,
-): { recentEmojis: string[]; addEmoji: (emoji: string) => void } {
-  const [recentEmojis, setRecentEmojis] = useState<string[]>([]);
+): { recentEmojis: RecentEmoji[]; addEmoji: (emoji: string, imageUrl?: string) => void } {
+  const [recentEmojis, setRecentEmojis] = useState<RecentEmoji[]>([]);
 
   useEffect(() => {
     if (!pool || relayUrls.length === 0 || !pubkey) return;
@@ -64,7 +80,7 @@ export function useRecentEmojis(
 
           // ユニーク絵文字をMRU順で抽出
           const seen = new Set<string>();
-          const emojis: string[] = [];
+          const emojis: RecentEmoji[] = [];
 
           for (const evt of events) {
             const content = evt.content;
@@ -73,8 +89,9 @@ export function useRecentEmojis(
 
             if (!seen.has(content)) {
               seen.add(content);
-              emojis.push(content);
-              if (emojis.length >= 8) break;
+              const imageUrl = extractCustomEmojiUrl(content, evt.tags);
+              emojis.push({ emoji: content, imageUrl });
+              if (emojis.length >= 50) break;
             }
           }
 
@@ -104,12 +121,12 @@ export function useRecentEmojis(
     };
   }, [pool, relayUrls, pubkey]);
 
-  const addEmoji = useCallback((emoji: string) => {
+  const addEmoji = useCallback((emoji: string, imageUrl?: string) => {
     if (!isValidRecentEmoji(emoji)) return;
 
     setRecentEmojis((prev) => {
-      const filtered = prev.filter((e) => e !== emoji);
-      return [emoji, ...filtered].slice(0, 8);
+      const filtered = prev.filter((e) => e.emoji !== emoji);
+      return [{ emoji, imageUrl }, ...filtered].slice(0, 50);
     });
   }, []);
 
