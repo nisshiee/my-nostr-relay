@@ -27,6 +27,7 @@ interface UseNostrRelayResult {
   cache: EventCache;
   emojiSets: EmojiSet[];
   looseEmojis: CustomEmoji[];
+  fetchProfiles: (pubkeys: string[]) => void;
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
   sendRepost: (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => Promise<void>;
@@ -156,5 +157,5 @@ export function useNostrRelay(
     [publishEvent, relayUrls],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, publishEvent, sendReaction, sendRepost };
+  return { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, fetchProfiles, publishEvent, sendReaction, sendRepost };
 }

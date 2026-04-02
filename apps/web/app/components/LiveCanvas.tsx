@@ -52,13 +52,14 @@ interface LiveCanvasProps {
   recentEmojis: RecentEmoji[];
   emojiSets: EmojiSet[];
   looseEmojis: CustomEmoji[];
+  fetchProfiles: (pubkeys: string[]) => void;
 }
 
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
 
@@ -499,6 +500,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               recentEmojis={recentEmojis}
                               emojiSets={emojiSets}
                               looseEmojis={looseEmojis}
+                              fetchProfiles={fetchProfiles}
                               onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
                                 sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
                               }}
@@ -527,6 +529,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               recentEmojis={recentEmojis}
                               emojiSets={emojiSets}
                               looseEmojis={looseEmojis}
+                              fetchProfiles={fetchProfiles}
                               reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
                               reactions={reactions.get(note.eventId)}
                               myPubkey={pubkey}

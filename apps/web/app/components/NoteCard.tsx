@@ -75,9 +75,11 @@ interface NoteCardProps {
   emojiSets?: EmojiSet[];
   /** 個別のカスタム絵文字 */
   looseEmojis?: CustomEmoji[];
+  /** プロフィール取得関数（未取得のpubkeyのプロフィールをフェッチする） */
+  fetchProfiles?: (pubkeys: string[]) => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis, fetchProfiles }: NoteCardProps) {
   const displayName =
     profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
 
@@ -217,11 +219,22 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
 
   // リアクションバッジのツールチップ用イベントハンドラー
   const handleBadgeMouseEnter = useCallback((emoji: string) => {
+    // リアクション者のプロフィールを先行取得
+    if (fetchProfiles && reactions) {
+      const entry = reactions.get(emoji);
+      if (entry) {
+        const unknownPubkeys = Array.from(entry.pubkeys).filter(pk => !profiles?.has(pk));
+        if (unknownPubkeys.length > 0) {
+          fetchProfiles(unknownPubkeys);
+        }
+      }
+    }
+
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
       setActiveTooltipEmoji(emoji);
     }, 500);
-  }, []);
+  }, [fetchProfiles, reactions, profiles]);
 
   const handleBadgeMouseLeave = useCallback(() => {
     if (hoverTimerRef.current) {
