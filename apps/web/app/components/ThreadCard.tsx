@@ -14,6 +14,8 @@ import type { EventCache } from "../hooks/useEventCache";
 import { ActionBar } from "./ActionBar";
 import { ReplyCompose } from "./ReplyCompose";
 import { ReactionTooltip } from "./ReactionTooltip";
+import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
+import type { RecentEmoji } from "../hooks/useRecentEmojis";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -82,7 +84,11 @@ interface ThreadCardProps {
   /** 引用ボタン押下時のハンドラ */
   onQuote?: (eventId: string, pubkey: string) => void;
   /** 最近使った絵文字の配列 */
-  recentEmojis?: string[];
+  recentEmojis?: RecentEmoji[];
+  /** カスタム絵文字セット */
+  emojiSets?: EmojiSet[];
+  /** 個別のカスタム絵文字 */
+  looseEmojis?: CustomEmoji[];
 }
 
 export function ThreadCard({
@@ -100,6 +106,8 @@ export function ThreadCard({
   myProfile,
   onQuote,
   recentEmojis,
+  emojiSets,
+  looseEmojis,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -269,6 +277,8 @@ export function ThreadCard({
             onQuote={onQuote ? () => onQuote(note.eventId, note.pubkey) : undefined}
             cache={cache}
             recentEmojis={recentEmojis}
+            emojiSets={emojiSets}
+            looseEmojis={looseEmojis}
           />
         );
       })}
@@ -338,7 +348,11 @@ interface ThreadNoteItemProps {
   onQuote?: () => void;
   cache?: EventCache;
   /** 最近使った絵文字の配列 */
-  recentEmojis?: string[];
+  recentEmojis?: RecentEmoji[];
+  /** カスタム絵文字セット */
+  emojiSets?: EmojiSet[];
+  /** 個別のカスタム絵文字 */
+  looseEmojis?: CustomEmoji[];
 }
 
 function ThreadNoteItem({
@@ -359,6 +373,8 @@ function ThreadNoteItem({
   onQuote,
   cache,
   recentEmojis,
+  emojiSets,
+  looseEmojis,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
   const displayName =
@@ -605,11 +621,13 @@ function ThreadNoteItem({
           }}
           isAlreadyReposted={false}
           recentEmojis={recentEmojis}
+          emojiSets={emojiSets}
+          looseEmojis={looseEmojis}
           onPickerOpenChange={onPickerOpenChange}
-          onEmojiSelect={async (emoji) => {
+          onEmojiSelect={async (emoji, imageUrl) => {
             try {
               if (onReaction) {
-                await onReaction(note.eventId, note.pubkey, emoji);
+                await onReaction(note.eventId, note.pubkey, emoji, imageUrl);
               }
             } catch (e) {
               console.error(e);

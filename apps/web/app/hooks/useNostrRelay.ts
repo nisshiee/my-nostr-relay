@@ -9,6 +9,8 @@ import { useNostrNotes } from "./useNostrNotes";
 import { useNostrReactions } from "./useNostrReactions";
 import { useEventCache } from "./useEventCache";
 import type { EventCache } from "./useEventCache";
+import { useCustomEmojis } from "./useCustomEmojis";
+import type { CustomEmoji, EmojiSet } from "./useCustomEmojis";
 import { SimplePool } from "nostr-tools/pool";
 import { CLIENT_TAG } from "../lib/constants";
 
@@ -23,6 +25,8 @@ interface UseNostrRelayResult {
   relayUrls: string[];
   pool: SimplePool | null;
   cache: EventCache;
+  emojiSets: EmojiSet[];
+  looseEmojis: CustomEmoji[];
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
   sendRepost: (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => Promise<void>;
@@ -43,6 +47,7 @@ export function useNostrRelay(
   const { pool, relayUrls, followPubkeys, status, setStatus } = useNostrConnection(pubkey);
   const { profiles, upsertProfile, fetchProfiles, profilesRef } = useNostrProfiles(pool, relayUrls, followPubkeys);
   const cache = useEventCache(pool, relayUrls, fetchProfiles);
+  const { emojiSets, looseEmojis } = useCustomEmojis(pool, relayUrls, pubkey);
 
   // initialEventIds を管理するstate
   const [initialEventIds, setInitialEventIds] = useState<string[]>([]);
@@ -151,5 +156,5 @@ export function useNostrRelay(
     [publishEvent, relayUrls],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction, sendRepost };
+  return { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, publishEvent, sendReaction, sendRepost };
 }

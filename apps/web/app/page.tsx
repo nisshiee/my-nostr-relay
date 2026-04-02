@@ -11,13 +11,13 @@ export default function Home() {
   const { pubkey, npub, nip07Available, autoLoading, login, logout } = useAuth();
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
-  const { notes, profiles, reactions, status, relayUrls, pool, cache, publishEvent, sendReaction, sendRepost } = useNostrRelay(pubkey, publishedSlotMapRef);
+  const { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, publishEvent, sendReaction, sendRepost } = useNostrRelay(pubkey, publishedSlotMapRef);
   const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status, cache, publishedSlotMapRef);
   const { recentEmojis, addEmoji } = useRecentEmojis(pool, relayUrls, pubkey);
 
   const handleSendReaction = useCallback(
     async (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => {
-      addEmoji(emoji); // 楽観的に即座に更新
+      addEmoji(emoji, imageUrl); // 楽観的に即座に更新
       await sendReaction(targetEventId, targetPubkey, emoji, imageUrl);
     },
     [sendReaction, addEmoji],
@@ -42,6 +42,8 @@ export default function Home() {
         onLogout={logout}
         isProcessing={isProcessing}
         recentEmojis={recentEmojis}
+        emojiSets={emojiSets}
+        looseEmojis={looseEmojis}
       />
     );
   }

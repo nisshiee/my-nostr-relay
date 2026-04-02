@@ -3,6 +3,8 @@
 import { useState, useRef } from "react";
 import { MessageSquare, Repeat2, Plus, Smile, Quote } from "lucide-react";
 import { EmojiPickerPopover } from "./EmojiPickerPopover";
+import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
+import type { RecentEmoji } from "../hooks/useRecentEmojis";
 
 /** NoteCard用アクションバー（カードクリックで展開するリアクション操作UI） */
 
@@ -22,11 +24,15 @@ interface ActionBarProps {
   /** 自分が既にリポスト済みかどうか */
   isAlreadyReposted: boolean;
   /** 絵文字ピッカーから絵文字が選択されたときのハンドラ */
-  onEmojiSelect?: (emoji: string) => void;
+  onEmojiSelect?: (emoji: string, imageUrl?: string) => void;
   /** 絵文字ピッカーの開閉状態が変わったときのコールバック */
   onPickerOpenChange?: (isOpen: boolean) => void;
   /** 最近使った絵文字の配列 */
-  recentEmojis?: string[];
+  recentEmojis?: RecentEmoji[];
+  /** カスタム絵文字セット */
+  emojiSets?: EmojiSet[];
+  /** 個別のカスタム絵文字 */
+  looseEmojis?: CustomEmoji[];
 }
 
 export function ActionBar({
@@ -40,6 +46,8 @@ export function ActionBar({
   onEmojiSelect,
   onPickerOpenChange,
   recentEmojis,
+  emojiSets,
+  looseEmojis,
 }: ActionBarProps) {
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
@@ -149,11 +157,13 @@ export function ActionBar({
             <EmojiPickerPopover
               isOpen={isPickerOpen}
               onClose={() => updatePickerOpen(false)}
-              onEmojiSelect={(emoji) => {
-                onEmojiSelect(emoji);
+              onEmojiSelect={(emoji, imageUrl) => {
+                onEmojiSelect(emoji, imageUrl);
               }}
               anchorRef={emojiButtonRef}
               recentEmojis={recentEmojis}
+              emojiSets={emojiSets}
+              looseEmojis={looseEmojis}
             />
           </>
         )}
