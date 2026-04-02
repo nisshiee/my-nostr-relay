@@ -89,6 +89,8 @@ interface ThreadCardProps {
   emojiSets?: EmojiSet[];
   /** 個別のカスタム絵文字 */
   looseEmojis?: CustomEmoji[];
+  /** プロフィール取得関数（未取得のpubkeyのプロフィールをフェッチする） */
+  fetchProfiles?: (pubkeys: string[]) => void;
 }
 
 export function ThreadCard({
@@ -108,6 +110,7 @@ export function ThreadCard({
   recentEmojis,
   emojiSets,
   looseEmojis,
+  fetchProfiles,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -279,6 +282,7 @@ export function ThreadCard({
             recentEmojis={recentEmojis}
             emojiSets={emojiSets}
             looseEmojis={looseEmojis}
+            fetchProfiles={fetchProfiles}
           />
         );
       })}
@@ -353,6 +357,8 @@ interface ThreadNoteItemProps {
   emojiSets?: EmojiSet[];
   /** 個別のカスタム絵文字 */
   looseEmojis?: CustomEmoji[];
+  /** プロフィール取得関数 */
+  fetchProfiles?: (pubkeys: string[]) => void;
 }
 
 function ThreadNoteItem({
@@ -375,6 +381,7 @@ function ThreadNoteItem({
   recentEmojis,
   emojiSets,
   looseEmojis,
+  fetchProfiles,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
   const displayName =
@@ -428,11 +435,22 @@ function ThreadNoteItem({
 
   // リアクションバッジのツールチップ用イベントハンドラー
   const handleBadgeMouseEnter = useCallback((emoji: string) => {
+    // リアクション者のプロフィールを先行取得
+    if (fetchProfiles && noteReactions) {
+      const entry = noteReactions.get(emoji);
+      if (entry) {
+        const unknownPubkeys = Array.from(entry.pubkeys).filter(pk => !profiles?.has(pk));
+        if (unknownPubkeys.length > 0) {
+          fetchProfiles(unknownPubkeys);
+        }
+      }
+    }
+
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
       setActiveTooltipEmoji(emoji);
     }, 500);
-  }, []);
+  }, [fetchProfiles, noteReactions, profiles]);
 
   const handleBadgeMouseLeave = useCallback(() => {
     if (hoverTimerRef.current) {
