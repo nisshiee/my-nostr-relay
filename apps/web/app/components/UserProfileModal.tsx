@@ -127,20 +127,32 @@ export function UserProfileModal({
           </svg>
         </button>
 
-        <div className="border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+        <div
+          className={`border-b border-gray-200 dark:border-gray-700 ${
+            bannerUrl
+              ? "relative overflow-hidden bg-gray-900"
+              : "bg-white dark:bg-gray-800"
+          }`}
+        >
           {bannerUrl && (
-            <div className="relative h-32 w-full overflow-hidden bg-gray-100 dark:bg-gray-700 sm:h-40">
-              <Image
-                src={bannerUrl}
-                alt={`${displayName} banner`}
-                fill
-                className="object-cover"
-                unoptimized
-              />
-            </div>
+            <>
+              <div className="absolute inset-0">
+                <Image
+                  src={bannerUrl}
+                  alt={`${displayName} banner`}
+                  fill
+                  className="object-cover"
+                  unoptimized
+                />
+              </div>
+              <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-black/45 to-black/60" />
+              <div className="absolute inset-x-0 bottom-0 h-20 bg-white/10 backdrop-blur-[1px] dark:bg-black/10" />
+            </>
           )}
 
-          <div className="px-6 py-6 sm:px-8">
+          <div
+            className={`relative px-6 ${bannerUrl ? "py-5 text-white" : "py-6"} sm:px-8`}
+          >
             <div className="flex items-start gap-4 sm:gap-5">
               {avatarUrl ? (
                 <Image
@@ -148,7 +160,9 @@ export function UserProfileModal({
                   alt={displayName}
                   width={72}
                   height={72}
-                  className="h-16 w-16 rounded-full object-cover sm:h-[72px] sm:w-[72px]"
+                  className={`h-16 w-16 rounded-full object-cover sm:h-[72px] sm:w-[72px] ${
+                    bannerUrl ? "ring-2 ring-white/70" : ""
+                  }`}
                   unoptimized
                 />
               ) : (
@@ -159,24 +173,46 @@ export function UserProfileModal({
 
               <div className="min-w-0 flex-1 pr-10">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <h2 className="truncate text-xl font-semibold text-gray-900 dark:text-gray-100 sm:text-2xl">
+                  <h2
+                    className={`truncate text-xl font-semibold sm:text-2xl ${
+                      bannerUrl ? "text-white" : "text-gray-900 dark:text-gray-100"
+                    }`}
+                  >
                     {displayName}
                   </h2>
                   {profile?.name && profile.name !== displayName && (
-                    <span className="truncate text-sm text-gray-500 dark:text-gray-400">@{profile.name}</span>
+                    <span
+                      className={`truncate text-sm ${
+                        bannerUrl ? "text-gray-200" : "text-gray-500 dark:text-gray-400"
+                      }`}
+                    >
+                      @{profile.name}
+                    </span>
                   )}
                 </div>
                 <div
-                  className="mt-1 break-all text-xs leading-5 text-gray-500 select-all dark:text-gray-400"
+                  className={`mt-1 break-all text-xs leading-5 select-all ${
+                    bannerUrl ? "text-gray-200" : "text-gray-500 dark:text-gray-400"
+                  }`}
                   title={npub}
                 >
                   {npub}
                 </div>
                 {profile?.nip05 && (
-                  <div className="mt-2 text-sm text-purple-600 dark:text-purple-400">{profile.nip05}</div>
+                  <div
+                    className={`mt-2 text-sm ${
+                      bannerUrl ? "text-purple-100" : "text-purple-600 dark:text-purple-400"
+                    }`}
+                  >
+                    {profile.nip05}
+                  </div>
                 )}
                 {profile?.about && (
-                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-gray-300">
+                  <p
+                    className={`mt-3 whitespace-pre-wrap text-sm leading-6 ${
+                      bannerUrl ? "text-gray-100" : "text-gray-700 dark:text-gray-300"
+                    }`}
+                  >
                     {profile.about}
                   </p>
                 )}
