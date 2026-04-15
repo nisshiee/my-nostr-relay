@@ -56,13 +56,16 @@ interface LiveCanvasProps {
   looseEmojis: CustomEmoji[];
   fetchProfiles: (pubkeys: string[]) => void;
   fetchUserRecentNotes: (pubkey: string) => Promise<Event[]>;
+  isFollowing: (targetPubkey: string) => boolean;
+  follow: (targetPubkey: string) => Promise<void>;
+  unfollow: (targetPubkey: string) => Promise<void>;
 }
 
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
   const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
@@ -595,6 +598,9 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
           fetchUserRecentNotes={fetchUserRecentNotes}
           cache={cache}
           profiles={profiles}
+          isFollowing={isFollowing(profileModalPubkey)}
+          follow={follow}
+          unfollow={unfollow}
         />
       )}
     </div>

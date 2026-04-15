@@ -1,14 +1,18 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import {
   BOOTSTRAP_RELAYS,
   BOOTSTRAP_EOSE_TIMEOUT,
+  CLIENT_TAG,
   MAX_WAIT_FOR_CONNECTION,
 } from "../lib/constants";
+import type { NostrEvent } from "../types/nostr";
 
 export type ConnectionStatus = "connecting" | "loading" | "connected" | "error";
+
+type FollowAction = "follow" | "unfollow";
 
 export interface UseNostrConnectionResult {
   pool: SimplePool | null;
@@ -16,6 +20,7 @@ export interface UseNostrConnectionResult {
   followPubkeys: string[];
   status: ConnectionStatus;
   setStatus: (status: ConnectionStatus) => void;
+  updateFollowList: (targetPubkey: string, action: FollowAction) => Promise<string[]>;
 }
 
 /**
@@ -27,6 +32,89 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
   const [followPubkeys, setFollowPubkeys] = useState<string[]>([]);
   const [pool, setPool] = useState<SimplePool | null>(null);
   const poolRef = useRef<SimplePool | null>(null);
+  const relayUrlsRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    relayUrlsRef.current = relayUrls;
+  }, [relayUrls]);
+
+  const fetchLatestContactEvent = useCallback(async (): Promise<Event | null> => {
+    const currentPool = poolRef.current;
+    if (!currentPool || !pubkey) {
+      throw new Error("kind:3 を取得できませんでした。接続を確認してください");
+    }
+
+    const queryRelays = relayUrlsRef.current.length > 0 ? relayUrlsRef.current : BOOTSTRAP_RELAYS;
+    const contactEvents = await currentPool.querySync(
+      queryRelays,
+      { authors: [pubkey], kinds: [3], limit: 1 } as Filter,
+      { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+    );
+
+    return contactEvents.reduce<Event | null>(
+      (latest, event) => (!latest || event.created_at > latest.created_at ? event : latest),
+      null,
+    );
+  }, [pubkey]);
+
+  const updateFollowList = useCallback(async (targetPubkey: string, action: FollowAction): Promise<string[]> => {
+    if (!targetPubkey) {
+      throw new Error("対象ユーザーが不正です");
+    }
+
+    const currentPool = poolRef.current;
+    const currentRelays = relayUrlsRef.current.length > 0 ? relayUrlsRef.current : BOOTSTRAP_RELAYS;
+    if (!currentPool || currentRelays.length === 0 || !pubkey) {
+      throw new Error("フォロー状態を更新できませんでした。接続を確認してください");
+    }
+
+    const nostrExt = window.nostr;
+    if (!nostrExt) {
+      throw new Error("NIP-07拡張（window.nostr）が見つかりません");
+    }
+
+    const latestContactEvent = await fetchLatestContactEvent();
+    const baseTags = latestContactEvent?.tags ?? [CLIENT_TAG];
+    const nonPTags = baseTags.filter((tag) => tag[0] !== "p");
+    const existingPTags = baseTags.filter((tag) => tag[0] === "p" && tag[1]);
+
+    const pTagMap = new Map<string, string[]>();
+    for (const tag of existingPTags) {
+      const followedPubkey = tag[1];
+      if (!followedPubkey || pTagMap.has(followedPubkey)) continue;
+      pTagMap.set(followedPubkey, tag);
+    }
+
+    if (action === "follow") {
+      if (!pTagMap.has(targetPubkey)) {
+        pTagMap.set(targetPubkey, ["p", targetPubkey]);
+      }
+    } else {
+      pTagMap.delete(targetPubkey);
+    }
+
+    const nextFollowPubkeys = Array.from(pTagMap.keys());
+    const nextTags = [...nonPTags, ...Array.from(pTagMap.values())];
+
+    const unsignedEvent: NostrEvent = {
+      kind: 3,
+      content: latestContactEvent?.content ?? "",
+      tags: nextTags,
+      created_at: Math.floor(Date.now() / 1000),
+    };
+
+    const signedEvent = await nostrExt.signEvent(unsignedEvent);
+    const results = await Promise.allSettled(
+      currentPool.publish(currentRelays, signedEvent as Event),
+    );
+    const hasSuccess = results.some((result) => result.status === "fulfilled");
+    if (!hasSuccess) {
+      throw new Error("kind:3 の送信に失敗しました");
+    }
+
+    setFollowPubkeys(nextFollowPubkeys);
+    return nextFollowPubkeys;
+  }, [fetchLatestContactEvent, pubkey]);
 
   useEffect(() => {
     if (!pubkey) {
@@ -117,5 +205,5 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
     };
   }, [pubkey]);
 
-  return { pool, relayUrls, followPubkeys, status, setStatus };
+  return { pool, relayUrls, followPubkeys, status, setStatus, updateFollowList };
 }

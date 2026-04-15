@@ -32,6 +32,9 @@ interface UseNostrRelayResult {
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
   sendRepost: (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => Promise<void>;
+  isFollowing: (targetPubkey: string) => boolean;
+  follow: (targetPubkey: string) => Promise<void>;
+  unfollow: (targetPubkey: string) => Promise<void>;
 }
 
 /**
@@ -46,7 +49,7 @@ export function useNostrRelay(
   pubkey: string | null,
   publishedSlotMapRef: React.RefObject<Map<string, string>>,
 ): UseNostrRelayResult {
-  const { pool, relayUrls, followPubkeys, status, setStatus } = useNostrConnection(pubkey);
+  const { pool, relayUrls, followPubkeys, status, setStatus, updateFollowList } = useNostrConnection(pubkey);
   const { profiles, fetchProfiles, profilesRef } = useNostrProfiles(pool, relayUrls, followPubkeys);
   const cache = useEventCache(pool, relayUrls, fetchProfiles);
   const { emojiSets, looseEmojis } = useCustomEmojis(pool, relayUrls, pubkey);
@@ -105,6 +108,25 @@ export function useNostrRelay(
       }
     },
     [pool, relayUrls],
+  );
+
+  const isFollowing = useCallback(
+    (targetPubkey: string) => followPubkeys.includes(targetPubkey),
+    [followPubkeys],
+  );
+
+  const follow = useCallback(
+    async (targetPubkey: string) => {
+      await updateFollowList(targetPubkey, "follow");
+    },
+    [updateFollowList],
+  );
+
+  const unfollow = useCallback(
+    async (targetPubkey: string) => {
+      await updateFollowList(targetPubkey, "unfollow");
+    },
+    [updateFollowList],
   );
 
   /** NIP-25準拠のリアクションイベントを構築・署名・送信し、楽観的にUIを更新する */
@@ -181,5 +203,23 @@ export function useNostrRelay(
     [publishEvent, relayUrls],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, publishEvent, sendReaction, sendRepost };
+  return {
+    notes,
+    profiles,
+    reactions,
+    status,
+    relayUrls,
+    pool,
+    cache,
+    emojiSets,
+    looseEmojis,
+    fetchProfiles,
+    fetchUserRecentNotes,
+    publishEvent,
+    sendReaction,
+    sendRepost,
+    isFollowing,
+    follow,
+    unfollow,
+  };
 }
