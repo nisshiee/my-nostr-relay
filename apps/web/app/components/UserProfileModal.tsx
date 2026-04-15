@@ -256,7 +256,7 @@ export function UserProfileModal({
                   type="button"
                   onClick={handleFollowClick}
                   disabled={isSubmittingFollow}
-                  className={`inline-flex min-w-[112px] items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${
+                  className={`inline-flex min-w-[112px] cursor-pointer items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${
                     isFollowing
                       ? bannerUrl
                         ? "border border-white/30 bg-white/10 text-white hover:bg-white/15"
