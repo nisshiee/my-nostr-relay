@@ -103,8 +103,12 @@ export function useUserRecentNotes({
     };
   }, [enabled, pubkey, fetchUserRecentNotes]);
 
-  if (!enabled || !pubkey || state.requestedPubkey !== pubkey) {
+  if (!enabled || !pubkey) {
     return { notes: [], isLoading: false, error: null };
+  }
+
+  if (state.requestedPubkey !== pubkey) {
+    return { notes: [], isLoading: true, error: null };
   }
 
   return state;
