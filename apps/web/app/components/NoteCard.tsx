@@ -52,9 +52,11 @@ interface NoteCardProps {
   looseEmojis?: CustomEmoji[];
   /** プロフィール取得関数（未取得のpubkeyのプロフィールをフェッチする） */
   fetchProfiles?: (pubkeys: string[]) => void;
+  /** アバターまたは表示名クリック時のハンドラ */
+  onProfileClick?: (pubkey: string) => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis, fetchProfiles }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis, fetchProfiles, onProfileClick }: NoteCardProps) {
   const displayName = resolveProfileDisplayName(note.pubkey, profile);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isActionBarOpen, setIsActionBarOpen] = useState(false);
@@ -265,6 +267,10 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
         onRelease={onRelease}
         cache={cache}
         profiles={profiles}
+        onProfileClick={onProfileClick ? (pubkey, event) => {
+          event.stopPropagation();
+          onProfileClick(pubkey);
+        } : undefined}
       />
 
       {/* リアクションバッジ */}

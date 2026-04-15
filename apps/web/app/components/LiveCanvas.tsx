@@ -26,9 +26,11 @@ import { ComposeCard } from "./ComposeCard";
 import { CanvasHeader } from "./CanvasHeader";
 import { EmptyState } from "./EmptyState";
 import type { NostrEvent } from "../types/nostr";
+import type { Event } from "nostr-tools/core";
 import type { EventCache } from "../hooks/useEventCache";
 import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
 import type { RecentEmoji } from "../hooks/useRecentEmojis";
+import { UserProfileModal } from "./UserProfileModal";
 
 interface LiveCanvasProps {
   notes: NoteCardType[];
@@ -53,15 +55,17 @@ interface LiveCanvasProps {
   emojiSets: EmojiSet[];
   looseEmojis: CustomEmoji[];
   fetchProfiles: (pubkeys: string[]) => void;
+  fetchUserRecentNotes: (pubkey: string) => Promise<Event[]>;
 }
 
 function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
+  const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
 
   /** カードをホールド状態にする */
   const holdCard = useCallback((slotId: string) => {
@@ -501,6 +505,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               emojiSets={emojiSets}
                               looseEmojis={looseEmojis}
                               fetchProfiles={fetchProfiles}
+                              onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
                               onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
                                 sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
                               }}
@@ -530,6 +535,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               emojiSets={emojiSets}
                               looseEmojis={looseEmojis}
                               fetchProfiles={fetchProfiles}
+                              onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
                               reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
                               reactions={reactions.get(note.eventId)}
                               myPubkey={pubkey}
@@ -578,6 +584,19 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
           );
         })()}
       </main>
+
+      {profileModalPubkey && (
+        <UserProfileModal
+          pubkey={profileModalPubkey}
+          profile={profiles.get(profileModalPubkey)}
+          isOpen={!!profileModalPubkey}
+          onClose={() => setProfileModalPubkey(null)}
+          fetchProfiles={fetchProfiles}
+          fetchUserRecentNotes={fetchUserRecentNotes}
+          cache={cache}
+          profiles={profiles}
+        />
+      )}
     </div>
   );
 }

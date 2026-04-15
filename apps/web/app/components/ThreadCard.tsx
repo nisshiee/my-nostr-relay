@@ -65,6 +65,8 @@ interface ThreadCardProps {
   looseEmojis?: CustomEmoji[];
   /** プロフィール取得関数（未取得のpubkeyのプロフィールをフェッチする） */
   fetchProfiles?: (pubkeys: string[]) => void;
+  /** アバターまたは表示名クリック時のハンドラ */
+  onProfileClick?: (pubkey: string) => void;
 }
 
 export function ThreadCard({
@@ -85,6 +87,7 @@ export function ThreadCard({
   emojiSets,
   looseEmojis,
   fetchProfiles,
+  onProfileClick,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -257,6 +260,7 @@ export function ThreadCard({
             emojiSets={emojiSets}
             looseEmojis={looseEmojis}
             fetchProfiles={fetchProfiles}
+            onProfileClick={onProfileClick}
           />
         );
       })}
@@ -333,6 +337,8 @@ interface ThreadNoteItemProps {
   looseEmojis?: CustomEmoji[];
   /** プロフィール取得関数 */
   fetchProfiles?: (pubkeys: string[]) => void;
+  /** アバターまたは表示名クリック時のハンドラ */
+  onProfileClick?: (pubkey: string) => void;
 }
 
 function ThreadNoteItem({
@@ -356,6 +362,7 @@ function ThreadNoteItem({
   emojiSets,
   looseEmojis,
   fetchProfiles,
+  onProfileClick,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
 
@@ -480,6 +487,10 @@ function ThreadNoteItem({
           onRelease={onRelease}
           cache={cache}
           profiles={profiles}
+          onProfileClick={onProfileClick ? (pubkey, event) => {
+            event.stopPropagation();
+            onProfileClick(pubkey);
+          } : undefined}
         />
 
         {/* リアクションバッジ */}

@@ -1,5 +1,6 @@
 "use client";
 
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
 import Image from "next/image";
 import { ContentRenderer } from "./content/ContentRenderer";
 import type { EventCache } from "../hooks/useEventCache";
@@ -55,6 +56,7 @@ interface NoteCardContentProps {
   onRelease?: () => void;
   cache?: EventCache;
   profiles?: Map<string, NostrProfile>;
+  onProfileClick?: (pubkey: string, event: ReactMouseEvent | ReactKeyboardEvent) => void;
 }
 
 export function NoteCardContent({
@@ -67,6 +69,7 @@ export function NoteCardContent({
   onRelease,
   cache,
   profiles,
+  onProfileClick,
 }: NoteCardContentProps) {
   const isCompact = variant === "compact";
   const displayName = resolveProfileDisplayName(note.pubkey, profile);
@@ -74,6 +77,10 @@ export function NoteCardContent({
     ? resolveProfileDisplayName(note.repostInfo.reposterPubkey, reposterProfile)
     : undefined;
   const avatarUrl = profile?.picture;
+
+  const avatarButtonClass = isCompact
+    ? "h-6 w-6 shrink-0 rounded-full"
+    : "h-8 w-8 shrink-0 rounded-full";
 
   return (
     <>
@@ -91,7 +98,36 @@ export function NoteCardContent({
       )}
 
       <div className={`flex items-center ${isCompact ? "gap-2 mb-1" : "gap-3 mb-2"}`}>
-        {avatarUrl ? (
+        {onProfileClick ? (
+          <button
+            type="button"
+            onClick={(event) => onProfileClick(note.pubkey, event)}
+            className={`${avatarButtonClass} rounded-full transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-purple-400`}
+            aria-label={`${displayName}のプロフィールを開く`}
+          >
+            {avatarUrl ? (
+              <Image
+                src={avatarUrl}
+                alt={displayName}
+                width={isCompact ? 24 : 32}
+                height={isCompact ? 24 : 32}
+                className={isCompact
+                  ? "h-6 w-6 shrink-0 rounded-full object-cover"
+                  : "h-8 w-8 shrink-0 rounded-full object-cover"}
+                unoptimized
+              />
+            ) : (
+              <div className={isCompact
+                ? "w-6 h-6 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center flex-shrink-0"
+                : "w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center flex-shrink-0"}
+              >
+                <span className={isCompact ? "text-white text-[10px] font-bold" : "text-white text-xs font-bold"}>
+                  {displayName.charAt(0).toUpperCase()}
+                </span>
+              </div>
+            )}
+          </button>
+        ) : avatarUrl ? (
           <Image
             src={avatarUrl}
             alt={displayName}
@@ -115,18 +151,38 @@ export function NoteCardContent({
 
         {isCompact ? (
           <div className="flex items-baseline gap-1.5 min-w-0 flex-1">
-            <span className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">
-              {displayName}
-            </span>
+            {onProfileClick ? (
+              <button
+                type="button"
+                onClick={(event) => onProfileClick(note.pubkey, event)}
+                className="min-w-0 truncate text-left text-xs font-semibold text-gray-900 transition-colors hover:text-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 dark:text-gray-100 dark:hover:text-purple-400"
+              >
+                {displayName}
+              </button>
+            ) : (
+              <span className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">
+                {displayName}
+              </span>
+            )}
             <span className="text-[11px] text-gray-400 dark:text-gray-500 flex-shrink-0">
               {relativeTime(note.created_at)}
             </span>
           </div>
         ) : (
           <div className="flex flex-col min-w-0 flex-1">
-            <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-              {displayName}
-            </span>
+            {onProfileClick ? (
+              <button
+                type="button"
+                onClick={(event) => onProfileClick(note.pubkey, event)}
+                className="truncate text-left text-sm font-semibold text-gray-900 transition-colors hover:text-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-400 dark:text-gray-100 dark:hover:text-purple-400"
+              >
+                {displayName}
+              </button>
+            ) : (
+              <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
+                {displayName}
+              </span>
+            )}
             <span className="text-xs text-gray-500 dark:text-gray-400">
               {relativeTime(note.created_at)}
             </span>

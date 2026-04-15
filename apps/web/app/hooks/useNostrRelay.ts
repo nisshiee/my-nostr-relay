@@ -12,7 +12,7 @@ import type { EventCache } from "./useEventCache";
 import { useCustomEmojis } from "./useCustomEmojis";
 import type { CustomEmoji, EmojiSet } from "./useCustomEmojis";
 import { SimplePool } from "nostr-tools/pool";
-import { CLIENT_TAG } from "../lib/constants";
+import { BOOTSTRAP_EOSE_TIMEOUT, CLIENT_TAG } from "../lib/constants";
 
 /** NIP-07拡張(window.nostr)の署名済みイベント型 */
 type SignedNostrEvent = NostrEvent & { id: string; sig: string };
@@ -28,6 +28,7 @@ interface UseNostrRelayResult {
   emojiSets: EmojiSet[];
   looseEmojis: CustomEmoji[];
   fetchProfiles: (pubkeys: string[]) => void;
+  fetchUserRecentNotes: (pubkey: string) => Promise<Event[]>;
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
   sendRepost: (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => Promise<void>;
@@ -46,7 +47,7 @@ export function useNostrRelay(
   publishedSlotMapRef: React.RefObject<Map<string, string>>,
 ): UseNostrRelayResult {
   const { pool, relayUrls, followPubkeys, status, setStatus } = useNostrConnection(pubkey);
-  const { profiles, upsertProfile, fetchProfiles, profilesRef } = useNostrProfiles(pool, relayUrls, followPubkeys);
+  const { profiles, fetchProfiles, profilesRef } = useNostrProfiles(pool, relayUrls, followPubkeys);
   const cache = useEventCache(pool, relayUrls, fetchProfiles);
   const { emojiSets, looseEmojis } = useCustomEmojis(pool, relayUrls, pubkey);
 
@@ -64,6 +65,29 @@ export function useNostrRelay(
 
   const { reactions, addReaction } = useNostrReactions(
     pool, relayUrls, notesRef, newNotesMinCreatedAtRef, initialEventIds,
+  );
+
+  const fetchUserRecentNotes = useCallback(
+    async (targetPubkey: string): Promise<Event[]> => {
+      if (!pool || relayUrls.length === 0) {
+        throw new Error("recent note を取得できませんでした。リレー接続を確認してください");
+      }
+
+      const events = await pool.querySync(
+        relayUrls,
+        { kinds: [1], authors: [targetPubkey], limit: 50 },
+        { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+      );
+
+      const recentNotes = events
+        .filter((event) => event.kind === 1)
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, 50);
+
+      cache.addEvents(recentNotes);
+      return recentNotes;
+    },
+    [pool, relayUrls, cache],
   );
 
   /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
@@ -157,5 +181,5 @@ export function useNostrRelay(
     [publishEvent, relayUrls],
   );
 
-  return { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, fetchProfiles, publishEvent, sendReaction, sendRepost };
+  return { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, publishEvent, sendReaction, sendRepost };
 }
