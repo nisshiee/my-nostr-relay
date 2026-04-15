@@ -95,6 +95,7 @@ export function UserProfileModal({
 
   const displayName = resolveProfileDisplayName(pubkey, profile);
   const avatarUrl = profile?.picture;
+  const bannerUrl = profile?.banner;
   const npub = encodeNpub(pubkey);
 
   return createPortal(
@@ -126,46 +127,60 @@ export function UserProfileModal({
           </svg>
         </button>
 
-        <div className="border-b border-gray-200 bg-white px-6 py-6 dark:border-gray-700 dark:bg-gray-800 sm:px-8">
-          <div className="flex items-start gap-4 sm:gap-5">
-            {avatarUrl ? (
+        <div className="border-b border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
+          {bannerUrl && (
+            <div className="relative h-32 w-full overflow-hidden bg-gray-100 dark:bg-gray-700 sm:h-40">
               <Image
-                src={avatarUrl}
-                alt={displayName}
-                width={72}
-                height={72}
-                className="h-16 w-16 rounded-full object-cover sm:h-[72px] sm:w-[72px]"
+                src={bannerUrl}
+                alt={`${displayName} banner`}
+                fill
+                className="object-cover"
                 unoptimized
               />
-            ) : (
-              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-400 to-blue-500 sm:h-[72px] sm:w-[72px]">
-                <span className="text-xl font-bold text-white">{displayName.charAt(0).toUpperCase()}</span>
-              </div>
-            )}
+            </div>
+          )}
 
-            <div className="min-w-0 flex-1 pr-10">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <h2 className="truncate text-xl font-semibold text-gray-900 dark:text-gray-100 sm:text-2xl">
-                  {displayName}
-                </h2>
-                {profile?.name && profile.name !== displayName && (
-                  <span className="truncate text-sm text-gray-500 dark:text-gray-400">@{profile.name}</span>
+          <div className="px-6 py-6 sm:px-8">
+            <div className="flex items-start gap-4 sm:gap-5">
+              {avatarUrl ? (
+                <Image
+                  src={avatarUrl}
+                  alt={displayName}
+                  width={72}
+                  height={72}
+                  className="h-16 w-16 rounded-full object-cover sm:h-[72px] sm:w-[72px]"
+                  unoptimized
+                />
+              ) : (
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-400 to-blue-500 sm:h-[72px] sm:w-[72px]">
+                  <span className="text-xl font-bold text-white">{displayName.charAt(0).toUpperCase()}</span>
+                </div>
+              )}
+
+              <div className="min-w-0 flex-1 pr-10">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <h2 className="truncate text-xl font-semibold text-gray-900 dark:text-gray-100 sm:text-2xl">
+                    {displayName}
+                  </h2>
+                  {profile?.name && profile.name !== displayName && (
+                    <span className="truncate text-sm text-gray-500 dark:text-gray-400">@{profile.name}</span>
+                  )}
+                </div>
+                <div
+                  className="mt-1 break-all text-xs leading-5 text-gray-500 select-all dark:text-gray-400"
+                  title={npub}
+                >
+                  {npub}
+                </div>
+                {profile?.nip05 && (
+                  <div className="mt-2 text-sm text-purple-600 dark:text-purple-400">{profile.nip05}</div>
+                )}
+                {profile?.about && (
+                  <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-gray-300">
+                    {profile.about}
+                  </p>
                 )}
               </div>
-              <div
-                className="mt-1 break-all text-xs leading-5 text-gray-500 select-all dark:text-gray-400"
-                title={npub}
-              >
-                {npub}
-              </div>
-              {profile?.nip05 && (
-                <div className="mt-2 text-sm text-purple-600 dark:text-purple-400">{profile.nip05}</div>
-              )}
-              {profile?.about && (
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-gray-300">
-                  {profile.about}
-                </p>
-              )}
             </div>
           </div>
         </div>

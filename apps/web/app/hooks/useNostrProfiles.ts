@@ -31,7 +31,16 @@ export function useNostrProfiles(
   /** プロフィールを追加・更新（kind:0イベントから） */
   const upsertProfile = useCallback((event: Event) => {
     try {
-      const data = JSON.parse(event.content) as NostrProfile;
+      const raw = JSON.parse(event.content) as Record<string, unknown>;
+      const data: NostrProfile = {
+        name: typeof raw.name === "string" ? raw.name : undefined,
+        display_name: typeof raw.display_name === "string" ? raw.display_name : undefined,
+        picture: typeof raw.picture === "string" ? raw.picture : undefined,
+        banner: typeof raw.banner === "string" ? raw.banner : undefined,
+        about: typeof raw.about === "string" ? raw.about : undefined,
+        nip05: typeof raw.nip05 === "string" ? raw.nip05 : undefined,
+      };
+
       setProfiles((prev) => {
         const next = new Map(prev);
         next.set(event.pubkey, data);
