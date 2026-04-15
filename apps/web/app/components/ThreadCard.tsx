@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import Image from "next/image";
 import type {
   ThreadCard as ThreadCardType,
   ThreadNote,
@@ -9,37 +8,13 @@ import type {
   Reactions,
 } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
-import { ContentRenderer } from "./content/ContentRenderer";
 import type { EventCache } from "../hooks/useEventCache";
 import { ActionBar } from "./ActionBar";
+import { NoteCardContent, resolveProfileDisplayName } from "./NoteCardContent";
 import { ReplyCompose } from "./ReplyCompose";
 import { ReactionTooltip } from "./ReactionTooltip";
 import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
 import type { RecentEmoji } from "../hooks/useRecentEmojis";
-
-/** npubの省略表示を生成 */
-function shortenPubkey(pubkey: string): string {
-  if (pubkey.length <= 12) return pubkey;
-  return `${pubkey.slice(0, 8)}…${pubkey.slice(-4)}`;
-}
-
-/** 相対時刻を表示する（"3分前", "1時間前" など） */
-function relativeTime(unixTimestamp: number): string {
-  const now = Math.floor(Date.now() / 1000);
-  const diffSec = now - unixTimestamp;
-
-  const rtf = new Intl.RelativeTimeFormat("ja", { numeric: "auto" });
-
-  if (diffSec < 60) {
-    return rtf.format(-diffSec, "second");
-  } else if (diffSec < 3600) {
-    return rtf.format(-Math.floor(diffSec / 60), "minute");
-  } else if (diffSec < 86400) {
-    return rtf.format(-Math.floor(diffSec / 3600), "hour");
-  } else {
-    return rtf.format(-Math.floor(diffSec / 86400), "day");
-  }
-}
 
 /** プロフィールから表示名を解決する */
 function resolveDisplayName(
@@ -47,8 +22,7 @@ function resolveDisplayName(
   profiles: Map<string, NostrProfile>,
 ): string {
   if (!pubkey) return "不明なユーザー";
-  const profile = profiles.get(pubkey);
-  return profile?.display_name || profile?.name || shortenPubkey(pubkey);
+  return resolveProfileDisplayName(pubkey, profiles.get(pubkey));
 }
 
 interface ThreadCardProps {
@@ -384,9 +358,6 @@ function ThreadNoteItem({
   fetchProfiles,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
-  const displayName =
-    profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
-  const avatarUrl = profile?.picture;
 
   // 返信先の表示名を解決
   const replyToName = note.replyTo
@@ -500,53 +471,16 @@ function ThreadNoteItem({
           isLast ? "pb-3 rounded-b-xl" : ""
         } ${isActive ? "bg-gray-50 dark:bg-gray-800" : ""}`}
       >
-        {/* 返信先インジケータ */}
-        {replyToName && (
-          <div className="text-[11px] text-gray-400 dark:text-gray-500 mb-0.5 ml-8">
-            ↩ {replyToName}
-          </div>
-        )}
-
-        {/* ヘッダー: アバター + 名前 + 時刻 */}
-        <div className="flex items-center gap-2 mb-1">
-          {avatarUrl ? (
-            <Image
-              src={avatarUrl}
-              alt={displayName}
-              width={24}
-              height={24}
-              className="h-6 w-6 shrink-0 rounded-full object-cover"
-              unoptimized
-            />
-          ) : (
-            <div className="w-6 h-6 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center flex-shrink-0">
-              <span className="text-white text-[10px] font-bold">
-                {displayName.charAt(0).toUpperCase()}
-              </span>
-            </div>
-          )}
-
-          <div className="flex items-baseline gap-1.5 min-w-0 flex-1">
-            <span className="text-xs font-semibold text-gray-900 dark:text-gray-100 truncate">
-              {displayName}
-            </span>
-            <span className="text-[11px] text-gray-400 dark:text-gray-500 flex-shrink-0">
-              {relativeTime(note.created_at)}
-            </span>
-          </div>
-        </div>
-
-        {/* コンテンツ */}
-        <div className="ml-8 text-sm">
-          <ContentRenderer
-            content={note.content}
-            onHold={onHold}
-            onRelease={onRelease}
-            cache={cache}
-            profiles={profiles}
-            tags={note.tags}
-          />
-        </div>
+        <NoteCardContent
+          note={note}
+          profile={profile}
+          replyToName={replyToName}
+          variant="compact"
+          onHold={onHold}
+          onRelease={onRelease}
+          cache={cache}
+          profiles={profiles}
+        />
 
         {/* リアクションバッジ */}
         {noteReactions && noteReactions.size > 0 && (

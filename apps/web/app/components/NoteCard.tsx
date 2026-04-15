@@ -1,40 +1,15 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import Image from "next/image";
 import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
-import { ContentRenderer } from "./content/ContentRenderer";
 import { ActionBar } from "./ActionBar";
+import { NoteCardContent, resolveProfileDisplayName } from "./NoteCardContent";
 import { ReplyCompose } from "./ReplyCompose";
 import { ReactionTooltip } from "./ReactionTooltip";
 import type { EventCache } from "../hooks/useEventCache";
 import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
 import type { RecentEmoji } from "../hooks/useRecentEmojis";
-
-/** npubの省略表示を生成 */
-function shortenPubkey(pubkey: string): string {
-  if (pubkey.length <= 12) return pubkey;
-  return `${pubkey.slice(0, 8)}…${pubkey.slice(-4)}`;
-}
-
-/** 相対時刻を表示する（"3分前", "1時間前" など） */
-function relativeTime(unixTimestamp: number): string {
-  const now = Math.floor(Date.now() / 1000);
-  const diffSec = now - unixTimestamp;
-
-  const rtf = new Intl.RelativeTimeFormat("ja", { numeric: "auto" });
-
-  if (diffSec < 60) {
-    return rtf.format(-diffSec, "second");
-  } else if (diffSec < 3600) {
-    return rtf.format(-Math.floor(diffSec / 60), "minute");
-  } else if (diffSec < 86400) {
-    return rtf.format(-Math.floor(diffSec / 3600), "hour");
-  } else {
-    return rtf.format(-Math.floor(diffSec / 86400), "day");
-  }
-}
 
 interface NoteCardProps {
   note: NoteCardType;
@@ -80,14 +55,7 @@ interface NoteCardProps {
 }
 
 export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis, fetchProfiles }: NoteCardProps) {
-  const displayName =
-    profile?.display_name || profile?.name || shortenPubkey(note.pubkey);
-
-  // リポスター名の表示（display_name > name > 短縮pubkey）
-  const reposterName = note.repostInfo
-    ? reposterProfile?.display_name || reposterProfile?.name || shortenPubkey(note.repostInfo.reposterPubkey)
-    : undefined;
-  const avatarUrl = profile?.picture;
+  const displayName = resolveProfileDisplayName(note.pubkey, profile);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isActionBarOpen, setIsActionBarOpen] = useState(false);
   const [isReplyMode, setIsReplyMode] = useState(false);
@@ -289,47 +257,15 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           🧵 スレッド
         </div>
       )}
-      {/* リポスト情報（カード最上部） */}
-      {note.repostInfo && (
-        <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-1">
-          <span>🔁</span>
-          <span>{reposterName}がリポスト</span>
-        </div>
-      )}
-
-      {/* ヘッダー: アバター + 名前 + 時刻 */}
-      <div className="flex items-center gap-3 mb-2">
-        {/* アバター */}
-        {avatarUrl ? (
-          <Image
-            src={avatarUrl}
-            alt={displayName}
-            width={32}
-            height={32}
-            className="h-8 w-8 shrink-0 rounded-full object-cover"
-            unoptimized
-          />
-        ) : (
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-400 to-blue-500 flex items-center justify-center flex-shrink-0">
-            <span className="text-white text-xs font-bold">
-              {displayName.charAt(0).toUpperCase()}
-            </span>
-          </div>
-        )}
-
-        {/* 名前と時刻 */}
-        <div className="flex flex-col min-w-0 flex-1">
-          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-            {displayName}
-          </span>
-          <span className="text-xs text-gray-500 dark:text-gray-400">
-            {relativeTime(note.created_at)}
-          </span>
-        </div>
-      </div>
-
-      {/* テキスト内容（ContentRendererでリッチコンテンツを描画） */}
-      <ContentRenderer content={note.content} onHold={onHold} onRelease={onRelease} cache={cache} profiles={profiles} tags={note.tags} />
+      <NoteCardContent
+        note={note}
+        profile={profile}
+        reposterProfile={reposterProfile}
+        onHold={onHold}
+        onRelease={onRelease}
+        cache={cache}
+        profiles={profiles}
+      />
 
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (
