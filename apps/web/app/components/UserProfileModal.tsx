@@ -24,11 +24,6 @@ interface UserProfileModalProps {
 
 const RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS = "min-h-[420px]";
 
-function truncateNpub(npub: string): string {
-  if (npub.length <= 20) return npub;
-  return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
-}
-
 function RecentNotesLoadingSkeleton() {
   return (
     <div className={`space-y-3 ${RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS}`} aria-hidden="true">
@@ -117,7 +112,7 @@ export function UserProfileModal({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.98, y: 8 }}
         transition={{ duration: 0.2 }}
-        className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
+        className="relative flex h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
         onClick={(event) => event.stopPropagation()}
       >
         <button
@@ -157,7 +152,12 @@ export function UserProfileModal({
                   <span className="truncate text-sm text-gray-500 dark:text-gray-400">@{profile.name}</span>
                 )}
               </div>
-              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400" title={npub}>{truncateNpub(npub)}</div>
+              <div
+                className="mt-1 break-all text-xs leading-5 text-gray-500 select-all dark:text-gray-400"
+                title={npub}
+              >
+                {npub}
+              </div>
               {profile?.nip05 && (
                 <div className="mt-2 text-sm text-purple-600 dark:text-purple-400">{profile.nip05}</div>
               )}
