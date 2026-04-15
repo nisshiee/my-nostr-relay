@@ -126,6 +126,16 @@ export function encodeNevent(eventId: string, pubkey?: string): string {
 }
 
 /**
+ * pubkey を npub1... 文字列にエンコードする
+ *
+ * @param pubkey hex形式のpubkey
+ * @returns bech32エンコードされた npub 文字列
+ */
+export function encodeNpub(pubkey: string): string {
+  return nip19.npubEncode(pubkey);
+}
+
+/**
  * nostr: URI をパースしてデコード結果を返す
  *
  * 対応プレフィックス: nostr:nevent1..., nostr:note1..., nostr:naddr1...

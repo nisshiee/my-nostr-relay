@@ -65,6 +65,7 @@ export interface NostrProfile {
   name?: string;
   display_name?: string;
   picture?: string;
+  banner?: string;
   about?: string;
   nip05?: string;
 }
