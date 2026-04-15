@@ -11,7 +11,25 @@ export default function Home() {
   const { pubkey, npub, nip07Available, autoLoading, login, logout } = useAuth();
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
-  const { notes, profiles, reactions, status, relayUrls, pool, cache, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, publishEvent, sendReaction, sendRepost } = useNostrRelay(pubkey, publishedSlotMapRef);
+  const {
+    notes,
+    profiles,
+    reactions,
+    status,
+    relayUrls,
+    pool,
+    cache,
+    emojiSets,
+    looseEmojis,
+    fetchProfiles,
+    fetchUserRecentNotes,
+    publishEvent,
+    sendReaction,
+    sendRepost,
+    isFollowing,
+    follow,
+    unfollow,
+  } = useNostrRelay(pubkey, publishedSlotMapRef);
   const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status, cache, publishedSlotMapRef);
   const { recentEmojis, addEmoji } = useRecentEmojis(pool, relayUrls, pubkey);
 
@@ -46,6 +64,9 @@ export default function Home() {
         looseEmojis={looseEmojis}
         fetchProfiles={fetchProfiles}
         fetchUserRecentNotes={fetchUserRecentNotes}
+        isFollowing={isFollowing}
+        follow={follow}
+        unfollow={unfollow}
       />
     );
   }

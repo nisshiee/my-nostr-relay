@@ -4,7 +4,6 @@ import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import type { SubCloser } from "nostr-tools/abstract-pool";
 import {
-  BOOTSTRAP_EOSE_TIMEOUT,
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
 } from "../lib/constants";
@@ -138,6 +137,8 @@ export function useNostrNotes(
   // kind:1/6 subscribe
   useEffect(() => {
     if (!pool || relayUrls.length === 0 || followPubkeys.length === 0 || !pubkey) return;
+
+    setStatus("loading");
 
     let cancelled = false;
 
@@ -339,7 +340,6 @@ export function useNostrNotes(
       } catch {
         // 既に閉じている場合は無視
       }
-      setNotes([]);
     };
   }, [pool, relayUrls, followPubkeys, pubkey, publishedSlotMapRef, addNote, processOriginalNote, profilesRef, setStatus, cache]);
 

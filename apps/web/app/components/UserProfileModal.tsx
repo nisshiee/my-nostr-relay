@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
@@ -20,6 +20,9 @@ interface UserProfileModalProps {
   fetchUserRecentNotes: (pubkey: string) => Promise<Event[]>;
   cache: EventCache;
   profiles: Map<string, NostrProfile>;
+  isFollowing: boolean;
+  follow: (targetPubkey: string) => Promise<void>;
+  unfollow: (targetPubkey: string) => Promise<void>;
 }
 
 const RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS = "min-h-[420px]";
@@ -61,12 +64,17 @@ export function UserProfileModal({
   fetchUserRecentNotes,
   cache,
   profiles,
+  isFollowing,
+  follow,
+  unfollow,
 }: UserProfileModalProps) {
   const { notes, isLoading, error } = useUserRecentNotes({
     pubkey: isOpen ? pubkey : null,
     enabled: isOpen,
     fetchUserRecentNotes,
   });
+  const [isSubmittingFollow, setIsSubmittingFollow] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -91,12 +99,35 @@ export function UserProfileModal({
     };
   }, [isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setIsSubmittingFollow(false);
+    setFollowError(null);
+  }, [isOpen, pubkey]);
+
   if (!isOpen) return null;
 
   const displayName = resolveProfileDisplayName(pubkey, profile);
   const avatarUrl = profile?.picture;
   const bannerUrl = profile?.banner;
   const npub = encodeNpub(pubkey);
+
+  const handleFollowClick = async () => {
+    setIsSubmittingFollow(true);
+    setFollowError(null);
+
+    try {
+      if (isFollowing) {
+        await unfollow(pubkey);
+      } else {
+        await follow(pubkey);
+      }
+    } catch (err) {
+      setFollowError(err instanceof Error ? err.message : "フォロー状態を更新できませんでした");
+    } finally {
+      setIsSubmittingFollow(false);
+    }
+  };
 
   return createPortal(
     <motion.div
@@ -119,7 +150,7 @@ export function UserProfileModal({
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 z-10 rounded-full bg-white/90 p-2 text-gray-500 transition-colors hover:text-gray-900 dark:bg-gray-800/90 dark:text-gray-400 dark:hover:text-gray-100"
+          className="absolute right-4 top-5 z-20 cursor-pointer rounded-full bg-white/90 p-2 text-gray-500 transition-colors hover:text-gray-900 dark:bg-gray-800/90 dark:text-gray-400 dark:hover:text-gray-100"
           aria-label="閉じる"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -153,67 +184,97 @@ export function UserProfileModal({
           <div
             className={`relative px-6 ${bannerUrl ? "py-5 text-white" : "py-6"} sm:px-8`}
           >
-            <div className="flex items-start gap-4 sm:gap-5">
-              {avatarUrl ? (
-                <Image
-                  src={avatarUrl}
-                  alt={displayName}
-                  width={72}
-                  height={72}
-                  className={`h-16 w-16 rounded-full object-cover sm:h-[72px] sm:w-[72px] ${
-                    bannerUrl ? "ring-2 ring-white/70" : ""
-                  }`}
-                  unoptimized
-                />
-              ) : (
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-400 to-blue-500 sm:h-[72px] sm:w-[72px]">
-                  <span className="text-xl font-bold text-white">{displayName.charAt(0).toUpperCase()}</span>
-                </div>
-              )}
-
-              <div className="min-w-0 flex-1 pr-10">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <h2
-                    className={`truncate text-xl font-semibold sm:text-2xl ${
-                      bannerUrl ? "text-white" : "text-gray-900 dark:text-gray-100"
+            <div className="flex items-start justify-between gap-4 sm:gap-5">
+              <div className="flex min-w-0 flex-1 items-start gap-4 sm:gap-5">
+                {avatarUrl ? (
+                  <Image
+                    src={avatarUrl}
+                    alt={displayName}
+                    width={72}
+                    height={72}
+                    className={`h-16 w-16 rounded-full object-cover sm:h-[72px] sm:w-[72px] ${
+                      bannerUrl ? "ring-2 ring-white/70" : ""
                     }`}
-                  >
-                    {displayName}
-                  </h2>
-                  {profile?.name && profile.name !== displayName && (
-                    <span
-                      className={`truncate text-sm ${
-                        bannerUrl ? "text-gray-200" : "text-gray-500 dark:text-gray-400"
-                      }`}
-                    >
-                      @{profile.name}
-                    </span>
-                  )}
-                </div>
-                <div
-                  className={`mt-1 break-all text-xs leading-5 select-all ${
-                    bannerUrl ? "text-gray-200" : "text-gray-500 dark:text-gray-400"
-                  }`}
-                  title={npub}
-                >
-                  {npub}
-                </div>
-                {profile?.nip05 && (
-                  <div
-                    className={`mt-2 text-sm ${
-                      bannerUrl ? "text-purple-100" : "text-purple-600 dark:text-purple-400"
-                    }`}
-                  >
-                    {profile.nip05}
+                    unoptimized
+                  />
+                ) : (
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-400 to-blue-500 sm:h-[72px] sm:w-[72px]">
+                    <span className="text-xl font-bold text-white">{displayName.charAt(0).toUpperCase()}</span>
                   </div>
                 )}
-                {profile?.about && (
+
+                <div className="min-w-0 flex-1 pr-2 sm:pr-6">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <h2
+                      className={`truncate text-xl font-semibold sm:text-2xl ${
+                        bannerUrl ? "text-white" : "text-gray-900 dark:text-gray-100"
+                      }`}
+                    >
+                      {displayName}
+                    </h2>
+                    {profile?.name && profile.name !== displayName && (
+                      <span
+                        className={`truncate text-sm ${
+                          bannerUrl ? "text-gray-200" : "text-gray-500 dark:text-gray-400"
+                        }`}
+                      >
+                        @{profile.name}
+                      </span>
+                    )}
+                  </div>
+                  <div
+                    className={`mt-1 break-all text-xs leading-5 select-all ${
+                      bannerUrl ? "text-gray-200" : "text-gray-500 dark:text-gray-400"
+                    }`}
+                    title={npub}
+                  >
+                    {npub}
+                  </div>
+                  {profile?.nip05 && (
+                    <div
+                      className={`mt-2 text-sm ${
+                        bannerUrl ? "text-purple-100" : "text-purple-600 dark:text-purple-400"
+                      }`}
+                    >
+                      {profile.nip05}
+                    </div>
+                  )}
+                  {profile?.about && (
+                    <p
+                      className={`mt-3 whitespace-pre-wrap text-sm leading-6 ${
+                        bannerUrl ? "text-gray-100" : "text-gray-700 dark:text-gray-300"
+                      }`}
+                    >
+                      {profile.about}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="relative z-10 mt-10 flex shrink-0 flex-col items-end gap-2 sm:mt-0 sm:pr-12">
+                <button
+                  type="button"
+                  onClick={handleFollowClick}
+                  disabled={isSubmittingFollow}
+                  className={`inline-flex min-w-[112px] cursor-pointer items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${
+                    isFollowing
+                      ? bannerUrl
+                        ? "border border-white/30 bg-white/10 text-white hover:bg-white/15"
+                        : "border border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
+                      : bannerUrl
+                        ? "bg-purple-500 text-white hover:bg-purple-400"
+                        : "bg-purple-600 text-white hover:bg-purple-700 dark:bg-purple-500 dark:hover:bg-purple-400"
+                  }`}
+                >
+                  {isSubmittingFollow ? "Updating..." : isFollowing ? "Following" : "Follow"}
+                </button>
+                {followError && (
                   <p
-                    className={`mt-3 whitespace-pre-wrap text-sm leading-6 ${
-                      bannerUrl ? "text-gray-100" : "text-gray-700 dark:text-gray-300"
+                    className={`max-w-[220px] text-right text-xs ${
+                      bannerUrl ? "text-red-100" : "text-red-600 dark:text-red-400"
                     }`}
                   >
-                    {profile.about}
+                    {followError}
                   </p>
                 )}
               </div>
