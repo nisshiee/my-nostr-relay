@@ -7,8 +7,9 @@ import { motion } from "framer-motion";
 import type { Event } from "nostr-tools/core";
 import type { EventCache } from "../hooks/useEventCache";
 import { useUserRecentNotes } from "../hooks/useUserRecentNotes";
+import { encodeNpub } from "../lib/nip19";
 import type { NostrProfile } from "../lib/types";
-import { NoteCardContent, resolveProfileDisplayName, shortenPubkey } from "./NoteCardContent";
+import { NoteCardContent, resolveProfileDisplayName } from "./NoteCardContent";
 
 interface UserProfileModalProps {
   pubkey: string;
@@ -19,6 +20,41 @@ interface UserProfileModalProps {
   fetchUserRecentNotes: (pubkey: string) => Promise<Event[]>;
   cache: EventCache;
   profiles: Map<string, NostrProfile>;
+}
+
+const RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS = "min-h-[420px]";
+
+function truncateNpub(npub: string): string {
+  if (npub.length <= 20) return npub;
+  return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
+}
+
+function RecentNotesLoadingSkeleton() {
+  return (
+    <div className={`space-y-3 ${RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS}`} aria-hidden="true">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div
+          key={index}
+          className="rounded-xl border border-gray-200 bg-white px-4 py-4 dark:border-gray-700 dark:bg-gray-800"
+        >
+          <div className="animate-pulse">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="h-8 w-8 rounded-full bg-gray-200 dark:bg-gray-700" />
+              <div className="flex-1 space-y-2">
+                <div className="h-3 w-32 rounded bg-gray-200 dark:bg-gray-700" />
+                <div className="h-2.5 w-20 rounded bg-gray-200 dark:bg-gray-700" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="h-3 w-full rounded bg-gray-200 dark:bg-gray-700" />
+              <div className="h-3 w-5/6 rounded bg-gray-200 dark:bg-gray-700" />
+              <div className="h-3 w-2/3 rounded bg-gray-200 dark:bg-gray-700" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function UserProfileModal({
@@ -64,6 +100,7 @@ export function UserProfileModal({
 
   const displayName = resolveProfileDisplayName(pubkey, profile);
   const avatarUrl = profile?.picture;
+  const npub = encodeNpub(pubkey);
 
   return createPortal(
     <motion.div
@@ -120,7 +157,7 @@ export function UserProfileModal({
                   <span className="truncate text-sm text-gray-500 dark:text-gray-400">@{profile.name}</span>
                 )}
               </div>
-              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">{shortenPubkey(pubkey)}</div>
+              <div className="mt-1 text-xs text-gray-500 dark:text-gray-400" title={npub}>{truncateNpub(npub)}</div>
               {profile?.nip05 && (
                 <div className="mt-2 text-sm text-purple-600 dark:text-purple-400">{profile.nip05}</div>
               )}
@@ -142,19 +179,21 @@ export function UserProfileModal({
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-12 text-sm text-gray-500 dark:text-gray-400">
-              読み込み中...
-            </div>
+            <RecentNotesLoadingSkeleton />
           ) : error ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
-              {error}
+            <div className={`flex items-center ${RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS}`}>
+              <div className="w-full rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
+                {error}
+              </div>
             </div>
           ) : notes.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
-              recent note はありません
+            <div className={`flex items-center ${RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS}`}>
+              <div className="w-full rounded-xl border border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
+                recent note はありません
+              </div>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className={`space-y-3 ${RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS}`}>
               {notes.map((note) => (
                 <div
                   key={note.id}
