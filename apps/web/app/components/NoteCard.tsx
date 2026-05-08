@@ -54,9 +54,11 @@ interface NoteCardProps {
   fetchProfiles?: (pubkeys: string[]) => void;
   /** アバターまたは表示名クリック時のハンドラ */
   onProfileClick?: (pubkey: string) => void;
+  /** ハッシュタグクリック時のハンドラ */
+  onHashtagClick?: (tag: string) => void;
 }
 
-export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis, fetchProfiles, onProfileClick }: NoteCardProps) {
+export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, onReaction, onRepost, cache, profiles, onHeightChange, onHold, onRelease, onReplyPublish, publishEvent, myProfile, onQuote, recentEmojis, emojiSets, looseEmojis, fetchProfiles, onProfileClick, onHashtagClick }: NoteCardProps) {
   const displayName = resolveProfileDisplayName(note.pubkey, profile);
   const cardRef = useRef<HTMLDivElement>(null);
   const [isActionBarOpen, setIsActionBarOpen] = useState(false);
@@ -271,6 +273,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           event.stopPropagation();
           onProfileClick(pubkey);
         } : undefined}
+        onHashtagClick={onHashtagClick}
       />
 
       {/* リアクションバッジ */}

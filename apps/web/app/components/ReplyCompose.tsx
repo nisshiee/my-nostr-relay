@@ -6,6 +6,7 @@ import type { NostrProfile } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
 import { useImageUpload } from "../hooks/useImageUpload";
 import { CLIENT_TAG } from "../lib/constants";
+import { extractHashtags } from "../lib/hashtags";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -170,6 +171,9 @@ export function ReplyCompose({
       }
 
       const tags = [...buildReplyTags(), CLIENT_TAG];
+      for (const tag of extractHashtags(trimmed)) {
+        tags.push(["t", tag]);
+      }
 
       const unsignedEvent: NostrEvent = {
         kind: 1,

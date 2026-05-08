@@ -3,6 +3,8 @@
  * Nostrイベントのcontent文字列を構造化されたノードに分解する
  */
 
+import { extractEventHashtags, findHashtagMatches } from "./hashtags";
+
 /** コンテンツノードの型定義（discriminated union） */
 export type ContentNode =
   | { type: "text"; text: string }
@@ -10,6 +12,7 @@ export type ContentNode =
   | { type: "linkPreview"; url: string; text: string }
   | { type: "link"; url: string; text: string }
   | { type: "quote"; uri: string }
+  | { type: "hashtag"; tag: string; text: string }
   | { type: "emoji"; shortcode: string; url: string };
 // 今後追加予定: | { type: "video"; url: string }
 
@@ -201,6 +204,68 @@ function splitTextWithEmoji(
 }
 
 /**
+ * textノード内のevent.tags由来のt tagだけをhashtagノードに分割する。
+ * 本文に存在しないt tagは末尾に表示上だけ補完する（contentは書き換えない）。
+ */
+function splitTextWithHashtags(
+  nodes: ContentNode[],
+  normalizedTags: string[],
+): ContentNode[] {
+  if (normalizedTags.length === 0) return nodes;
+
+  const allowedTags = new Set(normalizedTags);
+  const foundTags = new Set<string>();
+  const result: ContentNode[] = [];
+
+  for (const node of nodes) {
+    if (node.type !== "text") {
+      result.push(node);
+      continue;
+    }
+
+    const matches = findHashtagMatches(node.text).filter((match) =>
+      allowedTags.has(match.tag),
+    );
+
+    if (matches.length === 0) {
+      result.push(node);
+      continue;
+    }
+
+    let lastIndex = 0;
+    for (const match of matches) {
+      if (match.index > lastIndex) {
+        result.push({ type: "text", text: node.text.slice(lastIndex, match.index) });
+      }
+
+      result.push({ type: "hashtag", tag: match.tag, text: match.text });
+      foundTags.add(match.tag);
+      lastIndex = match.index + match.length;
+    }
+
+    if (lastIndex < node.text.length) {
+      result.push({ type: "text", text: node.text.slice(lastIndex) });
+    }
+  }
+
+  const missingTags = normalizedTags.filter((tag) => !foundTags.has(tag));
+  if (missingTags.length > 0) {
+    if (result.length > 0) {
+      result.push({ type: "text", text: "\n" });
+    }
+
+    for (const [index, tag] of missingTags.entries()) {
+      if (index > 0) {
+        result.push({ type: "text", text: " " });
+      }
+      result.push({ type: "hashtag", tag, text: `#${tag}` });
+    }
+  }
+
+  return result;
+}
+
+/**
  * content文字列をパースし、ContentNode配列を返す
  *
  * - 画像URL（.jpg, .jpeg, .png, .gif, .webp で終わるHTTP(S) URL）を検出
@@ -209,7 +274,13 @@ function splitTextWithEmoji(
  * - tagsにemojiタグが含まれていれば、:shortcode: をカスタム絵文字ノードに変換する（NIP-30）
  */
 export function parseContent(content: string, tags?: string[][]): ContentNode[] {
-  if (!content) return [];
+  const eventHashtags = extractEventHashtags(tags);
+  if (!content) {
+    return eventHashtags.flatMap((tag, index): ContentNode[] => [
+      ...(index > 0 ? [{ type: "text" as const, text: " " }] : []),
+      { type: "hashtag", tag, text: `#${tag}` },
+    ]);
+  }
 
   // tagsからemojiマップを構築
   const emojiMap = new Map<string, string>();
@@ -252,10 +323,15 @@ export function parseContent(content: string, tags?: string[][]): ContentNode[] 
     }
   }
 
+  let result = nodes;
+
+  // event.tagsにt tagがある場合のみハッシュタグをクリック可能にする
+  result = splitTextWithHashtags(result, eventHashtags);
+
   // カスタム絵文字の後処理（emojiMapが空でない場合のみ）
   if (emojiMap.size > 0) {
-    return splitTextWithEmoji(nodes, emojiMap);
+    result = splitTextWithEmoji(result, emojiMap);
   }
 
-  return nodes;
+  return result;
 }

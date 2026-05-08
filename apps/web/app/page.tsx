@@ -23,6 +23,7 @@ export default function Home() {
     looseEmojis,
     fetchProfiles,
     fetchUserRecentNotes,
+    fetchHashtagNotes,
     publishEvent,
     sendReaction,
     sendRepost,
@@ -64,6 +65,7 @@ export default function Home() {
         looseEmojis={looseEmojis}
         fetchProfiles={fetchProfiles}
         fetchUserRecentNotes={fetchUserRecentNotes}
+        fetchHashtagNotes={fetchHashtagNotes}
         isFollowing={isFollowing}
         follow={follow}
         unfollow={unfollow}

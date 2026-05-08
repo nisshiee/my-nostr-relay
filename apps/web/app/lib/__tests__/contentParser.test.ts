@@ -418,8 +418,8 @@ describe("parseContent", () => {
     ]);
   });
 
-  // emoji タグ以外のタグは無視
-  it("emoji タグ以外のタグは無視する", () => {
+  // emoji タグ以外のタグは無視（t tagはNIP-24 hashtagとして扱う）
+  it("emoji タグ以外は無視し、t tagは補完hashtagとして扱う", () => {
     const tags = [
       ["p", "pubkey123"],
       ["emoji", "heart", "https://example.com/heart.png"],
@@ -428,6 +428,8 @@ describe("parseContent", () => {
     const result = parseContent(":heart:", tags);
     expect(result).toEqual([
       { type: "emoji", shortcode: "heart", url: "https://example.com/heart.png" },
+      { type: "text", text: "\n" },
+      { type: "hashtag", tag: "nostr", text: "#nostr" },
     ]);
   });
 
@@ -447,6 +449,36 @@ describe("parseContent", () => {
       { type: "emoji", shortcode: "star", url: "https://example.com/star.png" },
       { type: "text", text: " good " },
       { type: "emoji", shortcode: "star", url: "https://example.com/star.png" },
+    ]);
+  });
+
+  it("event.tagsに対応する本文中の#tagだけhashtagノードにする", () => {
+    const result = parseContent("hello #Pokemon #写真 #missing", [
+      ["t", "pokemon"],
+      ["t", "写真"],
+    ]);
+    expect(result).toEqual([
+      { type: "text", text: "hello " },
+      { type: "hashtag", tag: "pokemon", text: "#Pokemon" },
+      { type: "text", text: " " },
+      { type: "hashtag", tag: "写真", text: "#写真" },
+      { type: "text", text: " #missing" },
+    ]);
+  });
+
+  it("event.tagsにない本文中の#tagはtextのままにする", () => {
+    const result = parseContent("hello #tag");
+    expect(result).toEqual([{ type: "text", text: "hello #tag" }]);
+  });
+
+  it("本文にないt tagは末尾に表示上だけ補完する", () => {
+    const result = parseContent("hello", [["t", "nostr"], ["t", "写真"]]);
+    expect(result).toEqual([
+      { type: "text", text: "hello" },
+      { type: "text", text: "\n" },
+      { type: "hashtag", tag: "nostr", text: "#nostr" },
+      { type: "text", text: " " },
+      { type: "hashtag", tag: "写真", text: "#写真" },
     ]);
   });
 });

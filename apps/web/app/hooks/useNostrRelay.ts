@@ -29,6 +29,7 @@ interface UseNostrRelayResult {
   looseEmojis: CustomEmoji[];
   fetchProfiles: (pubkeys: string[]) => void;
   fetchUserRecentNotes: (pubkey: string) => Promise<Event[]>;
+  fetchHashtagNotes: (tag: string) => Promise<Event[]>;
   publishEvent: (event: NostrEvent) => Promise<void>;
   sendReaction: (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => Promise<void>;
   sendRepost: (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => Promise<void>;
@@ -91,6 +92,30 @@ export function useNostrRelay(
       return recentNotes;
     },
     [pool, relayUrls, cache],
+  );
+
+  const fetchHashtagNotes = useCallback(
+    async (tag: string): Promise<Event[]> => {
+      if (!pool || relayUrls.length === 0) {
+        throw new Error("ハッシュタグを取得できませんでした。リレー接続を確認してください");
+      }
+
+      const events = await pool.querySync(
+        relayUrls,
+        { kinds: [1], "#t": [tag], limit: 50 },
+        { maxWait: BOOTSTRAP_EOSE_TIMEOUT },
+      );
+
+      const hashtagNotes = events
+        .filter((event) => event.kind === 1)
+        .sort((a, b) => b.created_at - a.created_at)
+        .slice(0, 50);
+
+      cache.addEvents(hashtagNotes);
+      fetchProfiles(Array.from(new Set(hashtagNotes.map((event) => event.pubkey))));
+      return hashtagNotes;
+    },
+    [pool, relayUrls, cache, fetchProfiles],
   );
 
   /** 署名済みイベントを全リレーにpublishする（1つ以上のリレーに成功すればOK） */
@@ -215,6 +240,7 @@ export function useNostrRelay(
     looseEmojis,
     fetchProfiles,
     fetchUserRecentNotes,
+    fetchHashtagNotes,
     publishEvent,
     sendReaction,
     sendRepost,

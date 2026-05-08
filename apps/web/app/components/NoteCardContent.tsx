@@ -57,6 +57,7 @@ interface NoteCardContentProps {
   cache?: EventCache;
   profiles?: Map<string, NostrProfile>;
   onProfileClick?: (pubkey: string, event: ReactMouseEvent | ReactKeyboardEvent) => void;
+  onHashtagClick?: (tag: string) => void;
 }
 
 export function NoteCardContent({
@@ -70,6 +71,7 @@ export function NoteCardContent({
   cache,
   profiles,
   onProfileClick,
+  onHashtagClick,
 }: NoteCardContentProps) {
   const isCompact = variant === "compact";
   const displayName = resolveProfileDisplayName(note.pubkey, profile);
@@ -198,6 +200,7 @@ export function NoteCardContent({
           cache={cache}
           profiles={profiles}
           tags={note.tags}
+          onHashtagClick={onHashtagClick}
         />
       </div>
     </>
