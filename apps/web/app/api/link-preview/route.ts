@@ -186,6 +186,34 @@ function isAllowedContentType(value: string | undefined): boolean {
   return ALLOWED_CONTENT_TYPES.includes(mime);
 }
 
+function charsetFromContentType(value: string | undefined): string | undefined {
+  const match = value?.match(/(?:^|;)\s*charset\s*=\s*["']?([^;"']+)/i);
+  return match?.[1]?.trim().toLowerCase();
+}
+
+function charsetFromMeta(buffer: Buffer): string | undefined {
+  const head = buffer.toString("latin1", 0, Math.min(buffer.byteLength, 4096));
+  const match = head.match(/<meta\b[^>]+charset\s*=\s*["']?([^\s"'>;]+)/i);
+  return match?.[1]?.trim().toLowerCase();
+}
+
+function normalizeCharset(charset: string | undefined): string {
+  if (!charset) return "utf-8";
+  if (charset === "shift_jis" || charset === "shift-jis" || charset === "x-sjis" || charset === "sjis") {
+    return "shift_jis";
+  }
+  return charset;
+}
+
+function decodeHtml(buffer: Buffer, contentType: string | undefined): string {
+  const charset = normalizeCharset(charsetFromContentType(contentType) ?? charsetFromMeta(buffer));
+  try {
+    return new TextDecoder(charset, { fatal: false }).decode(buffer);
+  } catch {
+    return new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+  }
+}
+
 async function fetchHtml(inputUrl: URL): Promise<{ html: string; finalUrl: URL }> {
   let currentUrl = inputUrl;
 
@@ -222,8 +250,6 @@ async function fetchHtml(inputUrl: URL): Promise<{ html: string; finalUrl: URL }
 
       const chunks: Uint8Array[] = [];
       let received = 0;
-      let html = "";
-      const decoder = new TextDecoder("utf-8", { fatal: false });
 
       for await (const chunk of response) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -234,15 +260,15 @@ async function fetchHtml(inputUrl: URL): Promise<{ html: string; finalUrl: URL }
         }
         chunks.push(buffer);
 
-        html = decoder.decode(Buffer.concat(chunks), { stream: true });
-        if (/<\/head\s*>/i.test(html)) {
+        const currentBuffer = Buffer.concat(chunks);
+        if (/<\/head\s*>/i.test(currentBuffer.toString("latin1"))) {
           response.destroy();
-          return { html, finalUrl: currentUrl };
+          return { html: decodeHtml(currentBuffer, contentType), finalUrl: currentUrl };
         }
       }
 
-      html += decoder.decode();
-      return { html, finalUrl: currentUrl };
+      const htmlBuffer = Buffer.concat(chunks);
+      return { html: decodeHtml(htmlBuffer, contentType), finalUrl: currentUrl };
     } finally {
       clearTimeout(timeout);
     }
