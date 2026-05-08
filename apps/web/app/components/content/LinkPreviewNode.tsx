@@ -69,7 +69,7 @@ export function LinkPreviewNode({ url, text }: LinkPreviewNodeProps) {
   }
 
   const { data } = state;
-  const label = data.siteName || data.domain;
+  const label = data.siteName ? `${data.siteName} · ${data.domain}` : data.domain;
 
   return (
     <a
