@@ -11,7 +11,12 @@ const TIMEOUT_MS = 3000;
 const MAX_HTML_BYTES = 256 * 1024;
 const ALLOWED_CONTENT_TYPES = ["text/html", "application/xhtml+xml"];
 
-type LookupCallback = (err: NodeJS.ErrnoException | null, address: string, family: number) => void;
+type LookupResult = { address: string; family: number };
+type LookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: string | LookupResult[],
+  family?: number,
+) => void;
 
 interface LinkPreviewData {
   url: string;
@@ -138,9 +143,17 @@ async function validateUrl(url: URL): Promise<void> {
   }
 }
 
-function publicLookup(hostname: string, _options: unknown, callback: LookupCallback): void {
+function publicLookup(hostname: string, options: { all?: boolean } | undefined, callback: LookupCallback): void {
   void resolvePublicAddresses(hostname)
-    .then(([entry]) => callback(null, entry.address, entry.family))
+    .then((entries) => {
+      if (options?.all) {
+        callback(null, entries);
+        return;
+      }
+
+      const [entry] = entries;
+      callback(null, entry.address, entry.family);
+    })
     .catch((error: NodeJS.ErrnoException) => callback(error, "", 0));
 }
 
