@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 
 const MAX_REDIRECTS = 4;
 const TIMEOUT_MS = 3000;
-const MAX_HTML_BYTES = 256 * 1024;
+const MAX_HTML_BYTES = 1024 * 1024;
 const ALLOWED_CONTENT_TYPES = ["text/html", "application/xhtml+xml"];
 
 type LookupResult = { address: string; family: number };
@@ -222,6 +222,8 @@ async function fetchHtml(inputUrl: URL): Promise<{ html: string; finalUrl: URL }
 
       const chunks: Uint8Array[] = [];
       let received = 0;
+      let html = "";
+      const decoder = new TextDecoder("utf-8", { fatal: false });
 
       for await (const chunk of response) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
@@ -231,9 +233,15 @@ async function fetchHtml(inputUrl: URL): Promise<{ html: string; finalUrl: URL }
           throw new Error("html_too_large");
         }
         chunks.push(buffer);
+
+        html = decoder.decode(Buffer.concat(chunks), { stream: true });
+        if (/<\/head\s*>/i.test(html)) {
+          response.destroy();
+          return { html, finalUrl: currentUrl };
+        }
       }
 
-      const html = new TextDecoder("utf-8", { fatal: false }).decode(Buffer.concat(chunks));
+      html += decoder.decode();
       return { html, finalUrl: currentUrl };
     } finally {
       clearTimeout(timeout);
