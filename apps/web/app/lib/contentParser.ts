@@ -7,10 +7,11 @@
 export type ContentNode =
   | { type: "text"; text: string }
   | { type: "image"; url: string }
+  | { type: "linkPreview"; url: string; text: string }
   | { type: "link"; url: string; text: string }
   | { type: "quote"; uri: string }
   | { type: "emoji"; shortcode: string; url: string };
-// 今後追加予定: | { type: "video"; url: string } | { type: "ogp"; url: string; title: string }
+// 今後追加予定: | { type: "video"; url: string }
 
 /** 画像URLにマッチする正規表現パターン（パス途中の拡張子誤検出を防ぐため末尾に先読みを追加） */
 const IMAGE_URL_PATTERN =
@@ -50,7 +51,10 @@ function cleanUrlTrailing(url: string): string {
  * 画像マッチ後の残りテキストに対して使用する
  * 優先順: nostr URI → 一般 URL（重複区間は先にマッチした方が優先）
  */
-function splitTextWithNostrAndLinks(text: string): ContentNode[] {
+function splitTextWithNostrAndLinks(
+  text: string,
+  state: { linkPreviewUsed: boolean },
+): ContentNode[] {
   // すべてのマッチを収集し、位置でソートする
   type MatchEntry =
     | { kind: "nostr"; index: number; length: number; uri: string }
@@ -129,6 +133,9 @@ function splitTextWithNostrAndLinks(text: string): ContentNode[] {
         ? `${identifier.slice(0, 12)}…${identifier.slice(-4)}`
         : identifier;
       nodes.push({ type: "link", url: `https://njump.me/${identifier}`, text: `@${shortId}` });
+    } else if (!state.linkPreviewUsed) {
+      state.linkPreviewUsed = true;
+      nodes.push({ type: "linkPreview", url: entry.url, text: shortenUrl(entry.url) });
     } else {
       nodes.push({ type: "link", url: entry.url, text: shortenUrl(entry.url) });
     }
@@ -216,6 +223,7 @@ export function parseContent(content: string, tags?: string[][]): ContentNode[] 
 
   const nodes: ContentNode[] = [];
   let lastIndex = 0;
+  const parserState = { linkPreviewUsed: false };
 
   // matchAllを使うことでlastIndexの手動リセットが不要
   for (const match of content.matchAll(IMAGE_URL_PATTERN)) {
@@ -226,7 +234,7 @@ export function parseContent(content: string, tags?: string[][]): ContentNode[] 
     if (matchIndex > lastIndex) {
       const text = content.slice(lastIndex, matchIndex);
       if (text.length > 0) {
-        nodes.push(...splitTextWithNostrAndLinks(text));
+        nodes.push(...splitTextWithNostrAndLinks(text, parserState));
       }
     }
 
@@ -240,7 +248,7 @@ export function parseContent(content: string, tags?: string[][]): ContentNode[] 
   if (lastIndex < content.length) {
     const text = content.slice(lastIndex);
     if (text.length > 0) {
-      nodes.push(...splitTextWithNostrAndLinks(text));
+      nodes.push(...splitTextWithNostrAndLinks(text, parserState));
     }
   }
 

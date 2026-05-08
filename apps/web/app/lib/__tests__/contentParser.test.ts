@@ -94,7 +94,7 @@ describe("parseContent", () => {
   it("URLパスの途中に画像拡張子がある場合、画像として検出しない", () => {
     const result = parseContent("https://example.com/img.jpg/page");
     expect(result).toEqual([
-      { type: "link", url: "https://example.com/img.jpg/page", text: "example.com/img.jpg/page" },
+      { type: "linkPreview", url: "https://example.com/img.jpg/page", text: "example.com/img.jpg/page" },
     ]);
   });
 
@@ -109,41 +109,41 @@ describe("parseContent", () => {
 
   // ===== link ノード基本テスト =====
 
-  // linkノード: URLのみ
-  it("一般URLのみの場合、linkノード1つを返す", () => {
+  // linkPreviewノード: URLのみ
+  it("一般URLのみの場合、linkPreviewノード1つを返す", () => {
     const result = parseContent("https://example.com/page");
     expect(result).toEqual([
-      { type: "link", url: "https://example.com/page", text: "example.com/page" },
+      { type: "linkPreview", url: "https://example.com/page", text: "example.com/page" },
     ]);
   });
 
-  // linkノード: テキスト + URL + テキスト
-  it("テキストの間に一般URLがある場合、text + link + text に分割する", () => {
+  // linkPreviewノード: テキスト + URL + テキスト
+  it("テキストの間に一般URLがある場合、text + linkPreview + text に分割する", () => {
     const result = parseContent("見て https://example.com/page すごい");
     expect(result).toEqual([
       { type: "text", text: "見て " },
-      { type: "link", url: "https://example.com/page", text: "example.com/page" },
+      { type: "linkPreview", url: "https://example.com/page", text: "example.com/page" },
       { type: "text", text: " すごい" },
     ]);
   });
 
   // linkノード: 複数URL
-  it("複数の一般URLを含む場合、それぞれlinkノードに分離する", () => {
+  it("複数の一般URLを含む場合、最初だけlinkPreviewノードにする", () => {
     const result = parseContent("https://a.com と https://b.com");
     expect(result).toEqual([
-      { type: "link", url: "https://a.com", text: "a.com" },
+      { type: "linkPreview", url: "https://a.com", text: "a.com" },
       { type: "text", text: " と " },
       { type: "link", url: "https://b.com", text: "b.com" },
     ]);
   });
 
-  // linkノード: 画像URL + 一般URL混在
-  it("画像URLと一般URLが混在する場合、image + text + link に分割する", () => {
+  // linkPreviewノード: 画像URL + 一般URL混在
+  it("画像URLと一般URLが混在する場合、image + text + linkPreview に分割する", () => {
     const result = parseContent("https://img.com/photo.jpg と https://example.com");
     expect(result).toEqual([
       { type: "image", url: "https://img.com/photo.jpg" },
       { type: "text", text: " と " },
-      { type: "link", url: "https://example.com", text: "example.com" },
+      { type: "linkPreview", url: "https://example.com", text: "example.com" },
     ]);
   });
 
@@ -153,7 +153,7 @@ describe("parseContent", () => {
   it("短いURLはプロトコルを除去した文字列をtextに使う", () => {
     const result = parseContent("https://example.com");
     expect(result).toEqual([
-      { type: "link", url: "https://example.com", text: "example.com" },
+      { type: "linkPreview", url: "https://example.com", text: "example.com" },
     ]);
   });
 
@@ -166,7 +166,7 @@ describe("parseContent", () => {
     // 50文字超なので49文字 + "…"
     const expectedText = withoutProtocol.slice(0, 49) + "…";
     expect(result).toEqual([
-      { type: "link", url: longUrl, text: expectedText },
+      { type: "linkPreview", url: longUrl, text: expectedText },
     ]);
     expect(expectedText.length).toBe(50);
     expect(expectedText).toContain("…");
@@ -182,7 +182,7 @@ describe("parseContent", () => {
     expect(withoutProtocol.length).toBe(50);
     const result = parseContent(url);
     expect(result).toEqual([
-      { type: "link", url: url, text: withoutProtocol },
+      { type: "linkPreview", url: url, text: withoutProtocol },
     ]);
     // "…" が含まれないことを確認
     expect(withoutProtocol).not.toContain("…");
@@ -195,7 +195,7 @@ describe("parseContent", () => {
     const result = parseContent("(https://example.com)");
     expect(result).toEqual([
       { type: "text", text: "(" },
-      { type: "link", url: "https://example.com", text: "example.com" },
+      { type: "linkPreview", url: "https://example.com", text: "example.com" },
       { type: "text", text: ")" },
     ]);
   });
@@ -204,7 +204,7 @@ describe("parseContent", () => {
   it("URLの後に日本語句読点「。」がある場合、linkとtextに分離する", () => {
     const result = parseContent("https://example.com。次の文");
     expect(result).toEqual([
-      { type: "link", url: "https://example.com", text: "example.com" },
+      { type: "linkPreview", url: "https://example.com", text: "example.com" },
       { type: "text", text: "。次の文" },
     ]);
   });
@@ -213,7 +213,7 @@ describe("parseContent", () => {
   it("URLの後に日本語読点「、」がある場合、linkとtextに分離する", () => {
     const result = parseContent("https://example.com、次");
     expect(result).toEqual([
-      { type: "link", url: "https://example.com", text: "example.com" },
+      { type: "linkPreview", url: "https://example.com", text: "example.com" },
       { type: "text", text: "、次" },
     ]);
   });
@@ -222,7 +222,7 @@ describe("parseContent", () => {
   it("URLの後に全角感嘆符「！」がある場合、linkとtextに分離する", () => {
     const result = parseContent("https://example.com！すごい");
     expect(result).toEqual([
-      { type: "link", url: "https://example.com", text: "example.com" },
+      { type: "linkPreview", url: "https://example.com", text: "example.com" },
       { type: "text", text: "！すごい" },
     ]);
   });
@@ -241,7 +241,7 @@ describe("parseContent", () => {
   it("http://スキームのURLもlinkノードとして検出する", () => {
     const result = parseContent("http://example.com");
     expect(result).toEqual([
-      { type: "link", url: "http://example.com", text: "example.com" },
+      { type: "linkPreview", url: "http://example.com", text: "example.com" },
     ]);
   });
 
@@ -308,7 +308,7 @@ describe("parseContent", () => {
       { type: "text", text: " " },
       { type: "quote", uri: nostrUri },
       { type: "text", text: " " },
-      { type: "link", url: linkUrl, text: "example.com/page" },
+      { type: "linkPreview", url: linkUrl, text: "example.com/page" },
     ]);
   });
 
@@ -346,7 +346,7 @@ describe("parseContent", () => {
     expect(result).toEqual([
       { type: "quote", uri: nostrUri },
       { type: "text", text: " " },
-      { type: "link", url: linkUrl, text: "example.com" },
+      { type: "linkPreview", url: linkUrl, text: "example.com" },
     ]);
   });
 

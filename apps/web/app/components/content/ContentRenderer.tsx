@@ -4,6 +4,7 @@ import { parseContent, type ContentNode } from "../../lib/contentParser";
 import { TextNode } from "./TextNode";
 import { ImageNode } from "./ImageNode";
 import { LinkNode } from "./LinkNode";
+import { LinkPreviewNode } from "./LinkPreviewNode";
 import { QuoteNode } from "./QuoteNode";
 import { EmojiNode } from "./EmojiNode";
 import type { ComponentType } from "react";
@@ -18,6 +19,7 @@ import type { NostrProfile } from "../../lib/types";
 const NODE_RENDERERS: Record<ContentNode["type"], ComponentType<any>> = {
   text: TextNode,
   image: ImageNode,
+  linkPreview: LinkPreviewNode,
   link: LinkNode,
   quote: QuoteNode,
   emoji: EmojiNode,
