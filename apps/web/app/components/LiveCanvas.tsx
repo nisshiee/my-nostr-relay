@@ -31,6 +31,7 @@ import type { EventCache } from "../hooks/useEventCache";
 import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
 import type { RecentEmoji } from "../hooks/useRecentEmojis";
 import { UserProfileModal } from "./UserProfileModal";
+import { HashtagModal } from "./HashtagModal";
 
 interface LiveCanvasProps {
   notes: NoteCardType[];
@@ -56,6 +57,7 @@ interface LiveCanvasProps {
   looseEmojis: CustomEmoji[];
   fetchProfiles: (pubkeys: string[]) => void;
   fetchUserRecentNotes: (pubkey: string) => Promise<Event[]>;
+  fetchHashtagNotes: (tag: string) => Promise<Event[]>;
   isFollowing: (targetPubkey: string) => boolean;
   follow: (targetPubkey: string) => Promise<void>;
   unfollow: (targetPubkey: string) => Promise<void>;
@@ -65,10 +67,17 @@ function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
   const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
+  const [hashtagModalTag, setHashtagModalTag] = useState<string | null>(null);
+
+  const openHashtagModal = useCallback((tag: string) => {
+    // モーダルを重ねずに切り替える。Esc/スクロールロックの競合を避けるため。
+    setProfileModalPubkey(null);
+    setHashtagModalTag(tag);
+  }, []);
 
   /** カードをホールド状態にする */
   const holdCard = useCallback((slotId: string) => {
@@ -509,6 +518,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               looseEmojis={looseEmojis}
                               fetchProfiles={fetchProfiles}
                               onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
+                              onHashtagClick={openHashtagModal}
                               onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
                                 sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
                               }}
@@ -539,6 +549,7 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
                               looseEmojis={looseEmojis}
                               fetchProfiles={fetchProfiles}
                               onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
+                              onHashtagClick={openHashtagModal}
                               reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
                               reactions={reactions.get(note.eventId)}
                               myPubkey={pubkey}
@@ -601,6 +612,18 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
           isFollowing={isFollowing(profileModalPubkey)}
           follow={follow}
           unfollow={unfollow}
+          onHashtagClick={openHashtagModal}
+        />
+      )}
+      {hashtagModalTag && (
+        <HashtagModal
+          tag={hashtagModalTag}
+          isOpen={!!hashtagModalTag}
+          onClose={() => setHashtagModalTag(null)}
+          fetchHashtagNotes={fetchHashtagNotes}
+          cache={cache}
+          profiles={profiles}
+          onHashtagClick={openHashtagModal}
         />
       )}
     </div>

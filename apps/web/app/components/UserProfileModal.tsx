@@ -23,6 +23,7 @@ interface UserProfileModalProps {
   isFollowing: boolean;
   follow: (targetPubkey: string) => Promise<void>;
   unfollow: (targetPubkey: string) => Promise<void>;
+  onHashtagClick?: (tag: string) => void;
 }
 
 const RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS = "min-h-[420px]";
@@ -67,6 +68,7 @@ export function UserProfileModal({
   isFollowing,
   follow,
   unfollow,
+  onHashtagClick,
 }: UserProfileModalProps) {
   const { notes, isLoading, error } = useUserRecentNotes({
     pubkey: isOpen ? pubkey : null,
@@ -318,6 +320,7 @@ export function UserProfileModal({
                     onRelease={() => undefined}
                     cache={cache}
                     profiles={profiles}
+                    onHashtagClick={onHashtagClick}
                   />
                 </div>
               ))}

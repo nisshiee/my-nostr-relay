@@ -67,6 +67,8 @@ interface ThreadCardProps {
   fetchProfiles?: (pubkeys: string[]) => void;
   /** アバターまたは表示名クリック時のハンドラ */
   onProfileClick?: (pubkey: string) => void;
+  /** ハッシュタグクリック時のハンドラ */
+  onHashtagClick?: (tag: string) => void;
 }
 
 export function ThreadCard({
@@ -88,6 +90,7 @@ export function ThreadCard({
   looseEmojis,
   fetchProfiles,
   onProfileClick,
+  onHashtagClick,
 }: ThreadCardProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
@@ -261,6 +264,7 @@ export function ThreadCard({
             looseEmojis={looseEmojis}
             fetchProfiles={fetchProfiles}
             onProfileClick={onProfileClick}
+            onHashtagClick={onHashtagClick}
           />
         );
       })}
@@ -339,6 +343,8 @@ interface ThreadNoteItemProps {
   fetchProfiles?: (pubkeys: string[]) => void;
   /** アバターまたは表示名クリック時のハンドラ */
   onProfileClick?: (pubkey: string) => void;
+  /** ハッシュタグクリック時のハンドラ */
+  onHashtagClick?: (tag: string) => void;
 }
 
 function ThreadNoteItem({
@@ -363,6 +369,7 @@ function ThreadNoteItem({
   looseEmojis,
   fetchProfiles,
   onProfileClick,
+  onHashtagClick,
 }: ThreadNoteItemProps) {
   const profile = profiles.get(note.pubkey);
 
@@ -491,6 +498,7 @@ function ThreadNoteItem({
             event.stopPropagation();
             onProfileClick(pubkey);
           } : undefined}
+          onHashtagClick={onHashtagClick}
         />
 
         {/* リアクションバッジ */}

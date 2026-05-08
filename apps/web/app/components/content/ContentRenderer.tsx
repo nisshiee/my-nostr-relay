@@ -7,6 +7,7 @@ import { LinkNode } from "./LinkNode";
 import { LinkPreviewNode } from "./LinkPreviewNode";
 import { QuoteNode } from "./QuoteNode";
 import { EmojiNode } from "./EmojiNode";
+import { HashtagNode } from "./HashtagNode";
 import type { ComponentType } from "react";
 import type { EventCache } from "../../hooks/useEventCache";
 import type { NostrProfile } from "../../lib/types";
@@ -22,6 +23,7 @@ const NODE_RENDERERS: Record<ContentNode["type"], ComponentType<any>> = {
   linkPreview: LinkPreviewNode,
   link: LinkNode,
   quote: QuoteNode,
+  hashtag: HashtagNode,
   emoji: EmojiNode,
 };
 
@@ -35,10 +37,12 @@ interface ContentRendererProps {
   profiles?: Map<string, NostrProfile>;
   /** イベントタグ（カスタム絵文字等の解決に使用） */
   tags?: string[][];
+  /** ハッシュタグクリック時のハンドラ */
+  onHashtagClick?: (tag: string) => void;
 }
 
 /** コンテンツをパースしてノードごとに適切なコンポーネントで描画する */
-export function ContentRenderer({ content, onHold, onRelease, cache, profiles, tags }: ContentRendererProps) {
+export function ContentRenderer({ content, onHold, onRelease, cache, profiles, tags, onHashtagClick }: ContentRendererProps) {
   const nodes = parseContent(content, tags);
 
   // 画像URLリストを抽出
@@ -63,6 +67,8 @@ export function ContentRenderer({ content, onHold, onRelease, cache, profiles, t
             ? { imageUrls, imageIndex: imageIndexMap[index], onHold, onRelease }
             : node.type === "quote"
               ? { cache, profiles: profiles ?? new Map<string, NostrProfile>() }
+              : node.type === "hashtag"
+                ? { onHashtagClick }
               : {};
         return <Renderer key={index} {...props} {...extraProps} />;
       })}

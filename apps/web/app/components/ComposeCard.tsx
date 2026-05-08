@@ -9,6 +9,7 @@ import { useImageUpload } from "../hooks/useImageUpload";
 import { QuoteNode } from "./content/QuoteNode";
 import { encodeNevent, decodeNevent, decodeNote } from "../lib/nip19";
 import { CLIENT_TAG } from "../lib/constants";
+import { extractHashtags } from "../lib/hashtags";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -211,6 +212,9 @@ export function ComposeCard({
         : null;
       const finalContent = neventUri ? `${trimmed}\n${neventUri}` : trimmed;
       const tags: string[][] = [CLIENT_TAG];
+      for (const tag of extractHashtags(finalContent)) {
+        tags.push(["t", tag]);
+      }
       if (internalQuotedEvent) {
         tags.push(["q", internalQuotedEvent.eventId, "", internalQuotedEvent.pubkey ?? ""]);
       }
