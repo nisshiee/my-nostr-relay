@@ -11,7 +11,7 @@ interface ReactionTooltipProps {
   /** pubkey → NostrProfile のマップ */
   profiles: Map<string, NostrProfile>;
   /** ツールチップのアンカー要素（位置計算用） */
-  anchorRef: React.RefObject<HTMLElement | null>;
+  anchorElement: HTMLElement | null;
 }
 
 /** pubkeyを短縮表示する（先頭8文字…末尾4文字） */
@@ -37,7 +37,7 @@ export function ReactionTooltip({
   isOpen,
   pubkeys,
   profiles,
-  anchorRef,
+  anchorElement,
 }: ReactionTooltipProps) {
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number }>({
@@ -59,8 +59,8 @@ export function ReactionTooltip({
 
   /** アンカー要素の位置からツールチップの位置を計算する */
   const updatePosition = useCallback(() => {
-    if (!anchorRef.current || !tooltipRef.current) return;
-    const anchorRect = anchorRef.current.getBoundingClientRect();
+    if (!anchorElement || !tooltipRef.current) return;
+    const anchorRect = anchorElement.getBoundingClientRect();
     const tooltipRect = tooltipRef.current.getBoundingClientRect();
     const gap = 4; // アンカーとの間隔
 
@@ -82,7 +82,7 @@ export function ReactionTooltip({
     }
 
     setPosition({ top, left });
-  }, [anchorRef]);
+  }, [anchorElement]);
 
   // isOpen → visibleのフェードイン（DOMマウント後に次フレームで発火）
   useEffect(() => {

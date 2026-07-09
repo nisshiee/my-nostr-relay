@@ -68,6 +68,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
 
   // リアクションツールチップ用の状態・ref
   const [activeTooltipEmoji, setActiveTooltipEmoji] = useState<string | null>(null);
+  const [activeTooltipAnchor, setActiveTooltipAnchor] = useState<HTMLElement | null>(null);
   const badgeRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -190,7 +191,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
   }, [activeTooltipEmoji]);
 
   // リアクションバッジのツールチップ用イベントハンドラー
-  const handleBadgeMouseEnter = useCallback((emoji: string) => {
+  const handleBadgeMouseEnter = useCallback((emoji: string, anchor: HTMLElement) => {
     // リアクション者のプロフィールを先行取得
     if (fetchProfiles && reactions) {
       const entry = reactions.get(emoji);
@@ -204,6 +205,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
 
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
+      setActiveTooltipAnchor(anchor);
       setActiveTooltipEmoji(emoji);
     }, 500);
   }, [fetchProfiles, reactions, profiles]);
@@ -213,14 +215,16 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
+    setActiveTooltipAnchor(null);
     setActiveTooltipEmoji(null);
   }, []);
 
-  const handleBadgeTouchStart = useCallback((emoji: string) => {
+  const handleBadgeTouchStart = useCallback((emoji: string, anchor: HTMLElement) => {
     longTapTriggeredRef.current = false;
     if (longTapTimerRef.current) clearTimeout(longTapTimerRef.current);
     longTapTimerRef.current = setTimeout(() => {
       longTapTriggeredRef.current = true;
+      setActiveTooltipAnchor(anchor);
       setActiveTooltipEmoji(emoji);
     }, 500);
   }, []);
@@ -299,9 +303,9 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
                     onReaction(emoji, imageUrl);
                   }
                 }}
-                onMouseEnter={() => handleBadgeMouseEnter(emoji)}
+                onMouseEnter={(e) => handleBadgeMouseEnter(emoji, e.currentTarget)}
                 onMouseLeave={handleBadgeMouseLeave}
-                onTouchStart={() => handleBadgeTouchStart(emoji)}
+                onTouchStart={(e) => handleBadgeTouchStart(emoji, e.currentTarget)}
                 onTouchEnd={handleBadgeTouchEnd}
                 onTouchCancel={handleBadgeTouchEnd}
                 onTouchMove={handleBadgeTouchMove}
@@ -330,12 +334,12 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
           {(() => {
             const tooltipData = activeTooltipEmoji ? reactions?.get(activeTooltipEmoji) : null;
             return tooltipData ? (
-              <ReactionTooltip
-                isOpen={!!activeTooltipEmoji}
-                pubkeys={Array.from(tooltipData.pubkeys)}
-                profiles={profiles ?? new Map()}
-                anchorRef={{ current: badgeRefs.current.get(activeTooltipEmoji!) ?? null }}
-              />
+                <ReactionTooltip
+                  isOpen={!!activeTooltipEmoji}
+                  pubkeys={Array.from(tooltipData.pubkeys)}
+                  profiles={profiles ?? new Map()}
+                  anchorElement={activeTooltipAnchor}
+                />
             ) : null;
           })()}
         </div>

@@ -94,6 +94,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!stored) return; // 初見ユーザー → 何もしない
 
     let cancelled = false;
+    // 保存済みpubkeyがある場合だけ自動ログイン中表示へ切り替える。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setAutoLoading(true);
 
     (async () => {

@@ -120,6 +120,8 @@ export function ThreadCard({
     if (prev === null && replyTargetNoteId === null) return;
 
     if (replyTargetNoteId !== null) {
+      // replyTargetNoteId への応答として、現在開いているアクションを閉じる。
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActiveNoteId(null);
       onHold?.();
     } else {
@@ -380,6 +382,7 @@ function ThreadNoteItem({
 
   // リアクションツールチップ用の状態・ref
   const [activeTooltipEmoji, setActiveTooltipEmoji] = useState<string | null>(null);
+  const [activeTooltipAnchor, setActiveTooltipAnchor] = useState<HTMLElement | null>(null);
   const badgeRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -419,7 +422,7 @@ function ThreadNoteItem({
   }, [activeTooltipEmoji]);
 
   // リアクションバッジのツールチップ用イベントハンドラー
-  const handleBadgeMouseEnter = useCallback((emoji: string) => {
+  const handleBadgeMouseEnter = useCallback((emoji: string, anchor: HTMLElement) => {
     // リアクション者のプロフィールを先行取得
     if (fetchProfiles && noteReactions) {
       const entry = noteReactions.get(emoji);
@@ -433,6 +436,7 @@ function ThreadNoteItem({
 
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     hoverTimerRef.current = setTimeout(() => {
+      setActiveTooltipAnchor(anchor);
       setActiveTooltipEmoji(emoji);
     }, 500);
   }, [fetchProfiles, noteReactions, profiles]);
@@ -442,14 +446,16 @@ function ThreadNoteItem({
       clearTimeout(hoverTimerRef.current);
       hoverTimerRef.current = null;
     }
+    setActiveTooltipAnchor(null);
     setActiveTooltipEmoji(null);
   }, []);
 
-  const handleBadgeTouchStart = useCallback((emoji: string) => {
+  const handleBadgeTouchStart = useCallback((emoji: string, anchor: HTMLElement) => {
     longTapTriggeredRef.current = false;
     if (longTapTimerRef.current) clearTimeout(longTapTimerRef.current);
     longTapTimerRef.current = setTimeout(() => {
       longTapTriggeredRef.current = true;
+      setActiveTooltipAnchor(anchor);
       setActiveTooltipEmoji(emoji);
     }, 500);
   }, []);
@@ -525,9 +531,9 @@ function ThreadNoteItem({
                         onReaction(note.eventId, note.pubkey, emoji, imageUrl);
                       }
                     }}
-                    onMouseEnter={() => handleBadgeMouseEnter(emoji)}
+                    onMouseEnter={(e) => handleBadgeMouseEnter(emoji, e.currentTarget)}
                     onMouseLeave={handleBadgeMouseLeave}
-                    onTouchStart={() => handleBadgeTouchStart(emoji)}
+                    onTouchStart={(e) => handleBadgeTouchStart(emoji, e.currentTarget)}
                     onTouchEnd={handleBadgeTouchEnd}
                     onTouchCancel={handleBadgeTouchEnd}
                     onTouchMove={handleBadgeTouchMove}
@@ -561,7 +567,7 @@ function ThreadNoteItem({
                   isOpen={!!activeTooltipEmoji}
                   pubkeys={Array.from(tooltipData.pubkeys)}
                   profiles={profiles}
-                  anchorRef={{ current: badgeRefs.current.get(activeTooltipEmoji!) ?? null }}
+                  anchorElement={activeTooltipAnchor}
                 />
               ) : null;
             })()}

@@ -103,6 +103,8 @@ export function UserProfileModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    // モーダルを開いた対象ユーザーごとに送信中状態とエラーをリセットする。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsSubmittingFollow(false);
     setFollowError(null);
   }, [isOpen, pubkey]);
