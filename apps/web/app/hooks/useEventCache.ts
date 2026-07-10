@@ -1,4 +1,4 @@
-import { useCallback, useRef, useMemo } from "react";
+import { useCallback, useEffect, useRef, useMemo } from "react";
 import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
@@ -56,13 +56,14 @@ export function useEventCache(
 
   // 最新の pool / relayUrls / fetchProfiles を ref で保持
   const poolRef = useRef(pool);
-  poolRef.current = pool;
-
   const relayUrlsRef = useRef(relayUrls);
-  relayUrlsRef.current = relayUrls;
-
   const fetchProfilesRef = useRef(fetchProfiles);
-  fetchProfilesRef.current = fetchProfiles;
+
+  useEffect(() => {
+    poolRef.current = pool;
+    relayUrlsRef.current = relayUrls;
+    fetchProfilesRef.current = fetchProfiles;
+  }, [pool, relayUrls, fetchProfiles]);
 
   // -----------------------------------------------------------------------
   // getEvent

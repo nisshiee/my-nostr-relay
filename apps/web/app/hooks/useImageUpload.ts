@@ -29,7 +29,7 @@ const initialState: ImageUploadState = {
 export function useImageUpload(): {
   state: ImageUploadState;
   selectFile: (file: File) => void;
-  uploadImage: () => Promise<void>;
+  uploadImage: () => Promise<string | null>;
   clearImage: () => void;
   reset: () => void;
 } {
@@ -81,7 +81,7 @@ export function useImageUpload(): {
         ...prev,
         error: "ファイルが選択されていません",
       }));
-      return;
+      return null;
     }
 
     setState((prev) => ({ ...prev, uploading: true, error: null }));
@@ -94,6 +94,7 @@ export function useImageUpload(): {
         uploadedUrl: url,
         error: null,
       }));
+      return url;
     } catch (err) {
       const message =
         err instanceof Error
@@ -104,6 +105,7 @@ export function useImageUpload(): {
         uploading: false,
         error: message,
       }));
+      return null;
     }
   }, []);
 

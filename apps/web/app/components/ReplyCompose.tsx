@@ -87,18 +87,6 @@ export function ReplyCompose({
     };
   }, [previewUrl]);
 
-  // アップロード完了時にURLをテキストに挿入
-  useEffect(() => {
-    if (imageUpload.state.uploadedUrl) {
-      const url = imageUpload.state.uploadedUrl;
-      setText((prev) => {
-        const separator = prev.length > 0 && !prev.endsWith("\n") ? "\n" : "";
-        return `${prev}${separator}${url}`;
-      });
-      imageUpload.reset();
-    }
-  }, [imageUpload.state.uploadedUrl, imageUpload]);
-
   // autoFocus
   useEffect(() => {
     if (autoFocus && textareaRef.current) {
@@ -268,7 +256,13 @@ export function ReplyCompose({
 
   /** 画像アップロード実行 */
   const handleImageUpload = useCallback(async () => {
-    await imageUpload.uploadImage();
+    const url = await imageUpload.uploadImage();
+    if (!url) return;
+    setText((prev) => {
+      const separator = prev.length > 0 && !prev.endsWith("\n") ? "\n" : "";
+      return `${prev}${separator}${url}`;
+    });
+    imageUpload.reset();
   }, [imageUpload]);
 
   /** 選択した画像をクリア */

@@ -58,17 +58,19 @@ export function ComposeCard({
   const [text, setText] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [internalQuotedEvent, setInternalQuotedEvent] = useState<
+  const [customQuotedEvent, setCustomQuotedEvent] = useState<
     { eventId: string; pubkey?: string; sig?: string } | undefined
-  >(quotedEvent);
+  >(undefined);
+  const [removedQuotedEventKey, setRemovedQuotedEventKey] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // props の quotedEvent が変わったら内部ステートも更新
-  useEffect(() => {
-    setInternalQuotedEvent(quotedEvent);
-  }, [quotedEvent]);
+  const quotedEventKey = quotedEvent
+    ? `${quotedEvent.eventId}:${quotedEvent.pubkey}:${quotedEvent.sig ?? ""}`
+    : null;
+  const internalQuotedEvent = customQuotedEvent
+    ?? (removedQuotedEventKey === quotedEventKey ? undefined : quotedEvent);
 
   const imageUpload = useImageUpload();
 
@@ -90,19 +92,6 @@ export function ComposeCard({
     };
   }, [previewUrl]);
 
-  // アップロード完了時にURLをテキストエリアに挿入
-  useEffect(() => {
-    if (imageUpload.state.uploadedUrl) {
-      const url = imageUpload.state.uploadedUrl;
-      setText((prev) => {
-        const separator = prev.length > 0 && !prev.endsWith("\n") ? "\n" : "";
-        return `${prev}${separator}${url}`;
-      });
-      imageUpload.reset();
-      onInput(slotId);
-    }
-  }, [imageUpload.state.uploadedUrl, imageUpload, onInput, slotId]);
-
   /** ファイル選択ダイアログを開く */
   const handleFileButtonClick = useCallback(() => {
     fileInputRef.current?.click();
@@ -123,8 +112,15 @@ export function ComposeCard({
 
   /** 画像アップロード実行 */
   const handleImageUpload = useCallback(async () => {
-    await imageUpload.uploadImage();
-  }, [imageUpload]);
+    const url = await imageUpload.uploadImage();
+    if (!url) return;
+    setText((prev) => {
+      const separator = prev.length > 0 && !prev.endsWith("\n") ? "\n" : "";
+      return `${prev}${separator}${url}`;
+    });
+    imageUpload.reset();
+    onInput(slotId);
+  }, [imageUpload, onInput, slotId]);
 
   /** 選択した画像をクリア */
   const handleImageClear = useCallback(() => {
@@ -287,10 +283,11 @@ export function ComposeCard({
           const decoded = decodeNevent(stripped);
           if (decoded) {
             e.preventDefault();
-            setInternalQuotedEvent({
+            setCustomQuotedEvent({
               eventId: decoded.eventId,
               pubkey: decoded.pubkey,
             });
+            setRemovedQuotedEventKey(null);
             return;
           }
         }
@@ -298,10 +295,11 @@ export function ComposeCard({
           const decoded = decodeNote(stripped);
           if (decoded) {
             e.preventDefault();
-            setInternalQuotedEvent({
+            setCustomQuotedEvent({
               eventId: decoded.eventId,
               pubkey: undefined,
             });
+            setRemovedQuotedEventKey(null);
             return;
           }
         }
@@ -399,7 +397,10 @@ export function ComposeCard({
           />
           <button
             type="button"
-            onClick={() => setInternalQuotedEvent(undefined)}
+            onClick={() => {
+              setCustomQuotedEvent(undefined);
+              setRemovedQuotedEventKey(quotedEventKey);
+            }}
             className="absolute -top-2 -right-2 rounded-full bg-gray-700 dark:bg-gray-600 text-white w-5 h-5 flex items-center justify-center text-xs hover:bg-gray-800 dark:hover:bg-gray-500 transition-colors"
             title="引用を解除"
           >
