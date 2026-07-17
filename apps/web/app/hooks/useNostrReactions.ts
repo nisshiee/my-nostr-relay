@@ -6,6 +6,7 @@ import {
   REACTION_POLL_INTERVAL,
   REACTION_SINCE_SAFETY_MARGIN,
 } from "../lib/constants";
+import { normalizeReactionContent } from "../lib/reactionContent";
 import type { NoteCard, Reactions } from "../lib/types";
 
 /** カスタム絵文字（:shortcode: 形式）のイベントタグから画像URLを取得する */
@@ -37,14 +38,6 @@ export function useNostrReactions(
   const reactionSubRef = useRef<SubCloser | null>(null);
   const reactionIntervalRef = useRef<number | null>(null);
   const lastReactionSubClosedAtRef = useRef<number | undefined>(undefined);
-
-  /** リアクションのcontentを正規化する */
-  const normalizeReactionContent = useCallback((content: string): string | null => {
-    if (content === "+" || content === "") return "👍";
-    if (content === "-") return "👎";
-    if (content.startsWith(":") && content.endsWith(":") && content.length > 2) return content;
-    return content;
-  }, []);
 
   /** kind:7リアクションイベントを集計に追加する */
   const addReaction = useCallback((event: Event) => {
@@ -79,7 +72,7 @@ export function useNostrReactions(
       }
       return next;
     });
-  }, [normalizeReactionContent]);
+  }, []);
 
   // kind:7 subscribe（initialEventIdsが空でなくなったら開始）
   useEffect(() => {
@@ -202,7 +195,7 @@ export function useNostrReactions(
       seenReactionIdsRef.current.clear();
       setReactions(new Map());
     };
-  }, [pool, relayUrls, initialEventIds, addReaction, normalizeReactionContent, notesRef, newNotesMinCreatedAtRef]);
+  }, [pool, relayUrls, initialEventIds, addReaction, notesRef, newNotesMinCreatedAtRef]);
 
   return { reactions, addReaction };
 }
