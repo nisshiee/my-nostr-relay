@@ -6,7 +6,9 @@ import type {
   ThreadNote,
   NostrProfile,
   Reactions,
+  ReactionSummary,
 } from "../lib/types";
+import { reactionKey } from "../lib/reactions";
 import type { NostrEvent } from "../types/nostr";
 import type { EventCache } from "../hooks/useEventCache";
 import { ActionBar } from "./ActionBar";
@@ -309,10 +311,7 @@ export function ThreadCard({
 interface ThreadNoteItemProps {
   note: ThreadNote;
   profiles: Map<string, NostrProfile>;
-  noteReactions?: Map<
-    string,
-    { count: number; imageUrl?: string; pubkeys: Set<string> }
-  >;
+  noteReactions?: Map<string, ReactionSummary>;
   myPubkey?: string;
   onReaction?: (
     targetEventId: string,
@@ -511,17 +510,17 @@ function ThreadNoteItem({
         {noteReactions && noteReactions.size > 0 && (
           <div className="mt-1.5 ml-8 flex flex-wrap gap-1">
             {Array.from(noteReactions.entries()).map(
-              ([emoji, { count, imageUrl, pubkeys }]) => {
+              ([key, { emoji, count, imageUrl, pubkeys }]) => {
                 const reacted = !!(myPubkey && pubkeys.has(myPubkey));
                 return (
                   <button
-                    key={emoji}
+                    key={key}
                     type="button"
                     ref={(el) => {
                       if (el) {
-                        badgeRefs.current.set(emoji, el);
+                        badgeRefs.current.set(key, el);
                       } else {
-                        badgeRefs.current.delete(emoji);
+                        badgeRefs.current.delete(key);
                       }
                     }}
                     aria-disabled={reacted || undefined}
@@ -531,9 +530,9 @@ function ThreadNoteItem({
                         onReaction(note.eventId, note.pubkey, emoji, imageUrl);
                       }
                     }}
-                    onMouseEnter={(e) => handleBadgeMouseEnter(emoji, e.currentTarget)}
+                    onMouseEnter={(e) => handleBadgeMouseEnter(key, e.currentTarget)}
                     onMouseLeave={handleBadgeMouseLeave}
-                    onTouchStart={(e) => handleBadgeTouchStart(emoji, e.currentTarget)}
+                    onTouchStart={(e) => handleBadgeTouchStart(key, e.currentTarget)}
                     onTouchEnd={handleBadgeTouchEnd}
                     onTouchCancel={handleBadgeTouchEnd}
                     onTouchMove={handleBadgeTouchMove}
@@ -591,7 +590,7 @@ function ThreadNoteItem({
             }
           }}
           isAlreadyReacted={
-            !!(myPubkey && noteReactions?.get("+")?.pubkeys?.has(myPubkey))
+            !!(myPubkey && noteReactions?.get(reactionKey("👍"))?.pubkeys?.has(myPubkey))
           }
           onRepost={() => {
             // スレッド内ノートのリポストは未実装（将来対応）
