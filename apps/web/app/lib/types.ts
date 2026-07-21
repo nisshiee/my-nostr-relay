@@ -57,8 +57,15 @@ export interface ThreadCard extends CardBase {
 /** キャンバス上に配置されるカード（Discriminated Union） */
 export type Card = NoteCard | ComposeCard | ThreadCard;
 
-/** リアクション集計: eventId → (絵文字 → {件数, 画像URL, 送信者pubkey集合}) のマッピング */
-export type Reactions = Map<string, Map<string, { count: number; imageUrl?: string; pubkeys: Set<string> }>>;
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  imageUrl?: string;
+  pubkeys: Set<string>;
+}
+
+/** リアクション集計: eventId → (リアクション複合キー → 集計値) のマッピング */
+export type Reactions = Map<string, Map<string, ReactionSummary>>;
 
 /** プロフィール情報 */
 export interface NostrProfile {

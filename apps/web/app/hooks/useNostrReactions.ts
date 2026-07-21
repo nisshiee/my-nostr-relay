@@ -7,14 +7,7 @@ import {
   REACTION_SINCE_SAFETY_MARGIN,
 } from "../lib/constants";
 import type { NoteCard, Reactions } from "../lib/types";
-
-/** カスタム絵文字（:shortcode: 形式）のイベントタグから画像URLを取得する */
-const extractCustomEmojiUrl = (emoji: string, tags: string[][]): string | undefined => {
-  if (!emoji.startsWith(":") || !emoji.endsWith(":") || emoji.length <= 2) return undefined;
-  const shortcode = emoji.slice(1, -1);
-  const emojiTag = tags.find(tag => tag[0] === "emoji" && tag[1] === shortcode && tag[2]);
-  return emojiTag?.[2];
-};
+import { aggregateReactionEvent } from "../lib/reactions";
 
 export interface UseNostrReactionsResult {
   reactions: Reactions;
@@ -38,48 +31,13 @@ export function useNostrReactions(
   const reactionIntervalRef = useRef<number | null>(null);
   const lastReactionSubClosedAtRef = useRef<number | undefined>(undefined);
 
-  /** リアクションのcontentを正規化する */
-  const normalizeReactionContent = useCallback((content: string): string | null => {
-    if (content === "+" || content === "") return "👍";
-    if (content === "-") return "👎";
-    if (content.startsWith(":") && content.endsWith(":") && content.length > 2) return content;
-    return content;
-  }, []);
-
   /** kind:7リアクションイベントを集計に追加する */
   const addReaction = useCallback((event: Event) => {
     if (seenReactionIdsRef.current.has(event.id)) return;
     seenReactionIdsRef.current.add(event.id);
 
-    const eTags = event.tags.filter((tag) => tag[0] === "e" && tag[1]);
-    if (eTags.length === 0) return;
-    const targetEventId = eTags[eTags.length - 1]![1]!;
-
-    const emoji = normalizeReactionContent(event.content);
-    if (emoji === null) return;
-
-    const imageUrl = extractCustomEmojiUrl(emoji, event.tags);
-
-    setReactions((prev) => {
-      const next = new Map(prev);
-      const eventReactions = next.get(targetEventId);
-      if (eventReactions) {
-        const updated = new Map(eventReactions);
-        const existing = updated.get(emoji);
-        if (existing) {
-          const newPubkeys = new Set(existing.pubkeys);
-          newPubkeys.add(event.pubkey);
-          updated.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl, pubkeys: newPubkeys });
-        } else {
-          updated.set(emoji, { count: 1, imageUrl, pubkeys: new Set([event.pubkey]) });
-        }
-        next.set(targetEventId, updated);
-      } else {
-        next.set(targetEventId, new Map([[emoji, { count: 1, imageUrl, pubkeys: new Set([event.pubkey]) }]]));
-      }
-      return next;
-    });
-  }, [normalizeReactionContent]);
+    setReactions((prev) => aggregateReactionEvent(prev, event));
+  }, []);
 
   // kind:7 subscribe（initialEventIdsが空でなくなったら開始）
   useEffect(() => {
@@ -107,30 +65,11 @@ export function useNostrReactions(
           reactionInitialLoading = false;
           // バッファを一括でstateに反映
           if (reactionBuffer.length > 0) {
-            const batchReactions: Reactions = new Map();
+            let batchReactions: Reactions = new Map();
             for (const evt of reactionBuffer) {
               if (seenReactionIdsRef.current.has(evt.id)) continue;
               seenReactionIdsRef.current.add(evt.id);
-              const eTags = evt.tags.filter((tag) => tag[0] === "e" && tag[1]);
-              if (eTags.length === 0) continue;
-              const targetId = eTags[eTags.length - 1]![1]!;
-              const emoji = normalizeReactionContent(evt.content);
-              if (emoji === null) continue;
-
-              const imageUrl = extractCustomEmojiUrl(emoji, evt.tags);
-
-              const eventReactions = batchReactions.get(targetId);
-              if (eventReactions) {
-                const existing = eventReactions.get(emoji);
-                if (existing) {
-                  existing.pubkeys.add(evt.pubkey);
-                  eventReactions.set(emoji, { count: existing.count + 1, imageUrl: existing.imageUrl ?? imageUrl, pubkeys: existing.pubkeys });
-                } else {
-                  eventReactions.set(emoji, { count: 1, imageUrl, pubkeys: new Set([evt.pubkey]) });
-                }
-              } else {
-                batchReactions.set(targetId, new Map([[emoji, { count: 1, imageUrl, pubkeys: new Set([evt.pubkey]) }]]));
-              }
+              batchReactions = aggregateReactionEvent(batchReactions, evt);
             }
             setReactions(batchReactions);
           }
@@ -202,7 +141,7 @@ export function useNostrReactions(
       seenReactionIdsRef.current.clear();
       setReactions(new Map());
     };
-  }, [pool, relayUrls, initialEventIds, addReaction, normalizeReactionContent, notesRef, newNotesMinCreatedAtRef]);
+  }, [pool, relayUrls, initialEventIds, addReaction, notesRef, newNotesMinCreatedAtRef]);
 
   return { reactions, addReaction };
 }

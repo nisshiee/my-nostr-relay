@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback } from "react";
-import type { NoteCard as NoteCardType, NostrProfile } from "../lib/types";
+import type { NoteCard as NoteCardType, NostrProfile, ReactionSummary } from "../lib/types";
+import { reactionKey } from "../lib/reactions";
 import type { NostrEvent } from "../types/nostr";
 import { ActionBar } from "./ActionBar";
 import { NoteCardContent, resolveProfileDisplayName } from "./NoteCardContent";
@@ -17,7 +18,7 @@ interface NoteCardProps {
   /** リポスターのプロフィール情報 */
   reposterProfile?: NostrProfile;
   /** リアクション集計（絵文字 → {件数, 画像URL, 送信者pubkey集合}） */
-  reactions?: Map<string, { count: number; imageUrl?: string; pubkeys: Set<string> }>;
+  reactions?: Map<string, ReactionSummary>;
   /** 自分のpubkey（リアクション済み判定用） */
   myPubkey?: string;
   /** リアクション送信ハンドラ */
@@ -283,17 +284,17 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       {/* リアクションバッジ */}
       {reactions && reactions.size > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {Array.from(reactions.entries()).map(([emoji, { count, imageUrl, pubkeys }]) => {
+          {Array.from(reactions.entries()).map(([key, { emoji, count, imageUrl, pubkeys }]) => {
             const reacted = !!(myPubkey && pubkeys.has(myPubkey));
             return (
               <button
-                key={emoji}
+                key={key}
                 type="button"
                 ref={(el) => {
                   if (el) {
-                    badgeRefs.current.set(emoji, el);
+                    badgeRefs.current.set(key, el);
                   } else {
-                    badgeRefs.current.delete(emoji);
+                    badgeRefs.current.delete(key);
                   }
                 }}
                 aria-disabled={reacted || undefined}
@@ -303,9 +304,9 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
                     onReaction(emoji, imageUrl);
                   }
                 }}
-                onMouseEnter={(e) => handleBadgeMouseEnter(emoji, e.currentTarget)}
+                onMouseEnter={(e) => handleBadgeMouseEnter(key, e.currentTarget)}
                 onMouseLeave={handleBadgeMouseLeave}
-                onTouchStart={(e) => handleBadgeTouchStart(emoji, e.currentTarget)}
+                onTouchStart={(e) => handleBadgeTouchStart(key, e.currentTarget)}
                 onTouchEnd={handleBadgeTouchEnd}
                 onTouchCancel={handleBadgeTouchEnd}
                 onTouchMove={handleBadgeTouchMove}
@@ -364,7 +365,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
             onRelease?.();
           }
         }}
-        isAlreadyReacted={!!(myPubkey && reactions?.get("+")?.pubkeys?.has(myPubkey))}
+        isAlreadyReacted={!!(myPubkey && reactions?.get(reactionKey("👍"))?.pubkeys?.has(myPubkey))}
         onRepost={async () => {
           try {
             if (onRepost) {
