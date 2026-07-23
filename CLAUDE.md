@@ -44,6 +44,7 @@ Client --> CloudFront (SSL) --> EC2 (t4g.micro, port 3000)
 
 ### Rust コーディング規約
 
+- Rust toolchain は `services/relay/rust-toolchain.toml` で固定する。ローカル開発・CI・本番バイナリのビルドはこの定義を共通で使用すること
 - **モジュール構成**: `store/mod.rs` 方式ではなく `store.rs` + `store/` ディレクトリ方式を使うこと（Rust 2018+ スタイル）
   - ✅ `src/store.rs` + `src/store/in_memory.rs` + `src/store/dynamo.rs`
   - ❌ `src/store/mod.rs` + `src/store/in_memory.rs` + `src/store/dynamo.rs`
@@ -53,15 +54,14 @@ Client --> CloudFront (SSL) --> EC2 (t4g.micro, port 3000)
 ### リレーサーバー (ARM64 for EC2)
 
 ```bash
-# ローカルビルド（Mac → Linux ARM64 クロスコンパイル）
+# `rust-toolchain.toml` の固定バージョンが自動で選択される
 cd services/relay
-ulimit -n 10240  # macOSのFD制限回避
-cargo zigbuild --release --target aarch64-unknown-linux-gnu --features dynamo -j 1
+cargo build --release --target aarch64-unknown-linux-musl --features dynamo
 
 # デプロイ（S3経由 + SSM Document）
 # バイナリのアップロード
 aws-vault exec nostr-relay -- aws s3 cp \
-  target/aarch64-unknown-linux-gnu/release/relay \
+  target/aarch64-unknown-linux-musl/release/relay \
   s3://nostr-relay-binary-426192960050/relay-v2/relay
 
 # envファイルのアップロード（deploy/relay-v2.env をgitで管理）
@@ -76,6 +76,7 @@ aws-vault exec nostr-relay -- aws ssm send-command \
 ```
 
 > **Note:** 環境変数は `deploy/relay-v2.env` でgit管理されています。変更はこのファイルを編集し、S3にアップロード後、SSM Documentを実行してください。
+> 本番EC2にはRust toolchainをインストールせず、CIでビルドしたバイナリのみを配布します。
 
 ### Webフロントエンド
 
