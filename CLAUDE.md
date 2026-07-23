@@ -54,9 +54,11 @@ Client --> CloudFront (SSL) --> EC2 (t4g.micro, port 3000)
 ### リレーサーバー (ARM64 for EC2)
 
 ```bash
-# `rust-toolchain.toml` の固定バージョンが自動で選択される
+# macOSからLinux ARM64向けにクロスコンパイル
+# 事前にcargo-zigbuildとZigをインストールすること
 cd services/relay
-cargo build --release --target aarch64-unknown-linux-musl --features dynamo
+ulimit -n 10240  # macOSのFD制限回避
+cargo zigbuild --release --target aarch64-unknown-linux-musl --features dynamo -j 1
 
 # デプロイ（S3経由 + SSM Document）
 # バイナリのアップロード
