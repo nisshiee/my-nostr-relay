@@ -1,3 +1,4 @@
+import { describe, expect, test } from "vitest";
 import { placeCard, gridToColumns, insertCard } from "../layoutEngine";
 import { GAP, DEFAULT_CARD_HEIGHT } from "../constants";
 import type { Card } from "../types";
