@@ -91,7 +91,7 @@ export function useRecentEmojis(
               seen.add(content);
               const imageUrl = extractCustomEmojiUrl(content, evt.tags);
               emojis.push({ emoji: content, imageUrl });
-              if (emojis.length >= 50) break;
+              if (emojis.length >= 8) break;
             }
           }
 
@@ -126,7 +126,7 @@ export function useRecentEmojis(
 
     setRecentEmojis((prev) => {
       const filtered = prev.filter((e) => e.emoji !== emoji);
-      return [{ emoji, imageUrl }, ...filtered].slice(0, 50);
+      return [{ emoji, imageUrl }, ...filtered].slice(0, 8);
     });
   }, []);
 
