@@ -1,56 +1,47 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { EmojiPicker } from "frimousse";
 import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
 import type { RecentEmoji } from "../hooks/useRecentEmojis";
 
-/** タブの種類 */
-type TabType = "recent" | "custom" | "unicode";
-
 interface EmojiPickerPopoverProps {
-  /** ポップオーバーの開閉状態 */
   isOpen: boolean;
-  /** ポップオーバーを閉じるハンドラ */
   onClose: () => void;
-  /** 絵文字が選択されたときのハンドラ */
   onEmojiSelect: (emoji: string, imageUrl?: string) => void;
-  /** ピッカーのアンカー要素（位置計算用） */
   anchorRef: React.RefObject<HTMLElement | null>;
-  /** 最近使った絵文字の配列 */
   recentEmojis?: RecentEmoji[];
-  /** カスタム絵文字セット */
   emojiSets?: EmojiSet[];
-  /** セットに属さないカスタム絵文字 */
   looseEmojis?: CustomEmoji[];
 }
 
-/** カスタム絵文字ボタン */
+function SectionHeader({ children }: { children: ReactNode }) {
+  return (
+    <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-800">
+      {children}
+    </div>
+  );
+}
+
 function CustomEmojiButton({
-  shortcode,
-  url,
-  onEmojiSelect,
-  onClose,
+  emoji,
+  onSelect,
 }: {
-  shortcode: string;
-  url: string;
-  onEmojiSelect: (emoji: string, imageUrl?: string) => void;
-  onClose: () => void;
+  emoji: CustomEmoji;
+  onSelect: (emoji: string, imageUrl?: string) => void;
 }) {
   return (
     <button
       type="button"
-      onClick={() => {
-        onEmojiSelect(`:${shortcode}:`, url);
-        onClose();
-      }}
-      title={`:${shortcode}:`}
+      title={`:${emoji.shortcode}:`}
+      onClick={() => onSelect(`:${emoji.shortcode}:`, emoji.url)}
       className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
     >
       <img
-        src={url}
-        alt={`:${shortcode}:`}
+        src={emoji.url}
+        alt={`:${emoji.shortcode}:`}
         className="w-5 h-5 object-contain"
         referrerPolicy="no-referrer"
       />
@@ -58,222 +49,160 @@ function CustomEmojiButton({
   );
 }
 
-/** タブバー */
-function TabBar({
-  activeTab,
-  onTabChange,
-  hasCustom,
+function RecentEmojiButton({
+  recent,
+  onSelect,
 }: {
-  activeTab: TabType;
-  onTabChange: (tab: TabType) => void;
-  hasCustom: boolean;
+  recent: RecentEmoji;
+  onSelect: (emoji: string, imageUrl?: string) => void;
 }) {
-  const tabs: { type: TabType; icon: string; label: string }[] = [
-    { type: "recent", icon: "🕐", label: "最近使った絵文字" },
-    ...(hasCustom
-      ? [{ type: "custom" as const, icon: "⭐", label: "カスタム絵文字" }]
-      : []),
-    { type: "unicode", icon: "😀", label: "Unicode絵文字" },
-  ];
-
-  return (
-    <div className="flex border-b border-gray-200 dark:border-gray-700">
-      {tabs.map((tab) => (
-        <button
-          key={tab.type}
-          type="button"
-          aria-label={tab.label}
-          onClick={() => onTabChange(tab.type)}
-          className={`flex-1 py-1 text-center text-sm cursor-pointer transition-colors ${
-            activeTab === tab.type
-              ? "border-b-2 border-blue-500 dark:border-blue-400"
-              : "text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300"
-          }`}
-        >
-          {tab.icon}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** 最近使った絵文字タブの中身 */
-function RecentTab({
-  recentEmojis,
-  onEmojiSelect,
-  onClose,
-}: {
-  recentEmojis: RecentEmoji[];
-  onEmojiSelect: (emoji: string, imageUrl?: string) => void;
-  onClose: () => void;
-}) {
-  if (recentEmojis.length === 0) {
+  if (recent.imageUrl) {
     return (
-      <div className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">
-        まだリアクションしていません
-      </div>
+      <button
+        type="button"
+        title={recent.emoji}
+        onClick={() => onSelect(recent.emoji, recent.imageUrl)}
+        className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
+      >
+        <img
+          src={recent.imageUrl}
+          alt={recent.emoji}
+          className="w-5 h-5 object-contain"
+          referrerPolicy="no-referrer"
+        />
+      </button>
     );
   }
 
   return (
-    <div>
-      <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-800">
-        最近使った絵文字
-      </div>
-      <div className="flex flex-wrap px-1">
-      {recentEmojis.map((recent) =>
-        recent.imageUrl ? (
-          <CustomEmojiButton
-            key={recent.emoji}
-            shortcode={recent.emoji.slice(1, -1)}
-            url={recent.imageUrl}
-            onEmojiSelect={onEmojiSelect}
-            onClose={onClose}
-          />
-        ) : (
-          <button
-            key={recent.emoji}
-            type="button"
-            onClick={() => {
-              onEmojiSelect(recent.emoji);
-              onClose();
-            }}
-            className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-xl cursor-pointer"
-          >
-            {recent.emoji}
-          </button>
-        ),
-      )}
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={() => onSelect(recent.emoji)}
+      className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-xl cursor-pointer"
+    >
+      {recent.emoji}
+    </button>
   );
 }
 
-/** カスタム絵文字タブの中身 */
-function CustomTab({
-  emojiSets,
-  looseEmojis,
-  search,
-  onEmojiSelect,
+function EmojiPickerContent({
   onClose,
-}: {
-  emojiSets: EmojiSet[];
-  looseEmojis: CustomEmoji[];
-  search: string;
-  onEmojiSelect: (emoji: string, imageUrl?: string) => void;
-  onClose: () => void;
-}) {
-  const filteredSets = useMemo(() => {
-    if (search === "") return emojiSets;
-    const query = search.toLowerCase();
-    return emojiSets
-      .map((set) => ({
-        ...set,
-        emojis: set.emojis.filter((e) =>
-          e.shortcode.toLowerCase().includes(query),
-        ),
-      }))
-      .filter((set) => set.emojis.length > 0);
-  }, [emojiSets, search]);
-
-  const filteredLoose = useMemo(() => {
-    if (search === "") return looseEmojis;
-    const query = search.toLowerCase();
-    return looseEmojis.filter((e) =>
-      e.shortcode.toLowerCase().includes(query),
-    );
-  }, [looseEmojis, search]);
-
-  if (filteredSets.length === 0 && filteredLoose.length === 0) {
-    return (
-      <div className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">
-        見つかりません
-      </div>
-    );
-  }
-
-  return (
-    <div className="py-1">
-      {filteredSets.map(
-        (set) =>
-          set.emojis.length > 0 && (
-            <div key={set.id}>
-              <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-800">
-                {set.icon ? `${set.icon} ${set.name}` : set.name}
-              </div>
-              <div className="flex flex-wrap px-1">
-                {set.emojis.map((e) => (
-                  <CustomEmojiButton
-                    key={e.shortcode}
-                    shortcode={e.shortcode}
-                    url={e.url}
-                    onEmojiSelect={onEmojiSelect}
-                    onClose={onClose}
-                  />
-                ))}
-              </div>
-            </div>
-          ),
-      )}
-      {filteredLoose.length > 0 && (
-        <div>
-          <div className="px-3 py-1.5 text-xs font-semibold text-gray-500 dark:text-gray-400 sticky top-0 bg-white dark:bg-gray-800">
-            マイ絵文字
-          </div>
-          <div className="flex flex-wrap px-1">
-            {filteredLoose.map((e) => (
-              <CustomEmojiButton
-                key={e.shortcode}
-                shortcode={e.shortcode}
-                url={e.url}
-                onEmojiSelect={onEmojiSelect}
-                onClose={onClose}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Unicode絵文字タブの中身（frimousse） */
-function UnicodeTab({
   onEmojiSelect,
-  onClose,
+  recentEmojis = [],
+  emojiSets = [],
+  looseEmojis = [],
 }: {
-  onEmojiSelect: (emoji: string, imageUrl?: string) => void;
   onClose: () => void;
+  onEmojiSelect: (emoji: string, imageUrl?: string) => void;
+  recentEmojis?: RecentEmoji[];
+  emojiSets?: EmojiSet[];
+  looseEmojis?: CustomEmoji[];
 }) {
   const searchRef = useRef<HTMLInputElement>(null);
+  const [search, setSearch] = useState("");
 
-  // 検索ボックスに自動フォーカス
   useEffect(() => {
     requestAnimationFrame(() => {
       searchRef.current?.focus();
     });
   }, []);
 
+  const allCustomEmojis = useMemo(() => {
+    const merged = new Map<string, CustomEmoji>();
+
+    for (const set of emojiSets) {
+      for (const emoji of set.emojis) {
+        merged.set(`${emoji.shortcode}:${emoji.url}`, emoji);
+      }
+    }
+
+    for (const emoji of looseEmojis) {
+      merged.set(`${emoji.shortcode}:${emoji.url}`, emoji);
+    }
+
+    return Array.from(merged.values());
+  }, [emojiSets, looseEmojis]);
+
+  const filteredCustomEmojis = useMemo(() => {
+    if (search === "") return [];
+    const query = search.toLowerCase();
+    return allCustomEmojis.filter((emoji) => emoji.shortcode.toLowerCase().includes(query));
+  }, [allCustomEmojis, search]);
+
+  const handleSelect = useCallback(
+    (emoji: string, imageUrl?: string) => {
+      onEmojiSelect(emoji, imageUrl);
+      onClose();
+    },
+    [onClose, onEmojiSelect],
+  );
+
   return (
     <EmojiPicker.Root
       locale="en"
       onEmojiSelect={(emoji) => {
-        onEmojiSelect(emoji.emoji);
-        onClose();
+        handleSelect(emoji.emoji);
       }}
     >
       <EmojiPicker.Search
         ref={searchRef}
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
         placeholder="絵文字を検索..."
         className="w-full px-3 py-2 text-sm border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500"
       />
-      <EmojiPicker.Viewport className="h-[243px]">
+      <EmojiPicker.Viewport className="h-[280px]">
         <EmojiPicker.Loading className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">
           読み込み中...
         </EmojiPicker.Loading>
         <EmojiPicker.Empty className="flex items-center justify-center h-full text-sm text-gray-400 dark:text-gray-500">
           見つかりません
         </EmojiPicker.Empty>
+
+        {search === "" && recentEmojis.length > 0 && (
+          <div>
+            <SectionHeader>最近使った絵文字</SectionHeader>
+            <div className="flex flex-wrap px-1">
+              {recentEmojis.map((recent) => (
+                <RecentEmojiButton key={`${recent.emoji}:${recent.imageUrl ?? ""}`} recent={recent} onSelect={handleSelect} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {search === "" && emojiSets.map((set) => (
+          <div key={set.id}>
+            <SectionHeader>{set.name}</SectionHeader>
+            <div className="flex flex-wrap px-1">
+              {set.emojis.map((emoji) => (
+                <CustomEmojiButton key={`${set.id}:${emoji.shortcode}:${emoji.url}`} emoji={emoji} onSelect={handleSelect} />
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {search === "" && looseEmojis.length > 0 && (
+          <div>
+            <SectionHeader>マイ絵文字</SectionHeader>
+            <div className="flex flex-wrap px-1">
+              {looseEmojis.map((emoji) => (
+                <CustomEmojiButton key={`loose:${emoji.shortcode}:${emoji.url}`} emoji={emoji} onSelect={handleSelect} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {search !== "" && filteredCustomEmojis.length > 0 && (
+          <div>
+            <SectionHeader>カスタム絵文字</SectionHeader>
+            <div className="flex flex-wrap px-1">
+              {filteredCustomEmojis.map((emoji) => (
+                <CustomEmojiButton key={`search:${emoji.shortcode}:${emoji.url}`} emoji={emoji} onSelect={handleSelect} />
+              ))}
+            </div>
+          </div>
+        )}
+
         <EmojiPicker.List
           components={{
             CategoryHeader: ({ category, ...props }) => (
@@ -305,96 +234,6 @@ function UnicodeTab({
   );
 }
 
-/** 絵文字ピッカーの内部コンテンツ（isOpen時のみマウントされ、閉じるとアンマウント→stateリセット） */
-function EmojiPickerContent({
-  onClose,
-  onEmojiSelect,
-  recentEmojis,
-  emojiSets,
-  looseEmojis,
-}: {
-  onClose: () => void;
-  onEmojiSelect: (emoji: string, imageUrl?: string) => void;
-  recentEmojis?: RecentEmoji[];
-  emojiSets?: EmojiSet[];
-  looseEmojis?: CustomEmoji[];
-}) {
-  const [activeTab, setActiveTab] = useState<TabType>("recent");
-  const [search, setSearch] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
-
-  const hasCustom =
-    (emojiSets !== undefined && emojiSets.some((s) => s.emojis.length > 0)) ||
-    (looseEmojis !== undefined && looseEmojis.length > 0);
-
-  // タブ切替時に検索をリセット
-  const handleTabChange = useCallback((tab: TabType) => {
-    setActiveTab(tab);
-    setSearch("");
-  }, []);
-
-  // カスタムタブで検索ボックスに自動フォーカス
-  useEffect(() => {
-    if (activeTab === "custom") {
-      requestAnimationFrame(() => {
-        searchRef.current?.focus();
-      });
-    }
-  }, [activeTab]);
-
-  return (
-    <div>
-      <TabBar
-        activeTab={activeTab}
-        onTabChange={handleTabChange}
-        hasCustom={hasCustom}
-      />
-
-      {/* タブの中身 */}
-      <div style={{ height: 280 }}>
-        {activeTab === "recent" && (
-          <div className="overflow-y-auto h-full">
-            <RecentTab
-              recentEmojis={recentEmojis ?? []}
-              onEmojiSelect={onEmojiSelect}
-              onClose={onClose}
-            />
-          </div>
-        )}
-        {activeTab === "custom" && (
-          <div className="flex flex-col h-full">
-            <input
-              ref={searchRef}
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="カスタム絵文字を検索..."
-              autoCapitalize="off"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className="w-full px-3 py-2 text-sm border-b border-gray-200 dark:border-gray-700 bg-transparent outline-none text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 flex-shrink-0"
-            />
-            <div className="flex-1 overflow-y-auto">
-              <CustomTab
-                emojiSets={emojiSets ?? []}
-                looseEmojis={looseEmojis ?? []}
-                search={search}
-                onEmojiSelect={onEmojiSelect}
-                onClose={onClose}
-              />
-            </div>
-          </div>
-        )}
-        {activeTab === "unicode" && (
-          <UnicodeTab onEmojiSelect={onEmojiSelect} onClose={onClose} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** 絵文字ピッカーポップオーバーコンポーネント（Portal描画） */
 export function EmojiPickerPopover({
   isOpen,
   onClose,
@@ -405,18 +244,13 @@ export function EmojiPickerPopover({
   looseEmojis,
 }: EmojiPickerPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{
-    top: number;
-    left: number;
-    placement: "above" | "below";
-  }>({ top: 0, left: 0, placement: "above" });
+  const [position, setPosition] = useState<{ top: number; left: number; placement: "above" | "below" }>({ top: 0, left: 0, placement: "above" });
 
-  /** アンカー要素の位置からポップオーバーの位置を計算する（上下自動切り替え） */
   const updatePosition = useCallback(() => {
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
     const pickerWidth = Math.min(320, window.innerWidth * 0.9);
-    const pickerHeight = 360; // タブバー分を加算
+    const pickerHeight = 320;
     const gap = 8;
 
     let left = rect.left;
@@ -443,17 +277,13 @@ export function EmojiPickerPopover({
     }
   }, [anchorRef]);
 
-  // ピッカー外クリックで閉じる
   useEffect(() => {
     if (!isOpen) return;
 
     updatePosition();
 
     const handleMouseDown = (e: MouseEvent) => {
-      if (
-        popoverRef.current &&
-        !popoverRef.current.contains(e.target as Node)
-      ) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
         onClose();
       }
     };
@@ -485,10 +315,10 @@ export function EmojiPickerPopover({
       data-emoji-picker-popover
       style={{
         width: "min(320px, 90vw)",
+        maxHeight: "320px",
         top: position.top,
         left: position.left,
-        transform:
-          position.placement === "above" ? "translateY(-100%)" : undefined,
+        transform: position.placement === "above" ? "translateY(-100%)" : undefined,
         zIndex: 9999,
       }}
       onClick={(e) => e.stopPropagation()}
