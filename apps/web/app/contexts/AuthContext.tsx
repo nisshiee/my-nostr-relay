@@ -14,9 +14,11 @@ import {
   LoginCancelledError,
   LoginCoordinator,
   closeRemoteSignerWidget,
+  getExtensionProvider,
   openRemoteSignerWidget,
   requestPublicKey,
-  resolveNostrProvider,
+  resolveExtensionProvider,
+  resolveRemoteNostrProvider,
 } from "../lib/nostrLogin";
 import {
   activateSigner,
@@ -63,6 +65,7 @@ interface AuthContextValue {
   nip07Available: boolean | null;
   autoLoading: boolean;
   remoteLoading: boolean;
+  extensionLoading: boolean;
   loginError: string | null;
   loginMethod: NostrLoginMethod | null;
   login: () => Promise<void>;
@@ -80,10 +83,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [pubkey, setPubkey] = useState<string | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
   const [remoteLoading, setRemoteLoading] = useState(false);
+  const [extensionLoading, setExtensionLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginMethod, setLoginMethod] = useState<NostrLoginMethod | null>(null);
   const [nip07Available, setNip07Available] = useState<boolean | null>(() => {
-    if (typeof window !== "undefined" && window.nostr && !window.nostr.isWnj) {
+    if (typeof window !== "undefined" && getExtensionProvider()) {
       return true;
     }
     return null;
@@ -96,7 +100,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let elapsed = 0;
     const timer = setInterval(() => {
       elapsed += POLL_INTERVAL;
-      if (window.nostr && !window.nostr.isWnj) {
+      if (getExtensionProvider()) {
         setNip07Available(true);
         clearInterval(timer);
       } else if (elapsed >= POLL_TIMEOUT) {
@@ -132,13 +136,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  // 保存済みセッションは、拡張を優先したうえで同じ公開鍵だけを復元する。
+  // 保存済みremoteは拡張検出とは独立して、初回mount直後に復元する。
   useEffect(() => {
-    if (nip07Available === null || pubkey) return;
     const storedPubkey = getStoredPubkey();
-    if (!storedPubkey) return;
-    const storedMethod = getStoredMethod();
-    if (nip07Available === false && storedMethod !== "remote") return;
+    if (!storedPubkey || getStoredMethod() !== "remote") return;
 
     let mounted = true;
     const coordinator = coordinatorRef.current;
@@ -147,9 +148,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setAutoLoading(true);
     void coordinator
       .run(async (signal) => {
-        const resolved = nip07Available
-          ? { method: "extension" as const, provider: window.nostr! }
-          : await resolveNostrProvider({ signal });
+        const resolved = await resolveRemoteNostrProvider({ signal });
         await completeLogin(
           resolved.provider,
           resolved.method,
@@ -171,23 +170,59 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       mounted = false;
       coordinator.cancel();
     };
-  }, [completeLogin, nip07Available, pubkey]);
+  }, [completeLogin]);
+
+  // 保存済みextensionは実際に検出できた場合だけ自動復元する。
+  useEffect(() => {
+    if (nip07Available !== true) return;
+    const storedPubkey = getStoredPubkey();
+    if (!storedPubkey || getStoredMethod() !== "extension") return;
+
+    let mounted = true;
+    const coordinator = coordinatorRef.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setAutoLoading(true);
+    void coordinator
+      .run(async (signal) => {
+        const resolved = await resolveExtensionProvider({ signal });
+        await completeLogin(
+          resolved.provider,
+          resolved.method,
+          signal,
+          storedPubkey,
+        );
+      })
+      .catch((error: unknown) => {
+        if (!mounted || error instanceof LoginCancelledError) return;
+        clearActiveSigner();
+        removeStoredSession();
+        setLoginError(error instanceof Error ? error.message : "自動ログインに失敗しました");
+      })
+      .finally(() => {
+        if (mounted) setAutoLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+      coordinator.cancel();
+    };
+  }, [completeLogin, nip07Available]);
 
   const npub = useMemo(() => (pubkey ? nip19.npubEncode(pubkey) : null), [pubkey]);
 
   const login = useCallback(async () => {
     setLoginError(null);
+    setExtensionLoading(true);
     try {
       await coordinatorRef.current.run(async (signal) => {
-        const provider = window.nostr;
-        if (!provider || provider.isWnj) {
-          throw new Error("NIP-07拡張が見つかりません");
-        }
-        await completeLogin(provider, "extension", signal);
+        const resolved = await resolveExtensionProvider({ signal });
+        await completeLogin(resolved.provider, resolved.method, signal);
       });
     } catch (error) {
       if (error instanceof LoginCancelledError) return;
       setLoginError(error instanceof Error ? error.message : "ログインに失敗しました");
+    } finally {
+      setExtensionLoading(false);
     }
   }, [completeLogin]);
 
@@ -196,7 +231,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setRemoteLoading(true);
     try {
       await coordinatorRef.current.run(async (signal) => {
-        const resolved = await resolveNostrProvider({ signal });
+        const resolved = await resolveRemoteNostrProvider({ signal });
         await completeLogin(resolved.provider, resolved.method, signal);
       });
     } catch (error) {
@@ -212,6 +247,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     coordinatorRef.current.cancel();
     closeRemoteSignerWidget();
     setRemoteLoading(false);
+    setExtensionLoading(false);
     setLoginError(null);
   }, []);
 
@@ -229,6 +265,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoginMethod(null);
     setAutoLoading(false);
     setRemoteLoading(false);
+    setExtensionLoading(false);
   }, []);
 
   // window.nostr.js のDisconnectはアプリへ通知しないため、接続情報の削除を監視する。
@@ -265,6 +302,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       nip07Available,
       autoLoading,
       remoteLoading,
+      extensionLoading,
       loginError,
       loginMethod,
       login,
@@ -279,6 +317,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       nip07Available,
       autoLoading,
       remoteLoading,
+      extensionLoading,
       loginError,
       loginMethod,
       login,

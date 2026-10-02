@@ -4,9 +4,11 @@ import {
   LoginCancelledError,
   LoginCoordinator,
   closeRemoteSignerWidget,
+  getExtensionProvider,
   openRemoteSignerWidget,
   requestPublicKey,
-  resolveNostrProvider,
+  resolveExtensionProvider,
+  resolveRemoteNostrProvider,
   syncRemoteSignerWidget,
   type RemoteSignerWidgetSurface,
 } from "../nostrLogin";
@@ -68,34 +70,109 @@ function provider(overrides: Partial<Nostr> = {}): Nostr {
   };
 }
 
-describe("resolveNostrProvider", () => {
-  it("NIP-07拡張が存在するときはremoteを読み込まず拡張を優先する", async () => {
-    const extension = provider();
-    const loadRemote = vi.fn(async () => undefined);
+function nostrHost(initial?: Nostr): Window {
+  const host = {} as Window;
+  if (initial) host.nostr = initial;
+  return host;
+}
 
-    const result = await resolveNostrProvider({
-      getProvider: () => extension,
+describe("provider priority", () => {
+  it("NIP-07拡張が既に存在しても退避してremoteを開始する", async () => {
+    const extension = provider();
+    const remote = provider({ isWnj: true });
+    const host = nostrHost(extension);
+    const loadRemote = vi.fn(async () => undefined);
+    loadRemote.mockImplementation(async () => {
+      host.nostr = remote;
+    });
+
+    const result = await resolveRemoteNostrProvider({
+      host,
       loadRemote,
       signal: new AbortController().signal,
     });
 
-    expect(result).toEqual({ method: "extension", provider: extension });
-    expect(loadRemote).not.toHaveBeenCalled();
+    expect(result).toEqual({ method: "remote", provider: remote });
+    expect(loadRemote).toHaveBeenCalledOnce();
+    expect(getExtensionProvider(host)).toBe(extension);
   });
 
-  it("拡張がないときはwindow.nostr.jsの署名器を返す", async () => {
+  it("拡張がないときは待たずにwindow.nostr.jsを読み込む", async () => {
     const remote = provider({ isWnj: true });
-    let current: Nostr | undefined;
+    const host = nostrHost();
+    const loadRemote = vi.fn(async () => {
+      host.nostr = remote;
+    });
 
-    const result = await resolveNostrProvider({
-      getProvider: () => current,
-      loadRemote: async () => {
-        current = remote;
-      },
+    const result = await resolveRemoteNostrProvider({
+      host,
+      loadRemote,
       signal: new AbortController().signal,
     });
 
     expect(result).toEqual({ method: "remote", provider: remote });
+    expect(loadRemote).toHaveBeenCalledOnce();
+  });
+
+  it("保存済みremoteがあれば再読込せず即座に返す", async () => {
+    const remote = provider({ isWnj: true });
+    const host = nostrHost(remote);
+    const loadRemote = vi.fn(async () => undefined);
+
+    const result = await resolveRemoteNostrProvider({
+      host,
+      loadRemote,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.provider).toBe(remote);
+    expect(loadRemote).not.toHaveBeenCalled();
+  });
+
+  it("明示的にNIP-07を選んだ場合は既存拡張を返す", async () => {
+    const extension = provider();
+    const host = nostrHost(extension);
+
+    await expect(resolveExtensionProvider({
+      host,
+      signal: new AbortController().signal,
+    })).resolves.toEqual({ method: "extension", provider: extension });
+  });
+
+  it("遅れて注入された拡張を退避し、進行中のremoteを置き換えない", async () => {
+    let finishRemote: (pubkey: string) => void = () => undefined;
+    const remote = provider({
+      isWnj: true,
+      getPublicKey: vi.fn(() => new Promise<string>((resolve) => {
+        finishRemote = resolve;
+      })),
+    });
+    const extension = provider();
+    const host = nostrHost();
+    const remoteResult = await resolveRemoteNostrProvider({
+      host,
+      loadRemote: async () => {
+        host.nostr = remote;
+      },
+      signal: new AbortController().signal,
+    });
+    const publicKeyRequest = requestPublicKey(remote, {
+      signal: new AbortController().signal,
+      readRemotePointer: () => null,
+      pollIntervalMs: 1,
+    });
+
+    host.nostr = extension;
+    finishRemote("a".repeat(64));
+
+    expect(host.nostr).toBe(remote);
+    expect(remoteResult.provider).toBe(remote);
+    await expect(publicKeyRequest).resolves.toBe("a".repeat(64));
+    await expect(resolveExtensionProvider({
+      host,
+      signal: new AbortController().signal,
+      pollIntervalMs: 1,
+    })).resolves.toEqual({ method: "extension", provider: extension });
   });
 });
 
@@ -115,7 +192,7 @@ describe("LoginCoordinator", () => {
     await expect(second).resolves.toBe("second");
   });
 
-  it("接続キャンセル後の結果を受け入れない", async () => {
+  it("接続キャンセル後の結果を受け入れず、次の試行を開始できる", async () => {
     const coordinator = new LoginCoordinator();
     let finish: (value: string) => void = () => undefined;
     const attempt = coordinator.run(
@@ -128,6 +205,7 @@ describe("LoginCoordinator", () => {
     finish("late");
 
     await expect(attempt).rejects.toBeInstanceOf(LoginCancelledError);
+    await expect(coordinator.run(async () => "retry")).resolves.toBe("retry");
   });
 });
 

@@ -3,6 +3,10 @@ import type { NostrLoginMethod } from "./nostrSigner";
 
 const REMOTE_POINTER_KEY = "wnj:bunkerPointer";
 const WIDGET_MOUNT_ID = "wnj";
+const EXTENSION_TIMEOUT = 3000;
+const EXTENSION_PROVIDER = Symbol("nostr-extension-provider");
+
+type NostrWindow = Window & { [EXTENSION_PROVIDER]?: Nostr };
 
 export interface RemoteSignerWidgetSurface {
   host: HTMLElement;
@@ -94,7 +98,7 @@ export interface ResolvedNostrProvider {
 }
 
 interface ResolveProviderOptions {
-  getProvider?: () => Nostr | undefined;
+  host?: NostrWindow;
   loadRemote?: () => Promise<unknown>;
   signal: AbortSignal;
   pollIntervalMs?: number;
@@ -123,35 +127,111 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** 拡張があれば常に優先し、なければ固定依存の window.nostr.js を読み込む。 */
-export async function resolveNostrProvider({
-  getProvider = () => window.nostr,
+function rememberExtension(host: NostrWindow, provider: Nostr): void {
+  if (!provider.isWnj) host[EXTENSION_PROVIDER] = provider;
+}
+
+export function getExtensionProvider(
+  host: NostrWindow = window,
+): Nostr | undefined {
+  if (host[EXTENSION_PROVIDER]) return host[EXTENSION_PROVIDER];
+  if (host.nostr && !host.nostr.isWnj) return host.nostr;
+  return undefined;
+}
+
+/** remote 読込前に既存拡張を退避し、window.nostr.js が初期化できる状態にする。 */
+function prepareRemoteProvider(host: NostrWindow): void {
+  const current = host.nostr;
+  if (current?.isWnj) return;
+  if (current) rememberExtension(host, current);
+
+  const descriptor = Object.getOwnPropertyDescriptor(host, "nostr");
+  if (descriptor && !descriptor.configurable) {
+    throw new Error(
+      "ブラウザ拡張がwindow.nostrを固定しているため、リモート署名器を開始できません",
+    );
+  }
+
+  let remoteCandidate: Nostr | undefined;
+  Object.defineProperty(host, "nostr", {
+    configurable: true,
+    get: () => remoteCandidate,
+    set: (provider: Nostr) => {
+      if (provider.isWnj) remoteCandidate = provider;
+      else rememberExtension(host, provider);
+    },
+  });
+}
+
+/** remote provider を固定し、遅れて注入された拡張は明示選択用に退避する。 */
+function lockRemoteProvider(host: NostrWindow, remote: Nostr): void {
+  Object.defineProperty(host, "nostr", {
+    configurable: true,
+    get: () => remote,
+    set: (provider: Nostr) => {
+      if (provider !== remote) rememberExtension(host, provider);
+    },
+  });
+}
+
+/** NIP-46 を優先して固定依存の window.nostr.js を読み込む。 */
+export async function resolveRemoteNostrProvider({
+  host = window,
   loadRemote = () => import("window.nostr.js"),
   signal,
   pollIntervalMs = 50,
   timeoutMs = 5000,
 }: ResolveProviderOptions): Promise<ResolvedNostrProvider> {
-  const existing = getProvider();
-  if (existing && !existing.isWnj) {
-    return { method: "extension", provider: existing };
+  const existing = host.nostr;
+  if (existing?.isWnj) {
+    lockRemoteProvider(host, existing);
+    if (typeof document !== "undefined") manageRemoteSignerWidget();
+    return { method: "remote", provider: existing };
   }
-  if (!existing) {
+
+  prepareRemoteProvider(host);
+  if (!host.nostr) {
     await loadRemote();
   }
 
   const deadline = Date.now() + timeoutMs;
   while (!signal.aborted && Date.now() < deadline) {
-    const provider = getProvider();
-    if (provider) {
-      if (provider.isWnj && typeof document !== "undefined") {
+    const provider = host.nostr;
+    if (provider?.isWnj) {
+      lockRemoteProvider(host, provider);
+      if (typeof document !== "undefined") {
         manageRemoteSignerWidget();
       }
-      return { method: provider.isWnj ? "remote" : "extension", provider };
+      return { method: "remote", provider };
     }
     await wait(pollIntervalMs, signal);
   }
   if (signal.aborted) throw abortError();
   throw new Error("NIP-46ログイン画面を読み込めませんでした");
+}
+
+interface ResolveExtensionOptions {
+  host?: NostrWindow;
+  signal: AbortSignal;
+  pollIntervalMs?: number;
+  timeoutMs?: number;
+}
+
+/** 明示的に選ばれた NIP-07 拡張を、遅延注入も含めて解決する。 */
+export async function resolveExtensionProvider({
+  host = window,
+  signal,
+  pollIntervalMs = 50,
+  timeoutMs = EXTENSION_TIMEOUT,
+}: ResolveExtensionOptions): Promise<ResolvedNostrProvider> {
+  const deadline = Date.now() + timeoutMs;
+  while (!signal.aborted && Date.now() < deadline) {
+    const provider = getExtensionProvider(host);
+    if (provider) return { method: "extension", provider };
+    await wait(pollIntervalMs, signal);
+  }
+  if (signal.aborted) throw abortError();
+  throw new Error("NIP-07拡張が見つかりません");
 }
 
 interface RequestPublicKeyOptions {
