@@ -12,6 +12,7 @@ import {
   type BlossomUploadResponse,
 } from "../types/blossom";
 import { BLOSSOM_UPLOAD_URL, BLOSSOM_AUTH_EXPIRATION } from "./constants";
+import { signEventWithActiveSigner } from "./nostrSigner";
 
 /** ファイルのバリデーション */
 function validateFile(file: File): void {
@@ -50,12 +51,6 @@ async function createAuthEvent(
   file: File,
   sha256hex: string,
 ): Promise<string> {
-  if (!window.nostr) {
-    throw new Error(
-      "NIP-07拡張（nos2x等）が見つかりません。ブラウザ拡張をインストールしてください",
-    );
-  }
-
   const now = Math.floor(Date.now() / 1000);
   const expiration = now + BLOSSOM_AUTH_EXPIRATION;
 
@@ -72,7 +67,7 @@ async function createAuthEvent(
 
   let signedEvent: NostrEvent & { id: string; sig: string; pubkey: string };
   try {
-    signedEvent = await window.nostr.signEvent(unsignedEvent);
+    signedEvent = await signEventWithActiveSigner(unsignedEvent);
   } catch {
     throw new Error("署名が拒否されました。アップロードにはイベント署名が必要です");
   }

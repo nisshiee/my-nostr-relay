@@ -2,6 +2,7 @@ import React, { useState, useCallback } from "react";
 import type { Event } from "nostr-tools/core";
 import type { NoteCard, NostrProfile, Reactions } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
+import { signEventWithActiveSigner } from "../lib/nostrSigner";
 import { useNostrConnection } from "./useNostrConnection";
 import type { ConnectionStatus } from "./useNostrConnection";
 import { useNostrProfiles } from "./useNostrProfiles";
@@ -13,9 +14,6 @@ import { useCustomEmojis } from "./useCustomEmojis";
 import type { CustomEmoji, EmojiSet } from "./useCustomEmojis";
 import { SimplePool } from "nostr-tools/pool";
 import { BOOTSTRAP_EOSE_TIMEOUT, CLIENT_TAG } from "../lib/constants";
-
-/** NIP-07拡張(window.nostr)の署名済みイベント型 */
-type SignedNostrEvent = NostrEvent & { id: string; sig: string };
 
 interface UseNostrRelayResult {
   notes: NoteCard[];
@@ -157,12 +155,6 @@ export function useNostrRelay(
   /** NIP-25準拠のリアクションイベントを構築・署名・送信し、楽観的にUIを更新する */
   const sendReaction = useCallback(
     async (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => {
-      // NIP-07拡張の存在チェック
-      const nostrExt = (window as unknown as { nostr?: { signEvent: (event: Record<string, unknown>) => Promise<SignedNostrEvent> } }).nostr;
-      if (!nostrExt) {
-        throw new Error("NIP-07拡張（window.nostr）が見つかりません");
-      }
-
       // NIP-25準拠のkind:7イベントを構築
       const tags: string[][] = [
         ["e", targetEventId, "", targetPubkey],
@@ -186,8 +178,7 @@ export function useNostrRelay(
         created_at: Math.floor(Date.now() / 1000),
       };
 
-      // NIP-07拡張で署名
-      const signedEvent = await nostrExt.signEvent(unsignedEvent);
+      const signedEvent = await signEventWithActiveSigner(unsignedEvent);
 
       // リレーに送信
       await publishEvent(signedEvent as unknown as NostrEvent);
@@ -201,12 +192,6 @@ export function useNostrRelay(
   /** NIP-18準拠のリポストイベントを構築・署名・送信する */
   const sendRepost = useCallback(
     async (targetEventId: string, targetPubkey: string, originalEvent: NostrEvent) => {
-      // NIP-07拡張の存在チェック（sendReactionと同じパターン）
-      const nostrExt = (window as unknown as { nostr?: { signEvent: (event: Record<string, unknown>) => Promise<SignedNostrEvent> } }).nostr;
-      if (!nostrExt) {
-        throw new Error("NIP-07拡張（window.nostr）が見つかりません");
-      }
-
       // NIP-18準拠のkind:6リポストイベントを構築
       const unsignedEvent = {
         kind: 6,
@@ -219,8 +204,7 @@ export function useNostrRelay(
         created_at: Math.floor(Date.now() / 1000),
       };
 
-      // NIP-07拡張で署名
-      const signedEvent = await nostrExt.signEvent(unsignedEvent);
+      const signedEvent = await signEventWithActiveSigner(unsignedEvent);
 
       // リレーに送信
       await publishEvent(signedEvent as unknown as NostrEvent);

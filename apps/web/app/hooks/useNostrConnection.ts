@@ -9,6 +9,7 @@ import {
   MAX_WAIT_FOR_CONNECTION,
 } from "../lib/constants";
 import type { NostrEvent } from "../types/nostr";
+import { signEventWithActiveSigner } from "../lib/nostrSigner";
 
 export type ConnectionStatus = "connecting" | "loading" | "connected" | "error";
 
@@ -68,11 +69,6 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
       throw new Error("フォロー状態を更新できませんでした。接続を確認してください");
     }
 
-    const nostrExt = window.nostr;
-    if (!nostrExt) {
-      throw new Error("NIP-07拡張（window.nostr）が見つかりません");
-    }
-
     const latestContactEvent = await fetchLatestContactEvent();
     const baseTags = latestContactEvent?.tags ?? [CLIENT_TAG];
     const nonPTags = baseTags.filter((tag) => tag[0] !== "p");
@@ -103,7 +99,7 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
       created_at: Math.floor(Date.now() / 1000),
     };
 
-    const signedEvent = await nostrExt.signEvent(unsignedEvent);
+    const signedEvent = await signEventWithActiveSigner(unsignedEvent);
     const results = await Promise.allSettled(
       currentPool.publish(currentRelays, signedEvent as Event),
     );

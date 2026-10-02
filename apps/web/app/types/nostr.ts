@@ -10,14 +10,22 @@ export interface NostrEvent {
   sig?: string;
 }
 
+export type SignedNostrEvent = NostrEvent & {
+  id: string;
+  sig: string;
+  pubkey: string;
+};
+
 declare global {
   interface Nostr {
+    /** window.nostr.js が提供する署名器かどうか */
+    isWnj?: boolean;
     getPublicKey(): Promise<string>;
-    signEvent(
-      event: NostrEvent,
-    ): Promise<NostrEvent & { id: string; sig: string; pubkey: string }>;
+    signEvent(event: NostrEvent): Promise<SignedNostrEvent>;
   }
   interface Window {
     nostr?: Nostr;
   }
 }
+
+export type { Nostr };

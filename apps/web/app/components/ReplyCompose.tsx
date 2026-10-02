@@ -7,6 +7,7 @@ import type { NostrEvent } from "../types/nostr";
 import { useImageUpload } from "../hooks/useImageUpload";
 import { CLIENT_TAG } from "../lib/constants";
 import { extractHashtags } from "../lib/hashtags";
+import { signEventWithActiveSigner } from "../lib/nostrSigner";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -153,11 +154,6 @@ export function ReplyCompose({
     setPublishing(true);
 
     try {
-      const nostr = window.nostr;
-      if (!nostr) {
-        throw new Error("NIP-07 拡張機能が見つかりません");
-      }
-
       const tags = [...buildReplyTags(), CLIENT_TAG];
       for (const tag of extractHashtags(trimmed)) {
         tags.push(["t", tag]);
@@ -170,7 +166,7 @@ export function ReplyCompose({
         content: trimmed,
       };
 
-      const signedEvent = await nostr.signEvent(unsignedEvent);
+      const signedEvent = await signEventWithActiveSigner(unsignedEvent);
 
       const noteCard = {
         eventId: signedEvent.id,
