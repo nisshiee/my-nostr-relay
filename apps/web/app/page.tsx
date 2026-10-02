@@ -15,9 +15,11 @@ export default function Home() {
     autoLoading,
     remoteLoading,
     loginError,
+    loginMethod,
     login,
     loginRemote,
     cancelLogin,
+    manageRemoteSigner,
     logout,
   } = useAuth();
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
@@ -70,6 +72,8 @@ export default function Home() {
         sendRepost={sendRepost}
         cache={cache}
         onLogout={logout}
+        showSignerControl={loginMethod === "remote"}
+        onManageSigner={manageRemoteSigner}
         isProcessing={isProcessing}
         recentEmojis={recentEmojis}
         emojiSets={emojiSets}

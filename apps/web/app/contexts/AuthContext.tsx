@@ -13,6 +13,8 @@ import { nip19 } from "nostr-tools";
 import {
   LoginCancelledError,
   LoginCoordinator,
+  closeRemoteSignerWidget,
+  openRemoteSignerWidget,
   requestPublicKey,
   resolveNostrProvider,
 } from "../lib/nostrLogin";
@@ -62,8 +64,10 @@ interface AuthContextValue {
   autoLoading: boolean;
   remoteLoading: boolean;
   loginError: string | null;
+  loginMethod: NostrLoginMethod | null;
   login: () => Promise<void>;
   loginRemote: () => Promise<void>;
+  manageRemoteSigner: () => void;
   cancelLogin: () => void;
   logout: () => void;
 }
@@ -206,8 +210,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const cancelLogin = useCallback(() => {
     coordinatorRef.current.cancel();
+    closeRemoteSignerWidget();
     setRemoteLoading(false);
     setLoginError(null);
+  }, []);
+
+  const manageRemoteSigner = useCallback(() => {
+    if (!openRemoteSignerWidget()) {
+      setLoginError("リモート署名器の管理画面を開けませんでした");
+    }
   }, []);
 
   const logout = useCallback(() => {
@@ -255,8 +266,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       autoLoading,
       remoteLoading,
       loginError,
+      loginMethod,
       login,
       loginRemote,
+      manageRemoteSigner,
       cancelLogin,
       logout,
     }),
@@ -267,8 +280,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       autoLoading,
       remoteLoading,
       loginError,
+      loginMethod,
       login,
       loginRemote,
+      manageRemoteSigner,
       cancelLogin,
       logout,
     ],

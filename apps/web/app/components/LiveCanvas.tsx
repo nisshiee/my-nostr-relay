@@ -51,6 +51,8 @@ interface LiveCanvasProps {
   /** EventCache インスタンス（引用ノード表示用） */
   cache: EventCache;
   onLogout: () => void;
+  showSignerControl: boolean;
+  onManageSigner: () => void;
   isProcessing: boolean;
   recentEmojis: RecentEmoji[];
   emojiSets: EmojiSet[];
@@ -67,7 +69,7 @@ function calcColumnCount(width: number): number {
   return Math.max(1, Math.floor(width / COLUMN_WIDTH));
 }
 
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [columnCount, setColumnCount] = useState(1);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
   const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
@@ -326,7 +328,14 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
           >
-            <CanvasHeader status={status} npub={npub} onAddDraft={addDraft} onLogout={onLogout} />
+            <CanvasHeader
+              status={status}
+              npub={npub}
+              onAddDraft={addDraft}
+              onLogout={onLogout}
+              showSignerControl={showSignerControl}
+              onManageSigner={onManageSigner}
+            />
           </motion.div>
         )}
       </AnimatePresence>

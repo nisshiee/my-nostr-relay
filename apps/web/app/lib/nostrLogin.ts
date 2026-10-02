@@ -2,6 +2,84 @@ import type { Nostr } from "../types/nostr";
 import type { NostrLoginMethod } from "./nostrSigner";
 
 const REMOTE_POINTER_KEY = "wnj:bunkerPointer";
+const WIDGET_MOUNT_ID = "wnj";
+
+export interface RemoteSignerWidgetSurface {
+  host: HTMLElement;
+  mount: HTMLElement;
+  root: ShadowRoot;
+}
+
+let managedWidgetHost: HTMLElement | null = null;
+let widgetObserver: MutationObserver | null = null;
+
+function findRemoteSignerWidget(): RemoteSignerWidgetSurface | null {
+  for (const child of Array.from(document.body.children)) {
+    const host = child as HTMLElement;
+    const root = host.shadowRoot;
+    const mount = root?.getElementById(WIDGET_MOUNT_ID);
+    if (root && mount) return { host, mount, root };
+  }
+  return null;
+}
+
+function isWidgetOpen(root: ShadowRoot): boolean {
+  return root.querySelector(".animate-show") !== null;
+}
+
+/** 開いている間だけ upstream UI を表示し、閉じたフローティングバッジは隠す。 */
+export function syncRemoteSignerWidget(
+  surface: RemoteSignerWidgetSurface,
+): void {
+  const opened = isWidgetOpen(surface.root);
+  surface.host.style.display = opened ? "" : "none";
+  surface.host.setAttribute("aria-hidden", opened ? "false" : "true");
+}
+
+export function manageRemoteSignerWidget(): boolean {
+  const surface = findRemoteSignerWidget();
+  if (!surface) return false;
+
+  if (managedWidgetHost !== surface.host) {
+    widgetObserver?.disconnect();
+    managedWidgetHost = surface.host;
+    widgetObserver = new MutationObserver(() => syncRemoteSignerWidget(surface));
+    widgetObserver.observe(surface.mount, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+  }
+  syncRemoteSignerWidget(surface);
+  return true;
+}
+
+/** ヘッダーのボタンから NIP-46 の接続・アカウント管理画面を開く。 */
+export function openRemoteSignerWidget(): boolean {
+  const surface = findRemoteSignerWidget();
+  if (!surface) return false;
+  manageRemoteSignerWidget();
+
+  if (isWidgetOpen(surface.root)) {
+    (surface.root.querySelector("button") as HTMLButtonElement | null)?.focus();
+    return true;
+  }
+
+  surface.mount.dispatchEvent(
+    new MouseEvent("click", { bubbles: true, composed: true }),
+  );
+  return true;
+}
+
+/** アプリ側のキャンセル操作を upstream UI の接続中断にも反映する。 */
+export function closeRemoteSignerWidget(): void {
+  const surface = findRemoteSignerWidget();
+  if (!surface) return;
+  const closeButton = Array.from(surface.root.querySelectorAll("button")).find(
+    (button) => button.textContent?.trim() === "⤫",
+  ) as HTMLButtonElement | undefined;
+  closeButton?.click();
+}
 
 export class LoginCancelledError extends Error {
   constructor() {
@@ -65,6 +143,9 @@ export async function resolveNostrProvider({
   while (!signal.aborted && Date.now() < deadline) {
     const provider = getProvider();
     if (provider) {
+      if (provider.isWnj && typeof document !== "undefined") {
+        manageRemoteSignerWidget();
+      }
       return { method: provider.isWnj ? "remote" : "extension", provider };
     }
     await wait(pollIntervalMs, signal);
@@ -150,4 +231,3 @@ export class LoginCoordinator {
     }
   }
 }
-
