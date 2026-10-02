@@ -10,6 +10,7 @@ import { QuoteNode } from "./content/QuoteNode";
 import { encodeNevent, decodeNevent, decodeNote } from "../lib/nip19";
 import { CLIENT_TAG } from "../lib/constants";
 import { extractHashtags } from "../lib/hashtags";
+import { signEventWithActiveSigner } from "../lib/nostrSigner";
 
 /** npubの省略表示を生成 */
 function shortenPubkey(pubkey: string): string {
@@ -198,11 +199,6 @@ export function ComposeCard({
     setPublishing(true);
 
     try {
-      const nostr = window.nostr;
-      if (!nostr) {
-        throw new Error("NIP-07 拡張機能が見つかりません");
-      }
-
       const neventUri = internalQuotedEvent
         ? `nostr:${encodeNevent(internalQuotedEvent.eventId, internalQuotedEvent.pubkey)}`
         : null;
@@ -222,7 +218,7 @@ export function ComposeCard({
         content: finalContent,
       };
 
-      const signedEvent = await nostr.signEvent(unsignedEvent);
+      const signedEvent = await signEventWithActiveSigner(unsignedEvent);
 
       const noteCard: NoteCard = {
         type: "note",
