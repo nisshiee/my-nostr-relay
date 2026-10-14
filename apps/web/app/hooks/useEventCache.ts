@@ -3,6 +3,10 @@ import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { Filter } from "nostr-tools/filter";
 import { BOOTSTRAP_EOSE_TIMEOUT } from "../lib/constants";
+import {
+  resolveRelayTargets,
+  type ExternalRelayCandidate,
+} from "../lib/relayUrlPolicy";
 
 // ---------------------------------------------------------------------------
 // 型定義
@@ -11,7 +15,7 @@ import { BOOTSTRAP_EOSE_TIMEOUT } from "../lib/constants";
 export interface EventCache {
   fetchEvents(
     filter: Filter,
-    opts?: { relayHints?: string[]; maxWait?: number },
+    opts?: { relayCandidates?: readonly ExternalRelayCandidate[]; maxWait?: number },
   ): Promise<Event[]>;
   addEvents(events: Event[]): void;
   getEvent(id: string): Event | undefined;
@@ -37,7 +41,7 @@ function filterKey(filter: Filter): string {
  * - 内部に `Map<string, Event>` のイベントキャッシュを保持
  * - 同一 Filter に対する重複 querySync を inflight Map で排除
  * - subscribe で受信したイベントを addEvents で追加可能
- * - relayHints 指定時は通常リレー + ヒントリレーで querySync
+ * - external relay candidate 指定時は検証済みヒントだけを通常リレーと結合
  *
  * @param pool        SimplePool インスタンス
  * @param relayUrls   接続先リレーURL配列
@@ -101,7 +105,7 @@ export function useEventCache(
   const fetchEvents = useCallback(
     async (
       filter: Filter,
-      opts?: { relayHints?: string[]; maxWait?: number },
+      opts?: { relayCandidates?: readonly ExternalRelayCandidate[]; maxWait?: number },
     ): Promise<Event[]> => {
       const currentPool = poolRef.current;
       const currentRelayUrls = relayUrlsRef.current;
@@ -112,6 +116,10 @@ export function useEventCache(
 
       const cache = eventCacheRef.current;
       const maxWait = opts?.maxWait ?? BOOTSTRAP_EOSE_TIMEOUT;
+      const targetRelays = resolveRelayTargets(
+        currentRelayUrls,
+        opts?.relayCandidates,
+      ).relayUrls;
 
       // -----------------------------------------------------------------
       // ids 指定の場合: キャッシュヒット分を除外して残りだけ fetch
@@ -136,7 +144,13 @@ export function useEventCache(
 
         // 不足分のみ querySync
         const fetchFilter: Filter = { ...filter, ids: missingIds };
-        const fetched = await doFetch(currentPool, currentRelayUrls, fetchFilter, maxWait, opts?.relayHints);
+        const fetched = await doFetch(
+          currentPool,
+          currentRelayUrls,
+          fetchFilter,
+          maxWait,
+          opts?.relayCandidates,
+        );
 
         // キャッシュに追加
         for (const event of fetched) {
@@ -149,7 +163,7 @@ export function useEventCache(
       // -----------------------------------------------------------------
       // ids 指定なし（authors + kinds 等の一般フィルター）
       // -----------------------------------------------------------------
-      const key = filterKey(filter);
+      const key = requestKey(filter, targetRelays, maxWait);
       const existing = inflightRef.current.get(key);
       if (existing) {
         return existing;
@@ -157,7 +171,13 @@ export function useEventCache(
 
       const promise = (async (): Promise<Event[]> => {
         try {
-          const fetched = await doFetch(currentPool, currentRelayUrls, filter, maxWait, opts?.relayHints);
+          const fetched = await doFetch(
+            currentPool,
+            currentRelayUrls,
+            filter,
+            maxWait,
+            opts?.relayCandidates,
+          );
 
           // キャッシュに追加
           for (const event of fetched) {
@@ -191,19 +211,30 @@ export function useEventCache(
 // ---------------------------------------------------------------------------
 
 /**
- * pool.querySync を実行する。relayHints がある場合は通常リレーとマージする。
+ * pool.querySync の直前に外部候補を検証し、configured relay と結合する。
  */
-async function doFetch(
+export async function doFetch(
   pool: SimplePool,
-  relayUrls: string[],
+  configuredRelays: readonly string[],
   filter: Filter,
   maxWait: number,
-  relayHints?: string[],
+  relayCandidates?: readonly ExternalRelayCandidate[],
 ): Promise<Event[]> {
-  const targetRelays =
-    relayHints && relayHints.length > 0
-      ? [...new Set([...relayHints, ...relayUrls])]
-      : relayUrls;
-
+  const targetRelays = resolveRelayTargets(
+    configuredRelays,
+    relayCandidates,
+  ).relayUrls;
   return pool.querySync(targetRelays, filter, { maxWait });
+}
+
+function requestKey(
+  filter: Filter,
+  targetRelays: string[],
+  maxWait: number,
+): string {
+  return JSON.stringify({
+    filter: filterKey(filter),
+    targetRelays,
+    maxWait,
+  });
 }

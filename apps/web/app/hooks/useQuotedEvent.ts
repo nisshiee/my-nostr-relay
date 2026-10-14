@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import type { Event } from "nostr-tools/core";
 import { parseNostrUri } from "../lib/nip19";
 import type { NostrProfile } from "../lib/types";
+import type { ExternalRelayCandidate } from "../lib/relayUrlPolicy";
 import type { EventCache } from "./useEventCache";
 
 // ---------------------------------------------------------------------------
@@ -19,20 +20,23 @@ export interface UseQuotedEventResult {
 // 内部ヘルパー
 // ---------------------------------------------------------------------------
 
-/** URI をデコードして eventId / relayHints を抽出する（純粋関数） */
+/** URI をデコードして eventId / 出自付きリレー候補を抽出する（純粋関数） */
 function decodeUri(nostrUri: string | null | undefined): {
   eventId: string;
-  relayHints: string[];
+  relayCandidates: ExternalRelayCandidate[];
 } | null {
   if (!nostrUri) return null;
   const decoded = parseNostrUri(nostrUri);
   if (!decoded || decoded.type === "naddr") return null;
   const eventId = decoded.data.eventId;
-  const relayHints =
+  const relayCandidates =
     decoded.type === "nevent" && decoded.data.relays
-      ? decoded.data.relays
+      ? decoded.data.relays.map((rawUrl) => ({
+          rawUrl,
+          origin: { kind: "nevent" } as const,
+        }))
       : [];
-  return { eventId, relayHints };
+  return { eventId, relayCandidates };
 }
 
 // ---------------------------------------------------------------------------
@@ -75,8 +79,8 @@ export function useQuotedEvent(
     cache
       .fetchEvents(
         { ids: [decoded.eventId] },
-        decoded.relayHints.length > 0
-          ? { relayHints: decoded.relayHints }
+        decoded.relayCandidates.length > 0
+          ? { relayCandidates: decoded.relayCandidates }
           : undefined,
       )
       .then((events) => {
