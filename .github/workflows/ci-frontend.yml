@@ -3,9 +3,13 @@ name: Frontend CI
 on:
   push:
     branches: [main]
-    paths: ['apps/web/**']
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/ci-frontend.yml'
   pull_request:
-    paths: ['apps/web/**']
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/ci-frontend.yml'
 
 jobs:
   frontend-ci:
@@ -24,5 +28,7 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
+      - name: テスト
+        run: npm test
       - name: ビルド
         run: npm run build

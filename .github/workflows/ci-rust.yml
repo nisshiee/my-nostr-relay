@@ -3,13 +3,26 @@ name: Rust CI
 on:
   push:
     branches: [main]
-    paths: ['services/relay/**']
+    paths:
+      - 'services/relay/**'
+      - 'deploy/**'
+      - '.github/workflows/ci-rust.yml'
+      - '.github/workflows/deploy.yml'
   pull_request:
-    paths: ['services/relay/**']
+    paths:
+      - 'services/relay/**'
+      - 'deploy/**'
+      - '.github/workflows/ci-rust.yml'
+      - '.github/workflows/deploy.yml'
 
 jobs:
   rust-ci:
     runs-on: ubuntu-24.04-arm
+    services:
+      dynamodb-local:
+        image: amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86
+        ports:
+          - 8000:8000
     defaults:
       run:
         working-directory: services/relay
@@ -26,5 +39,7 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: テスト
         run: cargo test
+      - name: DynamoDB Localテスト
+        run: cargo test --features dynamo store::dynamo::tests
       - name: 本番バイナリビルド
-        run: cargo build --release --target aarch64-unknown-linux-musl --features dynamo
+        run: cargo build --locked --release --target aarch64-unknown-linux-musl --features dynamo

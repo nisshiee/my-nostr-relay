@@ -1,12 +1,10 @@
 name: Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [Rust CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'services/relay/**'
-      - 'deploy/**'
-  workflow_dispatch: # 手動デプロイ（任意のブランチから実行可能）
 
 permissions:
   id-token: write
@@ -14,24 +12,43 @@ permissions:
 
 jobs:
   deploy:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04-arm # ARM64ネイティブランナー
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 2
+
+      - name: 配布対象の変更を確認
+        id: deploy-changes
+        run: |
+          if git diff --quiet HEAD^ HEAD -- services/relay deploy; then
+            echo 'required=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'required=true' >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install musl-tools
+        if: steps.deploy-changes.outputs.required == 'true'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Setup Cargo cache
+        if: steps.deploy-changes.outputs.required == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: services/relay
 
       - name: Build relay binary
+        if: steps.deploy-changes.outputs.required == 'true'
         working-directory: services/relay
-        run: cargo build --release --target aarch64-unknown-linux-musl --features dynamo
+        run: cargo build --locked --release --target aarch64-unknown-linux-musl --features dynamo
 
       - name: Configure AWS credentials
+        if: steps.deploy-changes.outputs.required == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::426192960050:role/nostr-relay-github-actions-deploy
@@ -39,16 +56,19 @@ jobs:
           aws-region: ap-northeast-1
 
       - name: Upload binary to S3
+        if: steps.deploy-changes.outputs.required == 'true'
         run: |
           aws s3 cp services/relay/target/aarch64-unknown-linux-musl/release/relay \
             s3://nostr-relay-binary-426192960050/relay-v2/relay
 
       - name: Upload env file to S3
+        if: steps.deploy-changes.outputs.required == 'true'
         run: |
           aws s3 cp deploy/relay-v2.env \
             s3://nostr-relay-binary-426192960050/relay-v2/env
 
       - name: SSH秘密鍵の設定
+        if: steps.deploy-changes.outputs.required == 'true'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
@@ -56,6 +76,7 @@ jobs:
           ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: SSH経由でデプロイ
+        if: steps.deploy-changes.outputs.required == 'true'
         run: |
           ssh -o StrictHostKeyChecking=accept-new deploy@${{ secrets.EC2_HOST }} \
             'doas /usr/local/bin/nostr-relay-deploy.sh'
