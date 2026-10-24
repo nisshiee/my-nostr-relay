@@ -562,68 +562,238 @@ impl EventStore for DynamoEventStore {
 mod tests {
     use super::*;
     use crate::test_helpers::{create_custom_event, create_test_event};
+    use aws_sdk_dynamodb::config::{Credentials, Region};
+    use aws_sdk_dynamodb::types::{
+        AttributeDefinition, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection,
+        ProjectionType, ProvisionedThroughput, ScalarAttributeType, TableStatus,
+    };
     use aws_sdk_dynamodb::{Client as DynamoClient, Config as DynamoConfig};
     use serial_test::serial;
 
-    async fn create_test_dynamo_store() -> DynamoEventStore {
+    async fn create_test_dynamo_store() -> (DynamoEventStore, DynamoClient, String) {
+        let endpoint = std::env::var("DYNAMODB_LOCAL_ENDPOINT")
+            .unwrap_or_else(|_| "http://localhost:8000".to_string());
         let config = DynamoConfig::builder()
-            .endpoint_url("http://localhost:8000")
+            .endpoint_url(endpoint)
+            .region(Region::new("ap-northeast-1"))
+            .credentials_provider(Credentials::new(
+                "DUMMYIDEXAMPLE",
+                "DUMMYEXAMPLEKEY",
+                None,
+                None,
+                "dynamodb-local-tests",
+            ))
             .behavior_version(aws_sdk_dynamodb::config::BehaviorVersion::latest())
             .build();
         let client = DynamoClient::from_conf(config);
+        let table_name = format!("test_nostr_relay_events_{}", uuid::Uuid::now_v7().simple());
 
-        DynamoEventStore::new_with_client(client, "test_nostr_relay_events".to_string())
+        let throughput = || {
+            ProvisionedThroughput::builder()
+                .read_capacity_units(5)
+                .write_capacity_units(5)
+                .build()
+                .expect("テスト用ProvisionedThroughputを作成できること")
+        };
+        let projection = || {
+            Projection::builder()
+                .projection_type(ProjectionType::All)
+                .build()
+        };
+
+        client
+            .create_table()
+            .table_name(&table_name)
+            .attribute_definitions(
+                AttributeDefinition::builder()
+                    .attribute_name("id")
+                    .attribute_type(ScalarAttributeType::S)
+                    .build()
+                    .expect("id属性定義を作成できること"),
+            )
+            .attribute_definitions(
+                AttributeDefinition::builder()
+                    .attribute_name("created_at")
+                    .attribute_type(ScalarAttributeType::N)
+                    .build()
+                    .expect("created_at属性定義を作成できること"),
+            )
+            .attribute_definitions(
+                AttributeDefinition::builder()
+                    .attribute_name("pk_kind")
+                    .attribute_type(ScalarAttributeType::S)
+                    .build()
+                    .expect("pk_kind属性定義を作成できること"),
+            )
+            .attribute_definitions(
+                AttributeDefinition::builder()
+                    .attribute_name("pk_kind_d")
+                    .attribute_type(ScalarAttributeType::S)
+                    .build()
+                    .expect("pk_kind_d属性定義を作成できること"),
+            )
+            .key_schema(
+                KeySchemaElement::builder()
+                    .attribute_name("id")
+                    .key_type(KeyType::Hash)
+                    .build()
+                    .expect("主キー定義を作成できること"),
+            )
+            .global_secondary_indexes(
+                GlobalSecondaryIndex::builder()
+                    .index_name("GSI-PkKind")
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name("pk_kind")
+                            .key_type(KeyType::Hash)
+                            .build()
+                            .expect("GSI-PkKindのhash keyを作成できること"),
+                    )
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name("created_at")
+                            .key_type(KeyType::Range)
+                            .build()
+                            .expect("GSI-PkKindのrange keyを作成できること"),
+                    )
+                    .projection(projection())
+                    .provisioned_throughput(throughput())
+                    .build()
+                    .expect("GSI-PkKindを作成できること"),
+            )
+            .global_secondary_indexes(
+                GlobalSecondaryIndex::builder()
+                    .index_name("GSI-PkKindD")
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name("pk_kind_d")
+                            .key_type(KeyType::Hash)
+                            .build()
+                            .expect("GSI-PkKindDのhash keyを作成できること"),
+                    )
+                    .key_schema(
+                        KeySchemaElement::builder()
+                            .attribute_name("created_at")
+                            .key_type(KeyType::Range)
+                            .build()
+                            .expect("GSI-PkKindDのrange keyを作成できること"),
+                    )
+                    .projection(projection())
+                    .provisioned_throughput(throughput())
+                    .build()
+                    .expect("GSI-PkKindDを作成できること"),
+            )
+            .provisioned_throughput(throughput())
+            .send()
+            .await
+            .expect("DynamoDB Localにテスト用テーブルを作成できること");
+
+        for _ in 0..50 {
+            let table = client
+                .describe_table()
+                .table_name(&table_name)
+                .send()
+                .await
+                .expect("DynamoDB Localのテスト用テーブルを確認できること");
+            if table.table().and_then(|table| table.table_status()) == Some(&TableStatus::Active) {
+                let store = DynamoEventStore::new_with_client(client.clone(), table_name.clone());
+                return (store, client, table_name);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        panic!("DynamoDB Localのテスト用テーブルがACTIVEになりませんでした");
+    }
+
+    async fn delete_test_table(client: &DynamoClient, table_name: &str) {
+        client
+            .delete_table()
+            .table_name(table_name)
+            .send()
+            .await
+            .expect("DynamoDB Localのテスト用テーブルを削除できること");
     }
 
     #[tokio::test]
     #[serial]
     async fn test_dynamo_event_store_save_regular_event() {
-        let store = create_test_dynamo_store().await;
+        let (store, client, table_name) = create_test_dynamo_store().await;
         let event = create_test_event();
         let verified = event.clone().verify().unwrap();
 
-        let result = store.save(&verified).await;
+        let result = store.save(&verified).await.unwrap();
+        assert_eq!(result, SaveResult::Saved);
 
-        if result.is_err() {
-            eprintln!("DynamoDB Local not available, skipping test");
-            return;
-        }
+        let persisted = client
+            .get_item()
+            .table_name(&table_name)
+            .key("id", AttributeValue::S(event.id.to_string()))
+            .send()
+            .await
+            .unwrap()
+            .item;
+        assert!(
+            persisted.is_some(),
+            "イベントがDynamoDB Localに保存されること"
+        );
 
-        assert_eq!(result.unwrap(), SaveResult::Saved);
-
-        let results = store
+        let reloaded_store = DynamoEventStore::new_with_client(client.clone(), table_name.clone());
+        reloaded_store.load_recent_events(u64::MAX).await.unwrap();
+        let results = reloaded_store
             .query(&[crate::models::Filter::default()])
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0], event);
+
+        delete_test_table(&client, &table_name).await;
     }
 
     #[tokio::test]
     #[serial]
     async fn test_dynamo_event_store_replaceable_event() {
-        let store = create_test_dynamo_store().await;
+        let (store, client, table_name) = create_test_dynamo_store().await;
 
         let old_event = create_custom_event(0, 1000, "old profile", vec![]);
-        let verified_old = old_event.verify().unwrap();
+        let verified_old = old_event.clone().verify().unwrap();
 
-        let result1 = store.save(&verified_old).await;
-        if result1.is_err() {
-            eprintln!("DynamoDB Local not available, skipping test");
-            return;
-        }
-        assert_eq!(result1.unwrap(), SaveResult::Saved);
+        let result1 = store.save(&verified_old).await.unwrap();
+        assert_eq!(result1, SaveResult::Saved);
 
         let new_event = create_custom_event(0, 2000, "new profile", vec![]);
         let verified_new = new_event.clone().verify().unwrap();
         let result2 = store.save(&verified_new).await.unwrap();
         assert_eq!(result2, SaveResult::Replaced);
 
-        let results = store
+        let old_persisted = client
+            .get_item()
+            .table_name(&table_name)
+            .key("id", AttributeValue::S(old_event.id.to_string()))
+            .send()
+            .await
+            .unwrap()
+            .item;
+        assert!(old_persisted.is_none(), "置換前イベントが削除されること");
+
+        let new_persisted = client
+            .get_item()
+            .table_name(&table_name)
+            .key("id", AttributeValue::S(new_event.id.to_string()))
+            .send()
+            .await
+            .unwrap()
+            .item;
+        assert!(new_persisted.is_some(), "置換後イベントが保存されること");
+
+        let reloaded_store = DynamoEventStore::new_with_client(client.clone(), table_name.clone());
+        reloaded_store.load_recent_events(u64::MAX).await.unwrap();
+        let results = reloaded_store
             .query(&[crate::models::Filter::default()])
             .await
             .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].content, "new profile");
+
+        delete_test_table(&client, &table_name).await;
     }
 }
