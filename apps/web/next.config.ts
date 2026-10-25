@@ -1,7 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  turbopack: {
+    // 複数のlockfileがあるリポジトリでもWebアプリをrootとして解決する
+    root: __dirname,
+  },
 };
 
 export default nextConfig;
