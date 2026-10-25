@@ -3,7 +3,7 @@ import { resolve } from "path";
 
 export default defineConfig({
   test: {
-    include: ["app/**/__tests__/**/*.test.ts"],
+    include: ["app/**/__tests__/**/*.test.{ts,tsx}"],
     globals: true,
   },
   resolve: {
