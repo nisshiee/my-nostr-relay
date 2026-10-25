@@ -139,6 +139,33 @@ describe("provider priority", () => {
     })).resolves.toEqual({ method: "extension", provider: extension });
   });
 
+  it("遅れて注入されたNIP-07拡張を待って返す", async () => {
+    const extension = provider();
+    const host = nostrHost();
+    const result = resolveExtensionProvider({
+      host,
+      signal: new AbortController().signal,
+      pollIntervalMs: 1,
+    });
+
+    host.nostr = extension;
+
+    await expect(result).resolves.toEqual({ method: "extension", provider: extension });
+  });
+
+  it("NIP-07拡張の待機をキャンセルできる", async () => {
+    const controller = new AbortController();
+    const result = resolveExtensionProvider({
+      host: nostrHost(),
+      signal: controller.signal,
+      pollIntervalMs: 1,
+    });
+
+    controller.abort();
+
+    await expect(result).rejects.toBeInstanceOf(LoginCancelledError);
+  });
+
   it("遅れて注入された拡張を退避し、進行中のremoteを置き換えない", async () => {
     let finishRemote: (pubkey: string) => void = () => undefined;
     const remote = provider({
