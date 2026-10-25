@@ -86,16 +86,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [extensionLoading, setExtensionLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginMethod, setLoginMethod] = useState<NostrLoginMethod | null>(null);
-  const [nip07Available, setNip07Available] = useState<boolean | null>(() => {
-    if (typeof window !== "undefined" && getExtensionProvider()) {
-      return true;
-    }
-    return null;
-  });
+  // SSRと初回client renderを一致させ、mount後に拡張を検出する。
+  const [nip07Available, setNip07Available] = useState<boolean | null>(null);
   const coordinatorRef = useRef(new LoginCoordinator());
+  const manualLoginStartedRef = useRef(false);
 
   useEffect(() => {
     if (nip07Available !== null) return;
+
+    if (getExtensionProvider()) {
+      // 初回renderはhydration互換のnullを維持し、mount直後に検出結果を反映する。
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setNip07Available(true);
+      return;
+    }
 
     let elapsed = 0;
     const timer = setInterval(() => {
@@ -175,6 +179,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // 保存済みextensionは実際に検出できた場合だけ自動復元する。
   useEffect(() => {
     if (nip07Available !== true) return;
+    // 遅延注入された拡張の検出が、ユーザーが開始したログインを中断しないようにする。
+    if (manualLoginStartedRef.current) return;
     const storedPubkey = getStoredPubkey();
     if (!storedPubkey || getStoredMethod() !== "extension") return;
 
@@ -211,6 +217,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const npub = useMemo(() => (pubkey ? nip19.npubEncode(pubkey) : null), [pubkey]);
 
   const login = useCallback(async () => {
+    manualLoginStartedRef.current = true;
     setLoginError(null);
     setExtensionLoading(true);
     try {
@@ -227,6 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [completeLogin]);
 
   const loginRemote = useCallback(async () => {
+    manualLoginStartedRef.current = true;
     setLoginError(null);
     setRemoteLoading(true);
     try {
