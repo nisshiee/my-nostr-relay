@@ -86,12 +86,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [extensionLoading, setExtensionLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginMethod, setLoginMethod] = useState<NostrLoginMethod | null>(null);
-  const [nip07Available, setNip07Available] = useState<boolean | null>(() => {
-    if (typeof window !== "undefined" && getExtensionProvider()) {
-      return true;
-    }
-    return null;
-  });
+  // SSRと初回client renderを一致させ、mount後に拡張を検出する。
+  const [nip07Available, setNip07Available] = useState<boolean | null>(null);
   const coordinatorRef = useRef(new LoginCoordinator());
 
   useEffect(() => {
