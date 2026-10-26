@@ -28,6 +28,8 @@ jobs:
         run: npm ci
       - name: Lint
         run: npm run lint
+      - name: 型チェック
+        run: npm run typecheck
       - name: テスト
         run: npm test
       - name: ビルド
