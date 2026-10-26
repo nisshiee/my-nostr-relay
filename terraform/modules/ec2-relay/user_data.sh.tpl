@@ -70,7 +70,7 @@ mkdir -p /home/ope/.ssh
 chmod 700 /home/ope/.ssh
 
 cat > /home/ope/.ssh/authorized_keys <<'EOF'
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO1uwotlu88jdU6GmVJx0FDOYhr4RkAxyEe0IweNXh/z ren-ope@nostr-relay
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEkEGO9TMsFcPGySafUkGoUf/qshgzDSLi1coWt5iLoC nishioka@lakche.local
 EOF
 
 chmod 600 /home/ope/.ssh/authorized_keys
