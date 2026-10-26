@@ -89,6 +89,15 @@ SSHEOF
 
 rc-service sshd restart
 
+# 新規インスタンスのホスト鍵をAWSコンソール出力から検証できるようにする。
+# 公開鍵のfingerprintのみを出力し、秘密鍵は出力しない。
+if [ -f /etc/ssh/ssh_host_ed25519_key.pub ]; then
+  {
+    echo "SSH_HOST_KEY_FINGERPRINT_ED25519"
+    ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+  } > /dev/console
+fi
+
 # ------------------------------------------------------------------------------
 # デプロイスクリプトの配置
 # ------------------------------------------------------------------------------

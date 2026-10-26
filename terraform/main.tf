@@ -11,9 +11,10 @@ terraform {
   }
 
   backend "s3" {
-    bucket = "nostr-relay-tfstate-426192960050"
-    key    = "terraform.tfstate"
-    region = "ap-northeast-1"
+    bucket       = "nostr-relay-tfstate-426192960050"
+    key          = "terraform.tfstate"
+    region       = "ap-northeast-1"
+    use_lockfile = true
   }
 }
 
