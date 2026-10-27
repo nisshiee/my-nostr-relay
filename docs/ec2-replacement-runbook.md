@@ -9,7 +9,7 @@ Nostr リレーの EC2 を新しい Alpine Linux AMI へ入れ替える際の確
 - 候補作成から最終 Terraform plan 完了まで、他の Terraform 実行を禁止する。
 - リレーまたは `deploy/` を変更する main への merge と Deploy workflow がない時間帯に行う。
 - 候補・旧機保持用の一時 Terraform 定義は Git にコミットしない。
-- `terraform apply`、EIP 切替、旧機削除は、それぞれ直前の plan と対象を確認してから実行する。
+- `terraform apply`、EIP 切替、旧機削除はそれぞれ直前の plan と対象を確認してから実行する。
 - main に残すのは最終 AMI、最終 user-data、この手順だけとする。途中状態を表す resource や `moved` block は残さない。
 
 ## 実行前に記録するもの
