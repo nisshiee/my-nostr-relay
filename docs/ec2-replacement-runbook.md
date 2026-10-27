@@ -30,7 +30,7 @@ user-data は固定 key の最新 version を取得するため、VersionId の�
 
 - backend のロックを有効にし、すべての plan と state 操作でロック待ち時間を指定する。
 - state bucket の versioning と最新 VersionId を確認し、権限を制限・暗号化したローカル backup も取得する。state の内容はログや PR に出さない。
-- 旧 root EBS の snapshot を作成し、`completed` になってから候補作成へ進む。
+- 候補を検証した後、EIP 切替前に旧 root EBS の snapshot を作成し、`completed` になったことを確認する。稼働中の snapshot は crash-consistent であり、DynamoDB のバックアップではない。
 - state 操作の前後で対象 resource address と実 AWS resource ID を照合する。
 - 旧機削除前に候補 resource address を正式な `aws_instance.relay` へ付け替え、旧機だけが一時 address に残ることを確認する。
 
@@ -62,7 +62,7 @@ fingerprint は認証済み AWS API の console output から取得する。`ssh
 
 ## 切替と rollback
 
-切替直前に候補へ本番 Security Group を付与して一時 Security Group を外し、EIP association の接続先だけを候補へ変更する。この二段階の一時定義と plan も Git に残さない。既存 WebSocket 接続は切断されるため、再接続を含めて確認する。
+切替直前に候補へ本番 Security Group を付与し、EIP association の接続先だけを候補へ変更する。一時 Security Group は安定確認と rollback 判断が終わるまで保持し、旧機削除時の最終 plan で候補から外して削除する。この一連の一時定義と plan は Git に残さない。既存 WebSocket 接続は切断されるため、再接続を含めて確認する。
 
 切替後は次を確認する。
 
