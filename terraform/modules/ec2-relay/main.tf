@@ -51,7 +51,7 @@ variable "binary_key" {
 variable "alpine_ami_id" {
   description = "Alpine Linux AMI ID (aarch64 UEFI)"
   type        = string
-  default     = "ami-031de6eae288436c6" # Alpine 3.23.3 aarch64 uefi tiny (ap-northeast-1)
+  default     = "ami-0052b125804a91f88" # Alpine 3.23.7 aarch64 uefi tiny (ap-northeast-1)
 }
 
 # ------------------------------------------------------------------------------
@@ -206,7 +206,7 @@ resource "aws_instance" "relay" {
   vpc_security_group_ids = [aws_security_group.relay.id]
   iam_instance_profile   = aws_iam_instance_profile.relay.name
 
-  ebs_optimized          = true
+  ebs_optimized = true
 
   root_block_device {
     volume_type           = "gp3"
@@ -233,9 +233,6 @@ resource "aws_instance" "relay" {
     Name = "nostr-relay-ec2-relay-v2"
   }
 
-  lifecycle {
-    ignore_changes = [ami]
-  }
 }
 
 # ------------------------------------------------------------------------------

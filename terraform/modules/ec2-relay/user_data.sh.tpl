@@ -70,7 +70,7 @@ mkdir -p /home/ope/.ssh
 chmod 700 /home/ope/.ssh
 
 cat > /home/ope/.ssh/authorized_keys <<'EOF'
-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIO1uwotlu88jdU6GmVJx0FDOYhr4RkAxyEe0IweNXh/z ren-ope@nostr-relay
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEkEGO9TMsFcPGySafUkGoUf/qshgzDSLi1coWt5iLoC nishioka@lakche.local
 EOF
 
 chmod 600 /home/ope/.ssh/authorized_keys
@@ -88,6 +88,15 @@ PermitRootLogin no
 SSHEOF
 
 rc-service sshd restart
+
+# 新規インスタンスのホスト鍵をAWSコンソール出力から検証できるようにする。
+# 公開鍵のfingerprintのみを出力し、秘密鍵は出力しない。
+if [ -f /etc/ssh/ssh_host_ed25519_key.pub ]; then
+  {
+    echo "SSH_HOST_KEY_FINGERPRINT_ED25519"
+    ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+  } > /dev/console
+fi
 
 # ------------------------------------------------------------------------------
 # デプロイスクリプトの配置
