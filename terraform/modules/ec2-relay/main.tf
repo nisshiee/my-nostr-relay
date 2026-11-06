@@ -51,7 +51,7 @@ variable "binary_key" {
 variable "alpine_ami_id" {
   description = "Alpine Linux AMI ID (aarch64 UEFI)"
   type        = string
-  default     = "ami-0052b125804a91f88" # Alpine 3.23.7 aarch64 uefi tiny (ap-northeast-1)
+  default     = "ami-0b874a2f98fa4d335" # Alpine 3.23.8 aarch64 uefi tiny (ap-northeast-1)
 }
 
 # ------------------------------------------------------------------------------
