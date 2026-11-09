@@ -44,6 +44,7 @@ export function useNostrReactions(
     if (!pool || relayUrls.length === 0 || initialEventIds.length === 0) return;
 
     let cancelled = false;
+    const seenReactionIds = seenReactionIdsRef.current;
 
     // リアクション初期ロード用バッファ
     const reactionBuffer: Event[] = [];
@@ -62,16 +63,17 @@ export function useNostrReactions(
           }
         },
         oneose() {
+          if (cancelled || !reactionInitialLoading) return;
           reactionInitialLoading = false;
-          // バッファを一括でstateに反映
-          if (reactionBuffer.length > 0) {
-            let batchReactions: Reactions = new Map();
-            for (const evt of reactionBuffer) {
-              if (seenReactionIdsRef.current.has(evt.id)) continue;
-              seenReactionIdsRef.current.add(evt.id);
-              batchReactions = aggregateReactionEvent(batchReactions, evt);
-            }
-            setReactions(batchReactions);
+          // 重複判定はstate updaterの外で行い、楽観的更新済みの集計に追記する
+          const unseenEvents = reactionBuffer.filter((event) => {
+            if (seenReactionIds.has(event.id)) return false;
+            seenReactionIds.add(event.id);
+            return true;
+          });
+          reactionBuffer.length = 0;
+          if (unseenEvents.length > 0) {
+            setReactions((prev) => unseenEvents.reduce(aggregateReactionEvent, prev));
           }
 
           // リアクション初期ロード完了 — 定期再subscribeタイマーを開始
@@ -138,7 +140,7 @@ export function useNostrReactions(
         }
         reactionSubRef.current = null;
       }
-      seenReactionIdsRef.current.clear();
+      seenReactionIds.clear();
       setReactions(new Map());
     };
   }, [pool, relayUrls, initialEventIds, addReaction, notesRef, newNotesMinCreatedAtRef]);

@@ -198,7 +198,7 @@ function findDisplaceTarget(
 /**
  * カード1枚を指定位置に配置し、押し出されるカードをドミノ式に処理する。
  *
- * 現在の LiveCanvas.tsx 内の placeCard と完全に同じロジック。
+ * 押し出し候補の選択を担当する。高さ差による重なりは insertCard で補正する。
  * grid, columns, chain を in-place で更新する（呼び出し側が clone 責任）。
  *
  * 押し出しルール:
@@ -209,7 +209,7 @@ function findDisplaceTarget(
  * 2. 別列の候補から除外:
  *    - topのy座標が押し出されるカードの元位置のtopより小さい（上にある）もの
  *    - 既にこの連鎖で押し出されたもの
- * 3. 残った候補のうちスコアが最も低いものの位置に移動 → 連鎖
+ * 3. スコアと引力コストで候補を選び、隣列では上優先を適用して移動 → 連鎖
  */
 export function placeCard(
   grid: Map<string, Placement>,
@@ -223,6 +223,7 @@ export function placeCard(
   chain: { movedIds: Set<string>; chainOrder: Map<string, number> },
   holdSet: ReadonlySet<string>,
   allCards: readonly Card[],
+  redirectedHolds: Set<string> = new Set(),
 ): void {
   const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
 
@@ -238,6 +239,18 @@ export function placeCard(
     const victimY = victimEntry.y;
     const victimHeight = heightMap.get(victimId) ?? DEFAULT_CARD_HEIGHT;
 
+    // ホールド同士の迂回が循環したら、この列の末尾へ退避する。
+    // ホールドは移動扱いにせず、同じカードの迂回履歴だけを共有する。
+    if (redirectedHolds.has(victimId)) {
+      const tailY = columns[targetCol].reduce((bottom, slot) => {
+        if (slot.id === cardId) return bottom;
+        return Math.max(bottom, slot.y + (heightMap.get(slot.id) ?? DEFAULT_CARD_HEIGHT) + GAP);
+      }, 0);
+      placeCard(grid, columns, cardId, targetCol, tailY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
+      return;
+    }
+    redirectedHolds.add(victimId);
+
     // ステップ0: victim が列の一番下のカードか？
     const sameColOthers = columns[targetCol].filter((c) => c.id !== victimId);
     const isBottomOfColumn = sameColOthers.every((c) => c.y <= victimY);
@@ -245,7 +258,7 @@ export function placeCard(
     if (isBottomOfColumn) {
       // ホールドカードは動かない。cardId をその下に配置
       const newY = victimY + victimHeight + GAP;
-      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
       return;
     }
 
@@ -256,12 +269,12 @@ export function placeCard(
     if (!target) {
       // 候補がない → victim の下に cardId を配置
       const newY = victimY + victimHeight + GAP;
-      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
       return;
     }
 
     // cardId を target の位置にリダイレクト（連鎖は続く）
-    placeCard(grid, columns, cardId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
+    placeCard(grid, columns, cardId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
     return;
   }
 
@@ -327,7 +340,7 @@ export function placeCard(
 /**
  * 初期配置（フルリビルド）。
  *
- * スコア昇順で「先頭スコアが最低の列」に振り分け、
+ * 入力はスコア降順を前提とする。逆順で「先頭スコアが最低の列」に振り分け、
  * 各列内をスコア降順にソートして上から積み上げる。
  *
  * prevGrid を使用しないため clone は不要。
@@ -378,8 +391,12 @@ export function buildInitialLayout(
 /**
  * 新規カード挿入。
  *
- * 新しいカードを「常に列0（一番左）の y=0」に配置し、
- * 押し出し連鎖を実行する。
+ * 引力コストが最小の列の y=0 に配置し（同点なら左優先）、押し出し連鎖を実行する。
+ * ホールドの迂回が循環すると列末尾へ退避する。
+ * 最後に高さ差による重なりを下方向へ補正する。ホールドの座標は維持し、
+ * その他のカード同士の列内順序は維持する（ホールドを追い越す場合はある）。
+ * 入力は正の整数の列数、有効な列と非負のy座標、非負の高さを前提とする。
+ * ホールド同士は入力時点で重ならないこと。
  *
  * 内部で prevGrid を clone（new Map）してから placeCard に渡すため、
  * 呼び出し側の prevGrid は変更されない。
@@ -427,6 +444,31 @@ export function insertCard(
 
   const chain = { movedIds: new Set<string>(), chainOrder: new Map<string, number>() };
   placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain, holdSet, allNotes);
+
+  // 押し出しは同じtop位置を対象にするため、高さ差で残る重なりを補正する。
+  // ホールド領域を予約し、他のカードだけを現在位置以降の空き領域へ下げる。
+  for (let col = 0; col < columnCount; col++) {
+    const ordered = [...columns[col]].sort((a, b) => a.y - b.y);
+    const held = ordered.filter((slot) => holdSet.has(slot.id));
+    let nextY = 0;
+    for (const slot of ordered) {
+      if (holdSet.has(slot.id)) continue;
+      const height = heightMap.get(slot.id) ?? DEFAULT_CARD_HEIGHT;
+      let y = Math.max(slot.y, nextY);
+      for (const anchor of held) {
+        const bottom = anchor.y + (heightMap.get(anchor.id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+        if (y < bottom && y + height + GAP > anchor.y) y = bottom;
+      }
+      if (y !== slot.y) {
+        grid.set(slot.id, { col, y });
+        chain.movedIds.add(slot.id);
+        if (!chain.chainOrder.has(slot.id)) {
+          chain.chainOrder.set(slot.id, chain.chainOrder.size);
+        }
+      }
+      nextY = y + height + GAP;
+    }
+  }
 
   return { grid, chain };
 }

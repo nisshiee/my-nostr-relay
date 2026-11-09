@@ -36,6 +36,9 @@ export function useNostrNotes(
 ): UseNostrNotesResult {
   const [notes, setNotes] = useState<NoteCard[]>([]);
   const notesRef = useRef<NoteCard[]>([]);
+  const [readyGeneration, setReadyGeneration] = useState<number | null>(null);
+  const subscriptionGenerationRef = useRef(0);
+  const initialNotificationRef = useRef<"waiting" | "empty" | "nonempty">("waiting");
   const newNotesMinCreatedAtRef = useRef<number | undefined>(undefined);
 
   // コールバックをRefで保持（subscription内から最新の値を参照するため）
@@ -91,6 +94,12 @@ export function useNostrNotes(
   const processOriginalNote = useCallback((origEvent: Event, repostEvent: Event) => {
     if (origEvent.kind !== 1) return;
 
+    // 古い元ノートへのリアクションも次回購読で取りこぼさない。
+    newNotesMinCreatedAtRef.current = Math.min(
+      newNotesMinCreatedAtRef.current ?? origEvent.created_at,
+      origEvent.created_at,
+    );
+
     setNotes((prev) => {
       // 既にカードが存在する場合はrepostInfoを付与して更新
       const existingIndex = prev.findIndex((n) => n.eventId === origEvent.id);
@@ -136,7 +145,22 @@ export function useNostrNotes(
 
   // kind:1/6 subscribe
   useEffect(() => {
-    if (!pool || relayUrls.length === 0 || followPubkeys.length === 0 || !pubkey) return;
+    // 購読条件・アカウントが変わったら、前の表示とリアクション対象を引き継がない。
+    const generation = ++subscriptionGenerationRef.current;
+    // 外部購読の切替時に旧セッションの表示を破棄するためのリセット。
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setNotes([]);
+    notesRef.current = [];
+    newNotesMinCreatedAtRef.current = undefined;
+    setReadyGeneration(null);
+    initialNotificationRef.current = "waiting";
+    onInitialNotesReadyRef.current([]);
+
+    if (!pool || relayUrls.length === 0 || !pubkey) return;
+    if (followPubkeys.length === 0) {
+      setStatus("connected");
+      return;
+    }
 
     setStatus("loading");
 
@@ -207,7 +231,7 @@ export function useNostrNotes(
           }
         },
         async oneose() {
-          if (cancelled) return;
+          if (cancelled || !initialLoading) return;
           initialLoading = false;
           // バッファを一括で state に反映
           let displayedNotes: NoteCard[] = [];
@@ -271,6 +295,7 @@ export function useNostrNotes(
               setNotes(displayedNotes);
             }
 
+            const fetchedAuthorPubkeys = new Set<string>();
             // 未取得の元ノートを一括REQで取得
             if (missingEventIds.length > 0) {
               console.log(`[useNostrNotes] リポスト元ノート取得開始: ${missingEventIds.length}件`);
@@ -278,32 +303,21 @@ export function useNostrNotes(
                 const originalEvents = await cache.fetchEvents(
                   { kinds: [1], ids: missingEventIds } as Filter,
                 );
-                if (!cancelled && originalEvents.length > 0) {
-                  const now = Math.floor(Date.now() / 1000);
-                  const newCards: NoteCard[] = [];
-                  for (const origEvent of originalEvents) {
-                    if (origEvent.kind !== 1) continue;
-                    if (displayedNotes.some((n) => n.eventId === origEvent.id)) continue;
-                    const repostEvent = repostMap.get(origEvent.id);
-                    if (!repostEvent) continue;
-                    newCards.push(createNoteCard({
-                      event: origEvent,
-                      ownerPubkey: pubkey,
-                      now,
-                      slotId: resolveSlotId(publishedSlotMapRef.current, origEvent.id),
-                      repostInfo: { reposterPubkey: repostEvent.pubkey, repostedAt: repostEvent.created_at },
-                    }));
-                  }
-                  if (newCards.length > 0) {
-                    displayedNotes = sortByScore([...displayedNotes, ...newCards]).slice(0, MAX_NOTES);
-                    setNotes(displayedNotes);
-                    console.log(`[useNostrNotes] リポスト元ノート追加: ${newCards.length}件`);
-                  }
+                if (cancelled) return;
+                for (const origEvent of originalEvents) {
+                  if (origEvent.kind !== 1) continue;
+                  const repostEvent = repostMap.get(origEvent.id);
+                  if (!repostEvent) continue;
+                  // 待機中に届いたノート・slotId・新しいリポスト情報を保持してマージする。
+                  processOriginalNote(origEvent, repostEvent);
+                  fetchedAuthorPubkeys.add(origEvent.pubkey);
                 }
               } catch (err) {
                 console.error("[useNostrNotes] リポスト元ノート取得エラー:", err);
               }
             }
+
+            if (cancelled) return;
 
             // リポスト関連の未取得プロフィールを一括フェッチ
             const followSet = new Set(followPubkeys);
@@ -318,6 +332,9 @@ export function useNostrNotes(
                 repostPubkeys.add(note.pubkey);
               }
             }
+            for (const author of fetchedAuthorPubkeys) {
+              if (!followSet.has(author)) repostPubkeys.add(author);
+            }
             if (repostPubkeys.size > 0) {
               console.log(`[useNostrNotes] リポスト関連プロフィール取得: ${repostPubkeys.size}件`);
               fetchProfilesRef.current([...repostPubkeys]);
@@ -326,9 +343,8 @@ export function useNostrNotes(
 
           setStatus("connected");
 
-          // 初期ロード完了 — リアクションhookにeventIdリストを通知
-          const eventIds = displayedNotes.map((n) => n.eventId);
-          onInitialNotesReadyRef.current(eventIds);
+          // state反映後に、実際に表示するノートをリアクションhookへ通知する。
+          setReadyGeneration(generation);
         },
       },
     );
@@ -342,6 +358,16 @@ export function useNostrNotes(
       }
     };
   }, [pool, relayUrls, followPubkeys, pubkey, publishedSlotMapRef, addNote, processOriginalNote, profilesRef, setStatus, cache]);
+
+  useEffect(() => {
+    if (readyGeneration !== subscriptionGenerationRef.current) return;
+    const previous = initialNotificationRef.current;
+    // 初期結果が空でも、最初のライブノート到着時にはリアクション購読を開始する。
+    if (previous === "waiting" || (previous === "empty" && notes.length > 0)) {
+      initialNotificationRef.current = notes.length > 0 ? "nonempty" : "empty";
+      onInitialNotesReadyRef.current(notes.map((note) => note.eventId));
+    }
+  }, [readyGeneration, notes]);
 
   return { notes, notesRef, newNotesMinCreatedAtRef };
 }

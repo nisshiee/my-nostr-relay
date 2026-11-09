@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { placeCard, gridToColumns, insertCard } from "../layoutEngine";
+import { placeCard, gridToColumns, insertCard, buildInitialLayout, reflow } from "../layoutEngine";
 import { GAP, DEFAULT_CARD_HEIGHT } from "../constants";
 import type { Card } from "../types";
 
@@ -150,7 +150,7 @@ describe("placeCard - gravity統合", () => {
     return { grid, heightMap, scoreMap, chain, holdSet, setCard, columnCount, allCards };
   }
 
-  test("同一pubkeyカードの近くへの移動はgravityCostにより回避され、遠い候補が選ばれる", () => {
+  test("同一pubkeyカードの近くへの移動はgravityCostにより優先される", () => {
     const { grid, heightMap, scoreMap, chain, holdSet, setCard, columnCount, allCards } = createTestSetup();
 
     // victim: col=1, y=0, score=50, pubkey="pk-A"
@@ -241,5 +241,127 @@ describe("insertCard - gravity列選択", () => {
     expect(placement).toBeDefined();
     expect(placement!.col).toBe(0);
     expect(placement!.y).toBe(0);
+  });
+});
+
+
+describe("レイアウトの公開契約", () => {
+  function expectNoOverlap(grid: ReadonlyMap<string, { col: number; y: number }>, heights: ReadonlyMap<string, number>, columnCount: number) {
+    for (const placement of grid.values()) {
+      expect(Number.isInteger(placement.col)).toBe(true);
+      expect(placement.col).toBeGreaterThanOrEqual(0);
+      expect(placement.col).toBeLessThan(columnCount);
+      expect(Number.isFinite(placement.y)).toBe(true);
+      expect(placement.y).toBeGreaterThanOrEqual(0);
+    }
+    for (const column of gridToColumns(grid, columnCount)) {
+      const ordered = [...column].sort((a, b) => a.y - b.y);
+      for (let i = 1; i < ordered.length; i++) {
+        expect(ordered[i].y).toBeGreaterThanOrEqual(
+          ordered[i - 1].y + (heights.get(ordered[i - 1].id) ?? DEFAULT_CARD_HEIGHT) + GAP,
+        );
+      }
+    }
+  }
+
+  test("隣列のホールド同士を迂回しても終了し、固定位置と入力を維持する", () => {
+    const cards = [makeCard("a", 0, "a"), makeCard("b", 0, "b"), makeCard("lower-a", 10, "c"), makeCard("lower-b", 10, "d")];
+    const step = DEFAULT_CARD_HEIGHT + GAP;
+    const prevGrid = new Map([
+      ["a", { col: 0, y: 0 }], ["b", { col: 1, y: 0 }],
+      ["lower-a", { col: 0, y: step }], ["lower-b", { col: 1, y: step }],
+    ]);
+    const snapshot = structuredClone(prevGrid);
+    const note = makeCard("new", 20, "new");
+    const heights = new Map<string, number>();
+    const held = new Set(["a", "b"]);
+    const result = insertCard(prevGrid, note, [...cards, note], 2, heights, held);
+    expect(prevGrid).toEqual(snapshot);
+    expect(held).toEqual(new Set(["a", "b"]));
+    expect(result.grid.size).toBe(5);
+    expect(result.grid.get("a")).toEqual(prevGrid.get("a"));
+    expect(result.grid.get("b")).toEqual(prevGrid.get("b"));
+    expect(result.chain.movedIds.has("a")).toBe(false);
+    expect(result.chain.movedIds.has("b")).toBe(false);
+    expectNoOverlap(result.grid, heights, 2);
+  });
+
+  test("高さの異なるカードを挿入しても重ならず、既存の入力座標は変更しない", () => {
+    const cards = [makeCard("a", 1, "a"), makeCard("b", 0, "b")];
+    const heights = new Map([["a", 40], ["b", 60], ["new", 300]]);
+    const prevGrid = buildInitialLayout(cards, 1, heights).grid;
+    const snapshot = structuredClone(prevGrid);
+    const note = makeCard("new", 2, "new");
+    const result = insertCard(prevGrid, note, [...cards, note], 1, heights, new Set());
+    expect(prevGrid).toEqual(snapshot);
+    expect(result.grid.size).toBe(3);
+    expectNoOverlap(result.grid, heights, 1);
+    expect([...result.chain.chainOrder.values()]).toEqual([0, 1, 2]);
+  });
+
+  test("高さ補正はホールド領域を避け、重ならないカードは動かさない", () => {
+    const cards = [makeCard("a", 2, "a"), makeCard("held", 1, "b"), makeCard("untouched", 0, "c")];
+    const heights = new Map([["a", 40], ["held", 60], ["new", 300]]);
+    const prevGrid = new Map([
+      ["a", { col: 0, y: 0 }], ["held", { col: 0, y: 52 }],
+      ["untouched", { col: 1, y: 1000 }],
+    ]);
+    const note = makeCard("new", 3, "new");
+    const result = insertCard(prevGrid, note, [...cards, note], 2, heights, new Set(["held"]));
+    expect(result.grid.get("held")).toEqual(prevGrid.get("held"));
+    expect(result.grid.get("untouched")).toEqual(prevGrid.get("untouched"));
+    expect(result.chain.movedIds.has("held")).toBe(false);
+    expect(result.chain.movedIds.has("untouched")).toBe(false);
+    expectNoOverlap(result.grid, heights, 2);
+  });
+
+  test.each([1, 2, 3])("%i列で高さとホールドの組み合わせを変えて連続挿入しても契約を維持する", (columnCount) => {
+    for (const holdMode of ["none", "some", "all"] as const) {
+      const cards = Array.from({ length: 12 }, (_, i) => makeCard(`card-${i}`, 12 - i, `author-${i % 3}`));
+      const heights = new Map(cards.map((card, i) => [card.slotId, 20 + (i * 73) % 300]));
+      let grid = buildInitialLayout(cards, columnCount, heights).grid;
+      const held = new Set(cards.filter((_, i) => holdMode === "all" || (holdMode === "some" && i % 2 === 0)).map((card) => card.slotId));
+      for (let i = 0; i < 8; i++) {
+        const note = makeCard(`new-${i}`, 20 + i, `author-${i % 3}`);
+        cards.push(note);
+        heights.set(note.slotId, 30 + (i * 97) % 400);
+        const snapshot = structuredClone(grid);
+        const result = insertCard(grid, note, cards, columnCount, heights, held);
+        expect(grid).toEqual(snapshot);
+        expect(result.grid.size).toBe(cards.length);
+        for (const id of held) {
+          expect(result.grid.get(id)).toEqual(grid.get(id));
+          expect(result.chain.movedIds.has(id)).toBe(false);
+        }
+        expect(new Set(result.chain.chainOrder.keys())).toEqual(result.chain.movedIds);
+        expect([...result.chain.chainOrder.values()]).toEqual(Array.from({ length: result.chain.chainOrder.size }, (_, index) => index));
+        expectNoOverlap(result.grid, heights, columnCount);
+        grid = result.grid;
+      }
+    }
+  });
+
+  test("初期配置は入力を変更せず、reflowは列と旧y順を維持して削除と高さ変更を反映する", () => {
+    const cards = [makeCard("a", 4), makeCard("b", 3), makeCard("c", 2), makeCard("d", 1)];
+    const original = structuredClone(cards);
+    const heights = new Map([["a", 40], ["b", 180]]);
+    const initial = buildInitialLayout(cards, 2, heights);
+    expect(cards).toEqual(original);
+    expect(initial.chain.movedIds.size).toBe(0);
+    expectNoOverlap(initial.grid, heights, 2);
+    const snapshot = structuredClone(initial.grid);
+    const active = [makeCard("d", 99), makeCard("b", 0), makeCard("a", -1), makeCard("unplaced", 200)];
+    const updatedHeights = new Map([["a", 250], ["b", 80]]);
+    const result = reflow(initial.grid, active, 2, updatedHeights);
+    expect(initial.grid).toEqual(snapshot);
+    expect(result.grid.has("c")).toBe(false);
+    expect(result.grid.has("unplaced")).toBe(false);
+    expect(result.chain.chainOrder.size).toBe(0);
+    for (let col = 0; col < 2; col++) {
+      const previousOrder = [...initial.grid].filter(([id, p]) => p.col === col && id !== "c").sort((a, b) => a[1].y - b[1].y).map(([id]) => id);
+      const currentOrder = [...result.grid].filter(([, p]) => p.col === col).sort((a, b) => a[1].y - b[1].y).map(([id]) => id);
+      expect(currentOrder).toEqual(previousOrder);
+    }
+    expectNoOverlap(result.grid, updatedHeights, 2);
   });
 });

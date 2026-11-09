@@ -135,6 +135,31 @@ async function main() {
   const signer = start('signer', 'nak', ['bunker', relayUrl], {
     env: { NOSTR_SECRET_KEY: Buffer.from(secretKey).toString('hex') }
   });
+  // 追加シナリオは鍵を破棄する前に署名し、テスト用イベントだけ保持する。
+  const scenarioFixtures = {
+    burst: Array.from({ length: 8 }, (_, index) => finalizeEvent({
+      kind: 1, created_at: now + index + 1, tags: [],
+      content: `Local stream fixture ${index + 1}: ` + 'Variable-height canvas verification. '.repeat(index * 5 + 1)
+    }, secretKey)),
+    emptyFollow: [finalizeEvent({ kind: 3, created_at: now + 30, content: '', tags: [] }, secretKey)]
+  };
+  const scenarioUsed = new Set();
+  const scenarioTimers = new Set();
+  function sendScenario(name) {
+    if (scenarioUsed.has(name)) return false;
+    scenarioUsed.add(name);
+    scenarioFixtures[name].forEach((event, index) => {
+      const timer = setTimeout(() => {
+        scenarioTimers.delete(timer);
+        if (stopping || observer.readyState !== WebSocket.OPEN) return;
+        observer.send(JSON.stringify(['EVENT', event]));
+        state.scenarioSent ||= [];
+        state.scenarioSent.push({ scenario: name, id: event.id, kind: event.kind }); save();
+      }, name === 'burst' ? 5000 + index * 800 : 0);
+      scenarioTimers.add(timer);
+    });
+    return true;
+  }
   secretKey.fill(0);
   let signerBuffer = '';
   signer.stdout.resume();
@@ -179,10 +204,17 @@ async function main() {
     if (request.headers.host !== `127.0.0.1:${ports.helper}`) { response.writeHead(403); return response.end(); }
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-src 'none'; base-uri 'none'");
+    if (request.url === '/scenario/burst' || request.url === '/scenario/empty-follow') {
+      // 他originからフォーム送信されても実行しない。補助ページ内のPOSTだけ許可する。
+      if (request.method !== 'POST' || request.headers.origin !== helperUrl) { response.writeHead(403); return response.end(); }
+      const name = request.url === '/scenario/burst' ? 'burst' : 'emptyFollow';
+      response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      return response.end(sendScenario(name) ? (name === 'burst' ? 'Eight fixtures scheduled: starts in 5 seconds.' : 'Empty follow fixture sent. Reload the app to test connection.') : 'This scenario has already run. Restart for another run.');
+    }
     if (request.url === '/status') { response.setHeader('Content-Type', 'application/json'); return response.end(JSON.stringify(state)); }
     if (request.url === '/pairing-value') { response.setHeader('Content-Type', 'text/plain; charset=utf-8'); return response.end(pairing); }
     response.setHeader('Content-Type', 'text/html; charset=utf-8');
-    response.end(`<!doctype html><title>Local NIP-46 E2E</title><h1>Local test signer</h1><p>Relay: ${relayUrl}</p><button id="copy">Copy local test signer URL</button><p id="result"></p><p><a href="${appUrl}">Open app</a> | <a href="/status">Read non-secret result</a> | <a href="${appUrl}/e2e-cleanup.html">Clear test credentials</a></p><script>document.getElementById('copy').onclick=async()=>{await navigator.clipboard.writeText(await(await fetch('/pairing-value')).text());document.getElementById('result').textContent='Test pairing URL copied';};</script>`);
+    response.end(`<!doctype html><title>Local NIP-46 E2E</title><h1>Local test signer</h1><p>Relay: ${relayUrl}</p><button id="copy">Copy local test signer URL</button><p id="result"></p><h2>Optional fixture scenarios</h2><p>Each runs once. Burst starts after 5 seconds. Empty follows changes only this disposable account.</p><button id="burst">Schedule eight stream fixtures</button><button id="empty">Replace with empty follows</button><p id="scenario-result"></p><p><a href="${appUrl}">Open app</a> | <a href="/status">Read non-secret result</a> | <a href="${appUrl}/e2e-cleanup.html">Clear test credentials</a></p><script>for(const [id,name] of [['burst','burst'],['empty','empty-follow']])document.getElementById(id).onclick=async()=>{document.getElementById('scenario-result').textContent=await(await fetch('/scenario/'+name,{method:'POST'})).text();};document.getElementById('copy').onclick=async()=>{await navigator.clipboard.writeText(await(await fetch('/pairing-value')).text());document.getElementById('result').textContent='Test pairing URL copied';};</script>`);
   });
   await new Promise((resolve, reject) => {
     // 起動中のポート競合もmainのエラー処理へ戻し、子プロセスを片付ける。
