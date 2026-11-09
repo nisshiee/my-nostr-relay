@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { detectCanvasMode, layoutScene, zoomCamera, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
 
@@ -8,17 +8,27 @@ export interface CanvasSceneItem { id: string; content: ReactNode }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
 const EMPTY = new Set<string>();
 
+interface CardRootProps { item: CanvasSceneItem; register: (id: string, node: HTMLDivElement | null) => void }
+const subscribeHydration = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
+
+/** SSRと初回hydrationは共に空にし、完了後だけDOM portalを作成する。 */
+function CardRoot(props: CardRootProps) {
+  const mounted = useSyncExternalStore(subscribeHydration, clientSnapshot, serverSnapshot);
+  return mounted ? <MountedCardRoot {...props} /> : null;
+}
+
 /** Portalの行先を維持し、native失敗時にも入力中のReact stateを失わない。 */
-function CardRoot({ item, register }: { item: CanvasSceneItem; register: (id: string, node: HTMLDivElement | null) => void }) {
-  const [node] = useState(() => typeof document === 'undefined' ? null : document.createElement('div'));
+function MountedCardRoot({ item, register }: CardRootProps) {
+  const [node] = useState(() => document.createElement('div'));
   useLayoutEffect(() => {
-    if (!node) return;
     node.setAttribute('data-scene-card', item.id);
     node.setAttribute('style', 'position:absolute;left:0;top:0;transform-origin:0 0');
     register(item.id, node);
     return () => register(item.id, null);
   }, [item.id, node, register]);
-  return node ? createPortal(item.content, node) : null;
+  return createPortal(item.content, node);
 }
 
 export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
@@ -27,7 +37,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const fallback = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<string, HTMLDivElement>());
   const savedBoxes = useRef(new Map<string, SceneBox>());
-  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; camera: Camera } | null>(null);
+  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; zoomBy: (factor: number) => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
   const [forcedDOM, setForcedDOM] = useState(false);
@@ -40,7 +50,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   });
   useLayoutEffect(() => { current.current = { items, heldIds }; runtime.current?.refresh(); }, [items, heldIds]);
 
-  useEffect(() => {
+  // カードのpassive effectによるautofocusより先にportalの行先を接続する。
+  useLayoutEffect(() => {
     const host = viewport.current!;
     const surface = canvas.current!;
     const dom = fallback.current!;
@@ -199,7 +210,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       revealFocus = true; refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, reset: () => { camera = { x: 0, y: 0, zoom: 1 }; refresh(); }, attach: node => {
+    runtime.current = { refresh, camera, zoomBy: factor => {
+      const rect = host.getBoundingClientRect();
+      camera = zoomCamera(camera, camera.zoom * factor, rect.width / 2, rect.height / 2);
+      setZoom(Math.round(camera.zoom * 100));
+      refresh();
+    }, reset: () => { camera = { x: 0, y: 0, zoom: 1 }; refresh(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
     } };
@@ -221,7 +237,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="V2 canvas">
     <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-      <span role="status" data-renderer-status>{status}</span><span>{zoom}%</span>
+      <span role="status" data-renderer-status>{status}</span>
+      <button type="button" aria-label="縮小" title="縮小" disabled={zoom <= 35} onClick={() => runtime.current?.zoomBy(1 / 1.25)} className="rounded border px-2 py-1 disabled:opacity-40">−</button>
+      <span aria-label="ズーム倍率" aria-live="polite">{zoom}%</span>
+      <button type="button" aria-label="拡大" title="拡大" disabled={zoom >= 200} onClick={() => runtime.current?.zoomBy(1.25)} className="rounded border px-2 py-1 disabled:opacity-40">＋</button>
       <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-2 py-1">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>
       <button type="button" onClick={() => { if (runtime.current) { runtime.current.reset(); setZoom(100); } }} className="rounded border px-2 py-1">原点に戻る</button>
       <span>余白ドラッグ / スクロール / Ctrl+ホイールでズーム</span>

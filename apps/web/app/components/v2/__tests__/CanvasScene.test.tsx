@@ -3,6 +3,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { renderToString } from "react-dom/server";
+import { hydrateRoot, type Root } from "react-dom/client";
 import { CanvasScene } from "../CanvasScene";
 
 let frames: Map<number, FrameRequestCallback>;
@@ -54,6 +56,58 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("SSRと初回hydrationを一致させ、回復可能エラーなしでportalを操作できる", async () => {
+    const element = <CanvasScene items={[{ id: "one", content: <InteractiveCard focus /> }]} />;
+    const browserDocument = document;
+    let html: string;
+    try {
+      vi.stubGlobal("document", undefined);
+      html = renderToString(element);
+    } finally {
+      vi.stubGlobal("document", browserDocument);
+    }
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    document.body.appendChild(container);
+    const onRecoverableError = vi.fn();
+    let root: Root | undefined;
+    try {
+      await act(async () => { root = hydrateRoot(container, element, { onRecoverableError }); });
+      flushFrame();
+      expect(onRecoverableError).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "下書き" }));
+      fireEvent.click(screen.getByRole("button", { name: "クリック 0" }));
+      expect(screen.getByRole("button", { name: "クリック 1" })).toBeDefined();
+    } finally {
+      act(() => root?.unmount());
+      container.remove();
+    }
+  });
+
+  it("ズームボタンは中心を維持し、範囲制限と原点復帰を反映する", () => {
+    render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);
+    flushFrame();
+    const card = document.querySelector<HTMLElement>("[data-scene-card]")!;
+    fireEvent.click(screen.getByRole("button", { name: "拡大" }));
+    flushFrame();
+    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("125%");
+    expect(card.style.transform).toBe("translate(-80px,-55px) scale(1.25)");
+    fireEvent.click(screen.getByRole("button", { name: "縮小" }));
+    flushFrame();
+    expect(card.style.transform).toBe("translate(16px,16px) scale(1)");
+    for (let i = 0; i < 10; i++) fireEvent.click(screen.getByRole("button", { name: "拡大" }));
+    flushFrame();
+    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("200%");
+    expect((screen.getByRole("button", { name: "拡大" }) as HTMLButtonElement).disabled).toBe(true);
+    for (let i = 0; i < 15; i++) fireEvent.click(screen.getByRole("button", { name: "縮小" }));
+    flushFrame();
+    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("35%");
+    expect((screen.getByRole("button", { name: "縮小" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "原点に戻る" }));
+    flushFrame();
+    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("100%");
+    expect(card.style.transform).toBe("translate(16px,16px) scale(1)");
+  });
   it("DOM fallback内の実際のボタンがReactハンドラを呼ぶ", () => {
     render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);
     flushFrame();
