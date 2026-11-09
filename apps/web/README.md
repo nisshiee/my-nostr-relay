@@ -1,42 +1,37 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Nostr Live Canvas
 
-## Getting Started
+Nostrのノート・リポスト・リアクションをライブ表示するNext.jsアプリ。
 
-First, run the development server:
+## 改修を始める前に
 
-```bash
+1. リポジトリルートの `CLAUDE.md` を読む。コメント・コミット・PRは日本語。
+2. [購読・配置の契約](../../docs/architecture/live-canvas-contracts.md)で責務と不変条件を確認する。
+3. 変更対象の `app/**/__tests__/` で現状を確認し、回帰テストから始める。
+
+認証と画面をつなぐのは `app/page.tsx`、購読の組合せは `useNostrRelay.ts`。配置の純粋関数は `layoutEngine.ts`、Reactの状態とhold表示は `useCardLayout.ts` が担当する。
+
+## 開発・検証
+
+Node.js 22以降を使用する。
+
+```sh
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+通常の `npm run dev` はアカウントのリレーと公開bootstrapリレーへ接続する。使い捨て鍵による検証は下記の隔離手順を使い、実アカウントでテスト投稿しない。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+変更後は次のコマンドで確認する。
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```sh
+npm run lint
+npm test
+npx tsc --noEmit --incremental false
+npm run build
+```
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Frontend CIはlint・テスト・buildを実行する。過去のテスト数や警告の記録だけで、現在の変更が検証済みとは扱わない。
 
 ## ローカル E2E 動作確認
 
-NIP-46 の接続・署名・投稿・再取得を、使い捨て鍵と localhost のリレーで確認する手順は、
-[ローカル NIP-46 E2E 動作確認](../../docs/testing/local-nip46-e2e.md)を参照してください。
-元の作業ツリーを変更せず、アプリの一時コピーを使います。
+[ローカル NIP-46 E2E 手順](../../docs/testing/local-nip46-e2e.md)では、アプリの一時コピー、使い捨て鍵、localhostのnakリレー・署名器を使用する。ブラウザで接続・署名・投稿・再取得を確認し、独立した購読で署名を検証する。任意のストリームfixtureと空フォローfixtureも利用できる。

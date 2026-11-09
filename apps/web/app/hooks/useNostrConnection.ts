@@ -165,16 +165,15 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
               .map((tag) => tag[1]!)
           : [];
 
-        if (resolvedFollowPubkeys.length === 0) return;
-
         // リレーリスト決定（kind:10002から取得 or BOOTSTRAP_RELAYSフォールバック）
         const allRelays = resolvedRelayUrls.length > 0
           ? [...new Set([...BOOTSTRAP_RELAYS, ...resolvedRelayUrls])]
           : [...BOOTSTRAP_RELAYS];
 
         setRelayUrls(allRelays);
-        setFollowPubkeys(resolvedFollowPubkeys);
-        setStatus("loading");
+        setFollowPubkeys([...new Set(resolvedFollowPubkeys)]);
+        // フォローが空でも投稿用リレーは必要。全体feedへ広げず空のまま接続を完了する。
+        setStatus(resolvedFollowPubkeys.length > 0 ? "loading" : "connected");
       } catch {
         if (!cancelled) {
           setStatus("error");

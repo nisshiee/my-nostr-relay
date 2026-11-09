@@ -14,7 +14,7 @@ export type Grid = ReadonlyMap<string, Placement>;
 /**
  * 列ごとのカードスロット。
  * エンジン内部の作業用構造。Grid との相互変換ヘルパーで生成する。
- * columns[colIndex] = そのカラムに属するカードの配列（y昇順）。
+ * columns[colIndex] = そのカラムに属するカードの配列（順序は保証しない）。
  */
 export type ColumnSlots = { id: string; y: number }[][];
 
