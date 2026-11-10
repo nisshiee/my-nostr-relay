@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectCanvasMode, layoutScene, planSceneLayout, zoomCamera, type SceneBox } from '../scene';
+import { detectCanvasMode, layoutScene, planSceneLayout, type SceneBox } from '../scene';
 describe('V2 scene', () => {
   it('能力がない環境ではDOMにする', () => {
     expect(detectCanvasMode({} as HTMLCanvasElement, null)).toBe('dom');
@@ -10,13 +10,7 @@ describe('V2 scene', () => {
     expect(detectCanvasMode({requestPaint() {}} as unknown as HTMLCanvasElement, ctx)).toBe('legacy');
     expect(detectCanvasMode({requestPaint() {}, content: ''} as unknown as HTMLCanvasElement, ctx)).toBe('modern');
   });
-  it('カーソル下のワールド座標をズームで維持する', () => {
-    const before = {x: 20, y: -80, zoom: 1};
-    const next = zoomCamera(before, 1.5, 200, 300);
-    expect((200-next.x)/next.zoom).toBe((200-before.x)/before.zoom);
-    expect((300-next.y)/next.zoom).toBe((300-before.y)/before.zoom);
-    expect(zoomCamera(before, 100, 0, 0).zoom).toBe(2);
-  });
+
   it('既存の順序を守り、削除を反映する', () => {
     const first = layoutScene(['a','b','c'], new Map(), 400, new Map());
     const next = layoutScene(['new','c','a'], new Map(), 400, first);

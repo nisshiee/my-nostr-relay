@@ -35,6 +35,6 @@ export default function Lab() {
       <span>公開HTTPS画像・既知の変換queryのみ。配信routeは既定で無効です。SVGや非対応画像は代替表示。</span>
     </form>
     <CanvasImageProvider><CanvasScene items={ids.map(id => ({ id, content: <LabCard id={id} image={image} /> }))} /></CanvasImageProvider>
-    <p id="lab-help" className="bg-white px-4 py-2 text-xs text-zinc-700">初期状態は外部通信なしの固定fixtureです。画像URLを指定した場合だけ有効化された限定環境では安全取得route経由で取得します。native表示・クリック・Tab・入力・ズーム・DOM切替・追加削除を検証できます。</p>
+    <p id="lab-help" className="bg-white px-4 py-2 text-xs text-zinc-700">初期状態は外部通信なしの固定fixtureです。画像URLを指定した場合だけ有効化された限定環境では安全取得route経由で取得します。native表示・クリック・Tab・入力・縦スクロール・DOM切替・追加削除を検証できます。</p>
   </main>;
 }

@@ -73,7 +73,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     unmount();
     expect(frames.size).toBe(0);
   });
-  it("native描画に現在位置を渡し、zoomで待機timelineを再開しない", () => {
+  it("native描画に現在位置を渡し、縦scrollで待機timelineを再開しない", () => {
     const draw = vi.fn();
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({ resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw } as unknown as CanvasRenderingContext2D);
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'requestPaint');
@@ -86,7 +86,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       flushFrame(16); flushFrame(48);
       const a = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
       const before = Number(a.dataset.sceneDelay);
-      fireEvent.click(screen.getByRole('button', { name:'拡大' }));
+      const viewport = screen.getByLabelText('カード領域。縦スクロールで移動');
+      viewport.scrollTop = 80; fireEvent.scroll(viewport);
       flushFrame(64);
       expect(Number(a.dataset.sceneDelay)).toBeLessThanOrEqual(before);
       const call = draw.mock.calls.filter(call => call[0] === a).at(-1)!;
@@ -175,29 +176,42 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     }
   });
 
-  it("ズームボタンは中心を維持し、範囲制限と原点復帰を反映する", () => {
+  it("アプリ倍率と横位置を固定し、native縦scrollだけを反映する", () => {
     render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);
     flushFrame();
     const card = document.querySelector<HTMLElement>("[data-scene-card]")!;
-    fireEvent.click(screen.getByRole("button", { name: "拡大" }));
+    const host = screen.getByLabelText('カード領域。縦スクロールで移動');
+    expect(screen.queryByRole('button', {name:'拡大'})).toBeNull();
+    expect(screen.queryByRole('button', {name:'縮小'})).toBeNull();
+    expect(host.style.touchAction).not.toBe('none');
+    const wheel = new WheelEvent('wheel', {deltaX:100,deltaY:100,ctrlKey:true,bubbles:true,cancelable:true});
+    host.dispatchEvent(wheel);
+    expect(wheel.defaultPrevented).toBe(false);
+    expect(card.style.transform).toBe('translate(16px,16px) scale(1)');
+    host.scrollTop = 120; host.scrollLeft = 100; fireEvent.scroll(host); flushFrame(16);
+    expect(host.scrollLeft).toBe(0);
+    expect(card.style.transform).toBe('translate(16px,-104px) scale(1)');
+    fireEvent.pointerDown(host, {button:0,clientX:200,clientY:200,pointerId:1});
+    fireEvent.pointerMove(host, {clientX:500,clientY:500,pointerId:1}); flushFrame(32);
+    expect(card.style.transform).toBe('translate(16px,-104px) scale(1)');
+    fireEvent.click(screen.getByRole('button', {name:'先頭に戻る'})); flushFrame(48);
+    expect(host.scrollTop).toBe(0);
+    expect(card.style.transform).toBe('translate(16px,16px) scale(1)');
+  });
+  it("縦scroll位置と描画extentをmode切替後も維持する", () => {
+    render(<CanvasScene items={Array.from({length:12}, (_,i) => ({id:String(i),content:<span>{i}</span>}))} />);
     flushFrame();
-    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("125%");
-    expect(card.style.transform).toBe("translate(-80px,-55px) scale(1.25)");
-    fireEvent.click(screen.getByRole("button", { name: "縮小" }));
-    flushFrame();
-    expect(card.style.transform).toBe("translate(16px,16px) scale(1)");
-    for (let i = 0; i < 10; i++) fireEvent.click(screen.getByRole("button", { name: "拡大" }));
-    flushFrame();
-    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("200%");
-    expect((screen.getByRole("button", { name: "拡大" }) as HTMLButtonElement).disabled).toBe(true);
-    for (let i = 0; i < 15; i++) fireEvent.click(screen.getByRole("button", { name: "縮小" }));
-    flushFrame();
-    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("35%");
-    expect((screen.getByRole("button", { name: "縮小" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(screen.getByRole("button", { name: "原点に戻る" }));
-    flushFrame();
-    expect(screen.getByLabelText("ズーム倍率").textContent).toBe("100%");
-    expect(card.style.transform).toBe("translate(16px,16px) scale(1)");
+    const host = screen.getByLabelText('カード領域。縦スクロールで移動');
+    const extent = host.firstElementChild as HTMLElement;
+    expect(Number.parseFloat(extent.style.height)).toBeGreaterThan(600);
+    expect((extent.firstElementChild as HTMLElement).style.height).toBe('600px');
+    expect(extent.firstElementChild!.classList.contains('overflow-clip')).toBe(true);
+    host.scrollTop = 150; fireEvent.scroll(host); flushFrame(16);
+    const first = document.querySelector<HTMLElement>('[data-scene-card="0"]')!;
+    const before = first.style.transform;
+    fireEvent.click(screen.getByRole('button', {name:'DOMに切替'})); flushFrame(32);
+    expect(host.scrollTop).toBe(150);
+    expect(first.style.transform).toBe(before);
   });
   it("DOM fallback内の実際のボタンがReactハンドラを呼ぶ", () => {
     render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);

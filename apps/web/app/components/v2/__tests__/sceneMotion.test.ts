@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { planSceneLayout, zoomCamera, type SceneBox } from '../scene';
+import { planSceneLayout, type SceneBox } from '../scene';
 import {
   advanceSceneMotion, createSceneMotion, retargetSceneMotion, sceneMotionBoxes,
   SCENE_MAX_DELAY_MS, SCENE_MAX_FRAME_MS, type SceneMotionState,
@@ -175,11 +175,9 @@ describe('V2の決定的なドミノモーション', () => {
     expect(targets.get('a')!.y).toBe(16);
   });
 
-  it('zoomやpanのカメラ座標はモーションのワールド座標に混ざらない', () => {
+  it('再描画のため同じtargetを渡してもモーションのワールド座標を変えない', () => {
     const state = run(inserted(), 160);
     const snapshot = sceneMotionBoxes(state);
-    const camera = zoomCamera({ x: -100, y: 80, zoom: 1 }, 1.8, 400, 300);
-    expect(camera.zoom).toBe(1.8);
     expect(sceneMotionBoxes(state)).toEqual(snapshot);
     const target = new Map([...state.cards].map(([id, card]) => [id, card.target]));
     expect(sceneMotionBoxes(retargetSceneMotion(state, target))).toEqual(snapshot);

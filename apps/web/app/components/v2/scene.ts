@@ -1,6 +1,6 @@
 /** V2の配置とモーションはカメラから独立したCSS pxのワールド座標で扱う。 */
 export interface SceneBox { x: number; y: number; width: number; height: number }
-export interface Camera { x: number; y: number; zoom: number }
+export interface Camera { x: 0; y: number; zoom: 1 }
 export interface SceneLayoutResult {
   boxes: Map<string, SceneBox>;
   chainOrder: Map<string, number>;
@@ -137,11 +137,6 @@ export function layoutScene(
   previous: ReadonlyMap<string, SceneBox>, held: ReadonlySet<string> = EMPTY_IDS,
 ): Map<string, SceneBox> {
   return planSceneLayout(ids, heights, viewport, previous, held).boxes;
-}
-export function zoomCamera(camera: Camera, zoom: number, x: number, y: number): Camera {
-  const next = Math.max(0.35, Math.min(2, zoom));
-  const ratio = next / camera.zoom;
-  return { x: x - (x - camera.x) * ratio, y: y - (y - camera.y) * ratio, zoom: next };
 }
 export type CanvasMode = 'modern' | 'legacy' | 'dom';
 export interface DrawableContext extends CanvasRenderingContext2D {

@@ -152,3 +152,11 @@ V1と同じ100msの連鎖差、stiffness300/damping30の減衰ばねを使い、
 layout再計測はitems/hold/ResizeObserver/画像load等が変わった時だけ行い、cameraだけのpan/zoomは描画のみ。native drawElementImageとDOM fallbackは同じ現在座標を使用し、hit geometryもnative描画位置に追従させる。操作中/focusカードは目標ではなく実表示位置で固定し、手動DOM/native切替でも現在位置・速度・待機・目標を保持する。reduced-motionでは即配置し、設定変更イベントにも応答する。
 
 実機観察用のDOM属性: 各[data-scene-card]のdata-scene-x/yは現在ワールド座標、data-scene-target-x/yは目標、data-scene-phaseはwaiting/moving/settled/held、data-scene-delayは残待機ms。viewportのdata-scene-motionはanimating/settled/reduced。これらは同一描画フレームの値で、画面座標はcameraのpan/zoomを別途合成する。native描画・座標クリック・新着の連鎖は、署名や投稿をせず認証済み実フィードの自然到着で確認する。単体/mockやlabのみで実フィードE2E完了とは扱わない。
+
+## 縦スクロールのみの操作へ整理
+
+ユーザーの希望に合わせV2のアプリ内拡大縮小・自由panを撤去する。倍率は1、横cameraは0に固定し、ズームボタン・Ctrl/Meta wheelによるアプリ拡大・余白drag・独自方向キー移動を削除する。ブラウザ自体のアクセシビリティ用ページzoomは妨げない。
+
+viewportを通常のoverflow-y:auto/overflow-x:hiddenへ変更し、ホイール・touch・キーボード・スクロールバーの縦移動をブラウザへ任せる。current/target両方の最下端をextent高さに反映し、その内側のviewport高さのsticky描画layerへnative canvasとDOMfallbackを置く。layerはoverflow:clipとして独立したscroll containerにせず、focus時の二重offsetを防ぐ。cameraY=-scrollTopを一度だけ合成し、scrollイベントは再描画だけを要求する。scroll anchoringを無効化し、focus revealも必要最小限の縦移動だけにする。先頭ボタンはscrollTopを0に戻す。
+
+ドミノのworld座標・spring・hold・reduced-motionは維持。labも同じ操作仕様と案内に揃える。従来節のpan/zoomは過去版の検証履歴で、現在の機能ではない。今回のsticky/native scrollの実フィード検証は接続環境復旧後に行い、jsdomテストのみで実機完了とは扱わない。

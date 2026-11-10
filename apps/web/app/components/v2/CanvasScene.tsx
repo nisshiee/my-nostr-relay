@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { detectCanvasMode, planSceneLayout, zoomCamera, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
+import { detectCanvasMode, planSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
 
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
@@ -36,17 +36,18 @@ function MountedCardRoot({ item, register }: CardRootProps) {
 export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const viewport = useRef<HTMLDivElement>(null);
   const canvas = useRef<DrawableCanvas>(null);
+  const extent = useRef<HTMLDivElement>(null);
+  const layer = useRef<HTMLDivElement>(null);
   const fallback = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<string, HTMLDivElement>());
   const savedBoxes = useRef(new Map<string, SceneBox>());
   const savedMotion = useRef<SceneMotionState | null>(null);
   const savedTargets = useRef(new Map<string, SceneBox>());
   const savedColumns = useRef<number | undefined>(undefined);
-  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; zoomBy: (factor: number) => void; camera: Camera } | null>(null);
+  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
   const [forcedDOM, setForcedDOM] = useState(false);
-  const [zoom, setZoom] = useState(100);
   const [register] = useState(() => (id: string, node: HTMLDivElement | null) => {
     const old = nodes.current.get(id);
     if (node) { nodes.current.set(id, node); runtime.current?.attach(node); }
@@ -75,8 +76,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     let disposed = false;
     let painted = false;
     const watchdog: { timer?: ReturnType<typeof setTimeout> } = {};
-    let camera: Camera = runtime.current?.camera ?? { x: 0, y: 0, zoom: 1 };
-    let dragging: { x: number; y: number; id: number } | null = null;
+    let camera: Camera = { x: 0, y: -host.scrollTop, zoom: 1 };
     const heights = new Map<string, number>();
     const localHeld = new Set<string>();
     let revealFocus = false;
@@ -128,9 +128,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       frame = requestAnimationFrame(time => {
         frame = 0;
         const rect = host.getBoundingClientRect();
+        const viewportWidth = host.clientWidth || rect.width;
+        const viewportHeight = host.clientHeight || rect.height;
+        layer.current!.style.height = `${viewportHeight}px`;
         const dpr = window.devicePixelRatio || 1;
-        const w = Math.max(1, Math.round(rect.width * dpr));
-        const h = Math.max(1, Math.round(rect.height * dpr));
+        const w = Math.max(1, Math.round(viewportWidth * dpr));
+        const h = Math.max(1, Math.round(viewportHeight * dpr));
         if (surface.width !== w) surface.width = w;
         if (surface.height !== h) surface.height = h;
         if (layoutDirty) {
@@ -143,12 +146,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
               parent.appendChild(node);
             }
             const measuredWidth = held.has(id) ? boxes.get(id)?.width : undefined;
-            node.style.width = `${measuredWidth ?? Math.max(160, Math.min(360, rect.width - 32))}px`;
+            node.style.width = `${measuredWidth ?? Math.max(160, Math.min(360, viewportWidth - 32))}px`;
             heights.set(id, node.offsetHeight || 180);
             if (!observed.has(node)) { observer.observe(node); observed.add(node); }
           }
           for (const node of observed) if (!Array.from(nodes.current.values()).includes(node as HTMLDivElement)) { observer.unobserve(node); observed.delete(node); }
-          const plan = planSceneLayout(current.current.items.map(item => item.id), heights, rect.width, targets, held, boxes, columnCount);
+          const plan = planSceneLayout(current.current.items.map(item => item.id), heights, viewportWidth, targets, held, boxes, columnCount);
           columnCount = plan.columnCount;
           targets = plan.boxes;
           motion = retargetSceneMotion(motion, targets, { chainOrder: plan.chainOrder, heldIds: held, reducedMotion });
@@ -157,6 +160,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         motion = advanceSceneMotion(motion, lastFrameTime === null ? 0 : Math.max(0, time - lastFrameTime), { heldIds: new Set([...current.current.heldIds, ...localHeld]), reducedMotion });
         lastFrameTime = time;
         boxes = sceneMotionBoxes(motion);
+        const bottom = Math.max(viewportHeight, ...[...boxes.values(), ...targets.values()].map(box => box.y + box.height + 16));
+        extent.current!.style.height = `${bottom}px`;
+        host.scrollLeft = 0;
+        camera = { x: 0, y: -host.scrollTop, zoom: 1 };
         host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
         if (revealFocus) { revealFocus = false; reveal(document.activeElement); }
         savedBoxes.current = boxes;
@@ -200,38 +207,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         refresh();
       }
     };
-    const interactive = (target: EventTarget | null) => target instanceof Element && !!target.closest('[data-scene-card]');
-    const wheel = (event: WheelEvent) => {
-      // 入力欄・カード内スクロールのネイティブ操作は奪わない。
-      if (event.target instanceof Element && event.target.closest('textarea, input, [data-scene-scroll]')) return;
-      event.preventDefault();
-      if (event.ctrlKey || event.metaKey) {
-        const rect = host.getBoundingClientRect();
-        camera = zoomCamera(camera, camera.zoom * Math.exp(-event.deltaY * 0.005), event.clientX - rect.left, event.clientY - rect.top);
-      } else camera = { ...camera, x: camera.x - event.deltaX, y: camera.y - event.deltaY };
-      setZoom(Math.round(camera.zoom * 100));
-      requestFrame();
-    };
-    const down = (event: PointerEvent) => {
-      if (interactive(event.target) || event.button !== 0) return;
-      dragging = { x: event.clientX, y: event.clientY, id: event.pointerId };
-      host.setPointerCapture(event.pointerId);
-    };
-    const move = (event: PointerEvent) => {
-      if (!dragging || event.pointerId !== dragging.id) return;
-      camera = { ...camera, x: camera.x + event.clientX - dragging.x, y: camera.y + event.clientY - dragging.y };
-      dragging.x = event.clientX; dragging.y = event.clientY;
-      requestFrame();
-    };
-    const up = () => { dragging = null; };
-    const key = (event: KeyboardEvent) => {
-      if (event.target !== host) return;
-      const dy = event.key === 'ArrowDown' ? -80 : event.key === 'ArrowUp' ? 80 : 0;
-      if (event.key === 'Home') camera = { x: 0, y: 0, zoom: 1 };
-      else if (dy) camera = { ...camera, y: camera.y + dy };
-      else return;
-      event.preventDefault(); requestFrame(); setZoom(Math.round(camera.zoom * 100));
-    };
+    // ホイール・touch・キーボードはブラウザの縦スクロールへ任せる。
+    const scroll = () => { host.scrollLeft = 0; requestFrame(); };
     const reveal = (target: EventTarget | null) => {
       const node = target instanceof Element ? target.closest<HTMLElement>('[data-scene-card]') : null;
       const box = node?.dataset.sceneCard ? boxes.get(node.dataset.sceneCard) : null;
@@ -242,8 +219,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       const controlHeight = cursor?.offsetHeight ?? box.height;
       while (cursor && cursor !== node && node?.contains(cursor)) { offsetY += cursor.offsetTop; cursor = cursor.offsetParent as HTMLElement | null; }
       const top = box.y + offsetY;
-      if (camera.y + top * camera.zoom < 0 || camera.y + (top + controlHeight) * camera.zoom > r.height || camera.x + box.x * camera.zoom < 0 || camera.x + (box.x + box.width) * camera.zoom > r.width) {
-        camera = { ...camera, x: 16 - box.x * camera.zoom, y: 16 - top * camera.zoom }; requestFrame();
+      if (top < host.scrollTop || top + controlHeight > host.scrollTop + r.height) {
+        host.scrollTop = Math.max(0, top < host.scrollTop || controlHeight >= r.height ? top - 16 : top + controlHeight - r.height + 16);
+        camera = { x: 0, y: -host.scrollTop, zoom: 1 };
+        requestFrame();
       }
     };
     const focus = (event: FocusEvent) => {
@@ -252,48 +231,40 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       revealFocus = true; refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, zoomBy: factor => {
-      const rect = host.getBoundingClientRect();
-      camera = zoomCamera(camera, camera.zoom * factor, rect.width / 2, rect.height / 2);
-      setZoom(Math.round(camera.zoom * 100));
-      requestFrame();
-    }, reset: () => { camera = { x: 0, y: 0, zoom: 1 }; requestFrame(); }, attach: node => {
+    runtime.current = { refresh, camera, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
     } };
     surface.addEventListener('paint', paint);
     // 固定サイズ画像の読込完了でもnative再描画を要求する。
     host.addEventListener('canvas-image-ready', refresh);
-    host.addEventListener('wheel', wheel, { passive: false });
-    host.addEventListener('pointerdown', down); host.addEventListener('pointermove', move);
-    host.addEventListener('pointerup', up); host.addEventListener('pointercancel', up); host.addEventListener('lostpointercapture', up);
-    host.addEventListener('keydown', key); host.addEventListener('focusin', focus); host.addEventListener('focusout', blur);
+    host.addEventListener('scroll', scroll, { passive: true });
+    host.addEventListener('focusin', focus); host.addEventListener('focusout', blur);
     window.addEventListener('resize', refresh);
     changeMode(mode); refresh();
     return () => {
       media?.removeEventListener('change', preference);
       disposed = true; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect();
-      surface.removeEventListener('paint', paint); host.removeEventListener('wheel', wheel);
+      surface.removeEventListener('paint', paint); host.removeEventListener('scroll', scroll);
       host.removeEventListener('canvas-image-ready', refresh);
-      host.removeEventListener('pointerdown', down); host.removeEventListener('pointermove', move);
-      host.removeEventListener('pointerup', up); host.removeEventListener('pointercancel', up); host.removeEventListener('lostpointercapture', up);
-      host.removeEventListener('keydown', key); host.removeEventListener('focusin', focus); host.removeEventListener('focusout', blur); window.removeEventListener('resize', refresh);
+      host.removeEventListener('focusin', focus); host.removeEventListener('focusout', blur); window.removeEventListener('resize', refresh);
     };
   }, [forcedDOM]);
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="V2 canvas">
     <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
       <span role="status" data-renderer-status>{status}</span>
-      <button type="button" aria-label="縮小" title="縮小" disabled={zoom <= 35} onClick={() => runtime.current?.zoomBy(1 / 1.25)} className="rounded border px-2 py-1 disabled:opacity-40">−</button>
-      <span aria-label="ズーム倍率" aria-live="polite">{zoom}%</span>
-      <button type="button" aria-label="拡大" title="拡大" disabled={zoom >= 200} onClick={() => runtime.current?.zoomBy(1.25)} className="rounded border px-2 py-1 disabled:opacity-40">＋</button>
       <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-2 py-1">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>
-      <button type="button" onClick={() => { if (runtime.current) { runtime.current.reset(); setZoom(100); } }} className="rounded border px-2 py-1">原点に戻る</button>
-      <span>余白ドラッグ / スクロール / Ctrl+ホイールでズーム</span>
+      <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
+      <span>縦スクロールで移動</span>
     </div>
-    <div ref={viewport} tabIndex={0} aria-label="カード領域。上下キーで移動、Homeで原点" className="relative min-h-0 flex-1 overflow-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'none' }}>
-      <canvas ref={canvas} className="absolute inset-0 h-full w-full" aria-label="ライブカード" />
-      <div ref={fallback} className="absolute inset-0" />
+    <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
+      <div ref={extent} className="relative w-full" style={{ overflowAnchor: 'none' }}>
+        <div ref={layer} className="sticky top-0 w-full overflow-clip">
+          <canvas ref={canvas} className="absolute inset-0 h-full w-full" aria-label="ライブカード" />
+          <div ref={fallback} className="absolute inset-0" />
+        </div>
+      </div>
       {items.map(item => <CardRoot key={item.id} item={item} register={register} />)}
     </div>
   </section>;
