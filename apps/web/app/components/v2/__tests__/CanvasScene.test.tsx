@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { CanvasScene } from "../CanvasScene";
-import { buildInitialLayout, insertCard } from "../../../lib/layoutEngine";
+import { buildInitialLayout, insertCard, reflow } from "../../../lib/layoutEngine";
 import type { Card } from "../../../lib/types";
 
 let frames: Map<number, FrameRequestCallback>;
@@ -58,7 +58,7 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
-  it("押出し後に次の入力やscore tickなしで一度だけ隙間を詰める", () => {
+  it("新着の最初から詰めた目標へ動き、二段目の再配置をしない", () => {
     vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ x:0,y:0,top:0,left:0,right:400,bottom:600,width:400,height:600,toJSON() {} });
     const heights: Record<string, number> = { a:200, b:120, new:40 };
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return heights[this.dataset.sceneCard ?? ''] ?? 120; });
@@ -71,18 +71,13 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     flushFrame(16);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const host = screen.getByLabelText('カード領域。縦スクロールで移動');
-    expect(Number(node.dataset.sceneTargetY)).toBe(228);
-    expect(host.dataset.sceneCompaction).toBe('pending');
-    let sawCompaction = false;
+    expect(Number(node.dataset.sceneTargetY)).toBe(68);
+    expect(Number(node.dataset.sceneY)).toBeLessThan(68);
+    expect(Number(node.dataset.sceneDelay)).toBeGreaterThan(0);
     for(let time=32; time<5000 && frames.size; time+=16) {
       flushFrame(time);
-      if(Number(node.dataset.sceneTargetY) === 68) {
-        sawCompaction = true;
-        expect(host.dataset.sceneCompaction).toBe('idle');
-        expect(Number(node.dataset.sceneDelay)).toBe(0);
-      }
+      expect(Number(node.dataset.sceneTargetY)).toBe(68);
     }
-    expect(sawCompaction).toBe(true);
     expect(Number(node.dataset.sceneY)).toBeCloseTo(68,1);
     expect(Number(document.querySelector<HTMLElement>('[data-scene-card="b"]')!.dataset.sceneY)).toBeCloseTo(280,1);
     expect(frames.size).toBe(0);
@@ -112,10 +107,10 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     rerender(<CanvasScene items={items([added, ...cards])} />);
     flushFrame(16);
     const inserted = insertCard(initial.grid, added, [added, ...cards], 2, heights, new Set());
-    assertGrid(inserted.grid);
+    assertGrid(reflow(inserted.grid, [added, ...cards], 2, heights).grid);
     fireEvent.click(screen.getByRole('button', { name: 'DOMに切替' }));
     flushFrame(32);
-    assertGrid(inserted.grid);
+    assertGrid(reflow(inserted.grid, [added, ...cards], 2, heights).grid);
   });
 
   it("新着で現在位置とtargetを分け、時間差を経て下へ移動し停止する", () => {

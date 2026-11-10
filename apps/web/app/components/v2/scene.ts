@@ -13,8 +13,6 @@ export interface SceneLayoutResult {
   columnCount: number;
 }
 export interface SceneLayoutState extends SceneLayoutResult {
-  /** 新着の押し出しが落ち着いた後、一度だけ列内の空隙を詰める。 */
-  pendingCompaction: boolean;
   /** V1エンジンの論理座標。holdの表示座標をここへ書き戻さない。 */
   grid: Grid;
   engineBoxes: Map<string, SceneBox>;
@@ -30,7 +28,6 @@ export interface SceneLayoutState extends SceneLayoutResult {
 
 const MARGIN = 16;
 const EMPTY_IDS: ReadonlySet<string> = new Set();
-const EMPTY_HEIGHTS: ReadonlyMap<string, number> = new Map();
 
 function validHeights(heights: ReadonlyMap<string, number>): Map<string, number> {
   return new Map([...heights].filter(([, height]) => Number.isFinite(height) && height >= 0));
@@ -81,12 +78,13 @@ function cardsFor(items: readonly SceneLayoutItem[]): Card[] {
 export function createSceneLayout(): SceneLayoutState {
   return {
     boxes: new Map(), engineBoxes: new Map(), grid: new Map(), frozenBoxes: new Map(),
-    chainOrder: new Map(), previousIds: new Set(), columnCount: 0, inputs: null, pendingCompaction: false,
+    chainOrder: new Map(), previousIds: new Set(), columnCount: 0, inputs: null,
   };
 }
 
 /**
- * V1と同じ初期配置・逐次挿入・reflow・遅延保持のライフサイクル。
+ * V1と同じ初期配置・引力による逐次挿入・通常reflow・遅延保持を使う。
+ * V2では新着を全て挿入した後に一度だけ空隙を詰め、その最終位置へ直接動かす。
  * 引力はV1のCardメタデータをそのまま使い、縦gap12と未測定高さ120も引き継ぐ。
  * V2の余白と横幅だけを表示変換し、hold中は実表示座標を別Mapで固定する。
  */
@@ -110,17 +108,16 @@ export function updateSceneLayout(
       item.id === inputs.items[index].id && item.card === inputs.items[index].card) &&
     heightMap.size === inputs.heights.size && [...heightMap].every(([id, height]) => inputs.heights.get(id) === height) &&
     heldIds.size === inputs.heldIds.size && [...heldIds].every(id => inputs.heldIds.has(id));
-  // 再描画やrenderer切替だけでinsert直後の空隙を詰め直さない。
+  // 再描画やrenderer切替だけで配置や連鎖を作り直さない。
   if (sameInputs && inputs.width === width) return state;
   let grid: Grid;
   let nextChain: ReadonlyMap<string, number>;
-  let pendingCompaction = false;
+  let inserted = false;
 
   if (sameInputs) {
     // 同じ列数で横幅だけ変わった場合は描画変換のみを更新する。
     grid = state.grid;
     nextChain = state.chainOrder;
-    pendingCompaction = state.pendingCompaction;
   } else if (rebuild) {
     const result = buildInitialLayout(cards, columnCount, heightMap);
     grid = result.grid;
@@ -128,7 +125,7 @@ export function updateSceneLayout(
   } else {
     const incoming = cards.filter(card => !state.previousIds.has(card.slotId) && !state.grid.has(card.slotId));
     if (incoming.length) {
-      pendingCompaction = true;
+      inserted = true;
       grid = state.grid;
       const mergedChain = new Map<string, number>();
       for (const card of incoming) {
@@ -147,34 +144,13 @@ export function updateSceneLayout(
   // V1と同じく挿入処理後に削除を反映する。高さ変更だけでは直前の連鎖を消さない。
   const cleanGrid = new Map<string, Placement>();
   for (const [id, placement] of grid) if (previousIds.has(id)) cleanGrid.set(id, { ...placement });
+  // 引力が選んだ列・列内順序・連鎖は保持し、途中の押し出し先を表示目標にはしない。
+  const finalGrid = inserted ? reflow(cleanGrid, cards, columnCount, heightMap).grid : cleanGrid;
   const chainOrder = new Map(nextChain.size ? nextChain : rebuild ? [] : state.chainOrder);
   return {
-    ...projectBoxes(cleanGrid, width, heightMap, heldIds, state.frozenBoxes, currentBoxes),
-    grid: cleanGrid, previousIds, chainOrder, columnCount, pendingCompaction,
+    ...projectBoxes(finalGrid, width, heightMap, heldIds, state.frozenBoxes, currentBoxes),
+    grid: finalGrid, previousIds, chainOrder, columnCount,
     inputs: { items: uniqueItems.map(item => ({ ...item })), heights: heightMap, heldIds: new Set(heldIds), width },
-  };
-}
-
-/**
- * V2専用の二段目。押し出しのモーション完了後に一度だけ呼び、列と旧y順を
- * 変えず空隙を詰める。新たなドミノ待機は付けず、holdの実表示位置も変えない。
- */
-export function compactSceneLayout(
-  state: SceneLayoutState,
-  heights: ReadonlyMap<string, number> = state.inputs?.heights ?? EMPTY_HEIGHTS,
-  heldIds: ReadonlySet<string> = state.inputs?.heldIds ?? EMPTY_IDS,
-  currentBoxes: ReadonlyMap<string, SceneBox> = state.boxes,
-): SceneLayoutState {
-  if (!state.pendingCompaction) return state;
-  const inputs = state.inputs;
-  if (!inputs) return { ...state, pendingCompaction: false, chainOrder: new Map() };
-  const heightMap = validHeights(heights);
-  const grid = reflow(state.grid, cardsFor(inputs.items), state.columnCount, heightMap).grid;
-  return {
-    ...state,
-    ...projectBoxes(grid, inputs.width, heightMap, heldIds, state.frozenBoxes, currentBoxes),
-    grid, chainOrder: new Map(), pendingCompaction: false,
-    inputs: { ...inputs, heights: heightMap, heldIds: new Set(heldIds) },
   };
 }
 

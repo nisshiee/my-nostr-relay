@@ -1,189 +1,174 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import * as layoutEngine from '../../../lib/layoutEngine';
 import { buildInitialLayout, insertCard, reflow } from '../../../lib/layoutEngine';
 import { DEFAULT_CARD_HEIGHT, GAP } from '../../../lib/constants';
 import type { Grid, Placement } from '../../../lib/layoutTypes';
 import type { Card, NoteCard } from '../../../lib/types';
 import {
-  compactSceneLayout, createSceneLayout, detectCanvasMode, layoutScene, planSceneLayout, updateSceneLayout,
+  createSceneLayout, detectCanvasMode, layoutScene, planSceneLayout, updateSceneLayout,
   type SceneLayoutState,
 } from '../scene';
+import { createSceneMotion, retargetSceneMotion } from '../sceneMotion';
 
 const note = (slotId: string, score: number, pubkey = slotId): NoteCard => ({
   type: 'note', slotId, score, pubkey, eventId: `event-${slotId}`, content: '', tags: [], created_at: 0,
 });
 
-describe('V2だけの一度きりの空隙詰め', () => {
+const items = (cards: readonly Card[]) => cards.map(card => ({ id: card.slotId, card }));
+const viewport = (columns: number) => columns * 400;
+const base = () => [note('a', 0.9), note('b', 0.8), note('c', 0.7), note('d', 0.6)];
+
+describe('V2の新着と同時に隙間のない最終位置を計算する', () => {
   function gapFixture() {
     const cards = [note('a', 2), note('b', 1)];
     const heights = new Map([['a', 200], ['b', 120], ['new', 40]]);
     const first = updateSceneLayout(createSceneLayout(), items(cards), heights, 400);
     const nextCards = [note('new', 3), ...cards];
-    const inserted = updateSceneLayout(first, items(nextCards), heights, 400);
-    return { cards, nextCards, heights, first, inserted };
+    const raw = insertCard(first.grid, nextCards[0], nextCards, 1, heights, new Set());
+    const result = updateSceneLayout(first, items(nextCards), heights, 400);
+    return { cards, nextCards, heights, first, raw, result };
   }
 
-  it('初期配置では予約せず、挿入直後のV1押し出し位置と連鎖をそのまま保持する', () => {
-    const { cards, nextCards, heights, first, inserted } = gapFixture();
-    expect(first.pendingCompaction).toBe(false);
-    expect(compactSceneLayout(first)).toBe(first);
-    expect(inserted.pendingCompaction).toBe(true);
-    expectOracle(inserted, oracleStep(oracleStep(emptyOracle(), cards, 1, heights), nextCards, 1, heights), heights);
-    expect(inserted.grid.get('new')).toEqual({ col: 0, y: 0 });
-    expect(inserted.grid.get('a')).toEqual({ col: 0, y: 212 });
-    expect(inserted.grid.get('b')).toEqual({ col: 0, y: 424 });
-    expect(inserted.boxes.get('a')!.y).toBe(228);
-    expect(inserted.chainOrder.get('a')).toBe(1);
+  it('一度下がってから上がる中間位置を返さず、到着時点で最終目標と元の連鎖を返す', () => {
+    const { nextCards, heights, raw, result } = gapFixture();
+    expect(raw.grid.get('a')).toEqual({ col: 0, y: 212 });
+    expect(raw.grid.get('b')).toEqual({ col: 0, y: 424 });
+    expect(result.grid).toEqual(reflow(raw.grid, nextCards, 1, heights).grid);
+    expect(result.grid.get('a')).toEqual({ col: 0, y: 52 });
+    expect(result.grid.get('b')).toEqual({ col: 0, y: 264 });
+    expect(result.boxes.get('a')!.y).toBe(68);
+    expect(result.boxes.get('b')!.y).toBe(280);
+    expect(result.chainOrder).toEqual(raw.chain.chainOrder);
+    expect(result.chainOrder.get('a')).toBe(1);
+    expect(result.chainOrder.get('b')).toBe(2);
+    expect(result).not.toHaveProperty('pendingCompaction');
   });
 
-  it('明示的に完了通知を受けたときだけ隙間を詰め、追加ドミノ待機を付けない', () => {
-    const { nextCards, heights, inserted } = gapFixture();
-    const waiting = updateSceneLayout(inserted, items(nextCards), heights, 400);
-    expect(waiting).toBe(inserted);
-    expect(waiting.grid.get('a')!.y).toBe(212);
-    const compacted = compactSceneLayout(waiting);
-    expect(compacted.grid).toEqual(reflow(inserted.grid, nextCards, 1, heights).grid);
-    expect(compacted.grid.get('a')).toEqual({ col: 0, y: 52 });
-    expect(compacted.grid.get('b')).toEqual({ col: 0, y: 264 });
-    expect(compacted.boxes.get('a')!.y).toBe(68);
-    expect(compacted.boxes.get('b')!.y).toBe(280);
-    expect(compacted.chainOrder.size).toBe(0);
-    expect(compacted.pendingCompaction).toBe(false);
-    expect(compactSceneLayout(compacted)).toBe(compacted);
-    expect(updateSceneLayout(compacted, items(nextCards), heights, 400)).toBe(compacted);
-  });
-
-  it('隙間がなくても予約を一度で消化し、描画ループを発生させない', () => {
-    const cards = [note('a', 2), note('b', 1)];
-    const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 400);
-    const nextCards = [note('new', 3), ...cards];
-    const inserted = updateSceneLayout(first, items(nextCards), new Map(), 400);
-    const compacted = compactSceneLayout(inserted);
-    expect(compacted.grid).toEqual(inserted.grid);
-    expect(compacted.boxes).toEqual(inserted.boxes);
-    expect(compacted.pendingCompaction).toBe(false);
-    expect(compacted.chainOrder.size).toBe(0);
-    expect(compactSceneLayout(compacted)).toBe(compacted);
-  });
-
-  it('renderer切替と同列数の幅変更は空隙詰めの予約を失わない', () => {
-    const { nextCards, heights, inserted } = gapFixture();
-    const unchanged = updateSceneLayout(inserted, items(nextCards), new Map(heights), 400, new Set());
-    expect(unchanged).toBe(inserted);
-    const resized = updateSceneLayout(unchanged, items(nextCards), heights, 340);
-    expect(resized.pendingCompaction).toBe(true);
-    expect(resized.grid).toEqual(inserted.grid);
-    const compacted = compactSceneLayout(resized);
-    expect(compacted.pendingCompaction).toBe(false);
-    expect(compacted.boxes.get('a')!.width).toBe(308);
-    expect(compacted.boxes.get('a')!.y).toBe(68);
-  });
-
-  it('通常の高さ・削除・score・hold更新や列数変更ですでに再配置したら予約を消す', () => {
-    const { nextCards, heights, inserted } = gapFixture();
-    const changedHeights = new Map(heights).set('a', 210);
-    const changedScores = nextCards.map(card => ({ ...card, score: card.score * 0.9 }));
-    const updates = [
-      updateSceneLayout(inserted, items(nextCards), changedHeights, 400),
-      updateSceneLayout(inserted, items(nextCards.filter(card => card.slotId !== 'b')), heights, 400),
-      updateSceneLayout(inserted, items(changedScores), heights, 400),
-      updateSceneLayout(inserted, items(nextCards), heights, 400, new Set(['a'])),
-      updateSceneLayout(inserted, items(nextCards), heights, 800),
-    ];
-    for (const updated of updates) {
-      expect(updated.pendingCompaction).toBe(false);
-      expect(compactSceneLayout(updated)).toBe(updated);
+  it('全burstを逐次挿入して削除を反映した後にだけ一回reflowする', () => {
+    const { first, heights, cards } = gapFixture();
+    const nextCards = [note('new1', 4), note('new2', 3), cards[0]];
+    const nextHeights = new Map(heights).set('new1', 40).set('new2', 60);
+    const firstInsertion = insertCard(first.grid, nextCards[0], nextCards, 1, nextHeights, new Set());
+    const secondInsertion = insertCard(firstInsertion.grid, nextCards[1], nextCards, 1, nextHeights, new Set());
+    const mergedChain = new Map(firstInsertion.chain.chainOrder);
+    for (const [id, order] of secondInsertion.chain.chainOrder) mergedChain.set(id, order);
+    const cleaned = new Map([...secondInsertion.grid].filter(([id]) => id !== 'b'));
+    const finalGrid = reflow(cleaned, nextCards, 1, nextHeights).grid;
+    const insertSpy = vi.spyOn(layoutEngine, 'insertCard');
+    const reflowSpy = vi.spyOn(layoutEngine, 'reflow');
+    try {
+      const result = updateSceneLayout(first, items(nextCards), nextHeights, 400);
+      expect(insertSpy).toHaveBeenCalledTimes(2);
+      expect(insertSpy.mock.calls[0][0].has('b')).toBe(true);
+      expect(insertSpy.mock.calls[1][0]).toEqual(firstInsertion.grid);
+      expect(reflowSpy).toHaveBeenCalledTimes(1);
+      expect(reflowSpy.mock.calls[0][0].has('b')).toBe(false);
+      expect(reflowSpy.mock.invocationCallOrder[0]).toBeGreaterThan(insertSpy.mock.invocationCallOrder[1]);
+      expect(result.grid).toEqual(finalGrid);
+      expect(result.chainOrder).toEqual(mergedChain);
+    } finally {
+      insertSpy.mockRestore();
+      reflowSpy.mockRestore();
     }
-    // 通常のreflowは従来どおり直前のドミノ情報を保持する。
-    expect(updates[0].chainOrder).toEqual(inserted.chainOrder);
   });
 
-  it('同一pubkeyの引力で決まった列と列内順序は空隙詰めでも変えない', () => {
+  it('隙間詰めだけで動く別列のカードにはドミノ待機を新設しない', () => {
+    const cards = [note('a', 3), note('b', 2), note('untouched', 1)];
+    const first = seeded(cards, new Map([
+      ['a', { col: 0, y: 0 }], ['b', { col: 0, y: 132 }], ['untouched', { col: 1, y: 1000 }],
+    ]), 2);
+    const nextCards = [note('new', 4), ...cards];
+    const result = updateSceneLayout(first, items(nextCards), new Map(), 800);
+    expect(result.grid.get('untouched')).toEqual({ col: 1, y: 0 });
+    expect(result.chainOrder.has('untouched')).toBe(false);
+    const initialMotion = retargetSceneMotion(createSceneMotion(), first.boxes);
+    const motion = retargetSceneMotion(initialMotion, result.boxes, { chainOrder: result.chainOrder });
+    expect(motion.cards.get('untouched')!.delayMs).toBe(0);
+    expect(motion.cards.get('untouched')!.phase).toBe('moving');
+    expect(motion.cards.get('untouched')!.box.y).toBe(1016);
+    expect(motion.cards.get('untouched')!.target.y).toBe(16);
+  });
+
+  it('引力が決めた列と列内順序は維持して余分な縦空隙だけ除く', () => {
     const cards = base();
     const heights = new Map([['a', 300], ['b', 70], ['c', 210], ['d', 80], ['new', 40]]);
     const first = updateSceneLayout(createSceneLayout(), items(cards), heights, 800);
     const nextCards = [note('new', 1, 'a'), ...cards];
-    const inserted = updateSceneLayout(first, items(nextCards), heights, 800);
-    const expected = oracleStep(oracleStep(emptyOracle(), cards, 2, heights), nextCards, 2, heights);
-    expectOracle(inserted, expected, heights);
-    expect(inserted.grid.get('new')!.col).toBe(1);
-    const compacted = compactSceneLayout(inserted);
-    expect(compacted.grid).toEqual(reflow(expected.grid, nextCards, 2, heights).grid);
-    for (const [id, placement] of inserted.grid) expect(compacted.grid.get(id)!.col).toBe(placement.col);
+    const raw = insertCard(first.grid, nextCards[0], nextCards, 2, heights, new Set());
+    const result = updateSceneLayout(first, items(nextCards), heights, 800);
+    expect(result.grid.get('new')!.col).toBe(1);
+    expect(result.chainOrder).toEqual(raw.chain.chainOrder);
+    for (const [id, placement] of raw.grid) expect(result.grid.get(id)!.col).toBe(placement.col);
     for (const col of [0, 1]) {
       const order = (grid: Grid) => [...grid].filter(([, p]) => p.col === col).sort((a, b) => a[1].y - b[1].y).map(([id]) => id);
-      expect(order(compacted.grid)).toEqual(order(inserted.grid));
+      expect(order(result.grid)).toEqual(order(raw.grid));
+      let nextY = 0;
+      for (const id of order(result.grid)) {
+        expect(result.grid.get(id)!.y).toBe(nextY);
+        nextY += (heights.get(id) ?? DEFAULT_CARD_HEIGHT) + GAP;
+      }
     }
   });
 
-  it('新着の連打は途中の押し出しgridを引き継ぎ、最後に一度だけ詰める', () => {
-    const { nextCards, heights, inserted } = gapFixture();
+  it('再描画・renderer切替・同列数の幅変更で二度目の目標を作らない', () => {
+    const { nextCards, heights, result } = gapFixture();
+    expect(updateSceneLayout(result, items(nextCards), new Map(heights), 400)).toBe(result);
+    const resized = updateSceneLayout(result, items(nextCards), heights, 340);
+    expect(resized.grid).toEqual(result.grid);
+    expect(resized.chainOrder).toEqual(result.chainOrder);
+    expect(resized.boxes.get('a')!.width).toBe(308);
+    expect(resized.boxes.get('a')!.y).toBe(68);
+    expect(updateSceneLayout(resized, items(nextCards), heights, 340)).toBe(resized);
+  });
+
+  it('連打された次の新着は前回の最終gridから引力と連鎖を計算する', () => {
+    const { nextCards, heights, result } = gapFixture();
     const burstCards = [note('burst', 4), ...nextCards];
     const burstHeights = new Map(heights).set('burst', 60);
-    const burst = updateSceneLayout(inserted, items(burstCards), burstHeights, 400);
-    const expected = insertCard(inserted.grid, burstCards[0], burstCards, 1, burstHeights, new Set());
-    expect(burst.grid).toEqual(expected.grid);
-    expect(burst.pendingCompaction).toBe(true);
-    const compacted = compactSceneLayout(burst);
-    expect(compacted.grid).toEqual(reflow(expected.grid, burstCards, 1, burstHeights).grid);
-    expect(compacted.pendingCompaction).toBe(false);
-    const laterCards = [note('later', 5), ...burstCards];
-    const later = updateSceneLayout(compacted, items(laterCards), burstHeights, 400);
-    expect(later.pendingCompaction).toBe(true);
-    expect(later.grid).toEqual(insertCard(compacted.grid, laterCards[0], laterCards, 1, burstHeights, new Set()).grid);
+    const raw = insertCard(result.grid, burstCards[0], burstCards, 1, burstHeights, new Set());
+    const burst = updateSceneLayout(result, items(burstCards), burstHeights, 400);
+    expect(burst.grid).toEqual(reflow(raw.grid, burstCards, 1, burstHeights).grid);
+    expect(burst.chainOrder).toEqual(raw.chain.chainOrder);
+    expect(updateSceneLayout(burst, items(burstCards), burstHeights, 400)).toBe(burst);
   });
 
-  it('hold中の実座標・幅を固定したまま論理gridだけ詰め、予約を必ず消す', () => {
-    const { heights, inserted, nextCards } = gapFixture();
-    const actual = new Map(inserted.boxes);
-    actual.set('a', { ...actual.get('a')!, x: 21, y: 153, width: 340 });
-    const compacted = compactSceneLayout(inserted, heights, new Set(['a']), actual);
-    expect(compacted.grid).toEqual(reflow(inserted.grid, nextCards, 1, heights).grid);
-    expect(compacted.engineBoxes.get('a')!.y).toBe(68);
-    expect(compacted.boxes.get('a')).toEqual(actual.get('a'));
-    expect(compacted.pendingCompaction).toBe(false);
-    expect(compactSceneLayout(compacted)).toBe(compacted);
-    const released = updateSceneLayout(compacted, items(nextCards), heights, 400);
-    expect(released.boxes.get('a')!.y).toBe(68);
-    expect(released.pendingCompaction).toBe(false);
-  });
-
-  it('既存のhold固定位置を保持し、挿入後の入力stateやMapを書き換えない', () => {
-    const { first, nextCards, heights } = gapFixture();
+  it('holdの実表示位置と幅は固定したまま論理gridを詰め、入力は変更しない', () => {
+    const { first, cards, nextCards, heights } = gapFixture();
     const actual = new Map(first.boxes);
-    actual.set('b', { ...actual.get('b')!, y: 310 });
+    actual.set('b', { ...actual.get('b')!, x: 21, y: 310, width: 340 });
     const held = new Set(['b']);
-    const holding = updateSceneLayout(first, items(nextCards.slice(1)), heights, 400, held, actual);
-    const inserted = updateSceneLayout(holding, items(nextCards), heights, 400, held, holding.boxes);
-    const snapshot = structuredClone({ grid: inserted.grid, boxes: inserted.boxes, frozen: inserted.frozenBoxes, chain: inserted.chainOrder });
-    for (const placement of inserted.grid.values()) Object.freeze(placement);
-    for (const box of inserted.boxes.values()) Object.freeze(box);
-    const compacted = compactSceneLayout(inserted);
-    expect(compacted.boxes.get('b')!.y).toBe(310);
-    expect(compacted.pendingCompaction).toBe(false);
-    expect(inserted.pendingCompaction).toBe(true);
-    expect(inserted.grid).toEqual(snapshot.grid);
-    expect(inserted.boxes).toEqual(snapshot.boxes);
-    expect(inserted.frozenBoxes).toEqual(snapshot.frozen);
-    expect(inserted.chainOrder).toEqual(snapshot.chain);
-    expect(held).toEqual(new Set(['b']));
+    const holding = updateSceneLayout(first, items(cards), heights, 400, held, actual);
+    const snapshot = structuredClone({ grid: holding.grid, boxes: holding.boxes, frozen: holding.frozenBoxes });
+    for (const placement of holding.grid.values()) Object.freeze(placement);
+    for (const box of holding.boxes.values()) Object.freeze(box);
+    const raw = insertCard(holding.grid, nextCards[0], nextCards, 1, heights, held);
+    const result = updateSceneLayout(holding, items(nextCards), heights, 400, held, holding.boxes);
+    expect(result.grid).toEqual(reflow(raw.grid, nextCards, 1, heights).grid);
+    expect(result.chainOrder).toEqual(raw.chain.chainOrder);
+    expect(result.boxes.get('b')).toEqual(actual.get('b'));
+    expect(result.engineBoxes.get('b')!.y).not.toBe(310);
+    expect(holding.grid).toEqual(snapshot.grid);
+    expect(holding.boxes).toEqual(snapshot.boxes);
+    expect(holding.frozenBoxes).toEqual(snapshot.frozen);
+    const released = updateSceneLayout(result, items(nextCards), heights, 400);
+    expect(released.boxes).toEqual(released.engineBoxes);
   });
 });
-const items = (cards: readonly Card[]) => cards.map(card => ({ id: card.slotId, card }));
-const viewport = (columns: number) => columns * 400;
-const base = () => [note('a', 0.9), note('b', 0.8), note('c', 0.7), note('d', 0.6)];
 
 type Oracle = { grid: Grid; ids: ReadonlySet<string>; columns: number; chain: ReadonlyMap<string, number> };
 const emptyOracle = (): Oracle => ({ grid: new Map(), ids: new Set(), columns: 0, chain: new Map() });
 
-/** useCardLayoutのシナリオ分岐をV1公開APIで再現し、adapterの状態遷移と比較する。 */
+/** V1公開APIで各段階を再現し、V2の挿入後一括reflowと連鎖保持を比較する。 */
 function oracleStep(previous: Oracle, cards: readonly Card[], columns: number, heights = new Map<string, number>(), held = new Set<string>()): Oracle {
   const ids = new Set(cards.map(card => card.slotId));
   const rebuild = columns !== previous.columns || previous.grid.size === 0;
   let result;
+  let inserted = false;
   if (rebuild) result = buildInitialLayout(cards, columns, heights);
   else {
     const incoming = cards.filter(card => !previous.ids.has(card.slotId) && !previous.grid.has(card.slotId));
     if (incoming.length) {
+      inserted = true;
       let grid = previous.grid;
       const chainOrder = new Map<string, number>();
       for (const card of incoming) {
@@ -194,8 +179,9 @@ function oracleStep(previous: Oracle, cards: readonly Card[], columns: number, h
       result = { grid, chain: { chainOrder } };
     } else result = reflow(previous.grid, cards, columns, heights);
   }
+  const cleanGrid = new Map([...result.grid].filter(([id]) => ids.has(id)));
   return {
-    grid: new Map([...result.grid].filter(([id]) => ids.has(id))), ids, columns,
+    grid: inserted ? reflow(cleanGrid, cards, columns, heights).grid : cleanGrid, ids, columns,
     chain: result.chain.chainOrder.size ? result.chain.chainOrder : rebuild ? new Map() : previous.chain,
   };
 }
@@ -240,7 +226,7 @@ describe('V2 sceneのAPI検出と互換入口', () => {
   });
 });
 
-describe('V1の初期配置・引力・更新ライフサイクルを踏襲するadapter', () => {
+describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせるadapter', () => {
   it.each([1, 2, 3])('%i列の初期配置は高さではなくV1のスコア配分に一致する', columns => {
     const cards = base();
     const heights = new Map([['a', 700], ['b', 40], ['c', 310], ['d', 91]]);
@@ -464,7 +450,7 @@ describe('V1の初期配置・引力・更新ライフサイクルを踏襲す�
     expect(result.boxes.get('a')).not.toBe(first.boxes.get('a'));
   });
 
-  it('200枚を含む連続更新もV1のgridと連鎖を維持する', () => {
+  it('200枚を含む連続更新も引力の連鎖と隙間のない最終gridを維持する', () => {
     let cards: Card[] = Array.from({ length: 180 }, (_, index) => note(`old-${index}`, 180 - index, `author-${index % 7}`));
     const heights = new Map(cards.map((card, index) => [card.slotId, 50 + index * 37 % 320]));
     let state = updateSceneLayout(createSceneLayout(), items(cards), heights, 1200);
