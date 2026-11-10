@@ -36,11 +36,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function flushFrame() {
+function flushFrame(time = 0) {
   act(() => {
     const pending = [...frames.values()];
     frames.clear();
-    for (const callback of pending) callback(0);
+    for (const callback of pending) callback(time);
   });
 }
 
@@ -56,6 +56,89 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("新着で現在位置とtargetを分け、時間差を経て下へ移動し停止する", () => {
+    const item = (id: string) => ({ id, content: <button>{id}</button> });
+    const { rerender, unmount } = render(<CanvasScene items={[item('a'), item('b'), item('c'), item('d')]} />);
+    flushFrame(0);
+    const a = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const oldY = Number(a.dataset.sceneY);
+    rerender(<CanvasScene items={[item('new'), item('a'), item('b'), item('c'), item('d')]} />);
+    flushFrame(16);
+    const cards = [...document.querySelectorAll<HTMLElement>('[data-scene-card]')];
+    expect(cards.some(card => card.dataset.sceneY !== card.dataset.sceneTargetY)).toBe(true);
+    expect(Number(a.dataset.sceneTargetY)).toBeGreaterThanOrEqual(oldY);
+    for (let time = 32; time < 4000 && frames.size; time += 16) flushFrame(time);
+    for (const card of cards) expect(Number(card.dataset.sceneY)).toBeCloseTo(Number(card.dataset.sceneTargetY), 1);
+    expect(frames.size).toBe(0);
+    unmount();
+    expect(frames.size).toBe(0);
+  });
+  it("native描画に現在位置を渡し、zoomで待機timelineを再開しない", () => {
+    const draw = vi.fn();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({ resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw } as unknown as CanvasRenderingContext2D);
+    const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'requestPaint');
+    Object.defineProperty(HTMLCanvasElement.prototype, 'requestPaint', { configurable:true, value(this: HTMLCanvasElement) { this.dispatchEvent(new Event('paint')); } });
+    try {
+      const item = (id:string) => ({ id, content:<span>{id}</span> });
+      const { rerender } = render(<CanvasScene items={[item('a'),item('b'),item('c'),item('d')]} />);
+      flushFrame(0);
+      rerender(<CanvasScene items={[item('new'),item('a'),item('b'),item('c'),item('d')]} />);
+      flushFrame(16); flushFrame(48);
+      const a = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+      const before = Number(a.dataset.sceneDelay);
+      fireEvent.click(screen.getByRole('button', { name:'拡大' }));
+      flushFrame(64);
+      expect(Number(a.dataset.sceneDelay)).toBeLessThanOrEqual(before);
+      const call = draw.mock.calls.filter(call => call[0] === a).at(-1)!;
+      expect(call[1]).toBeCloseTo(Number(a.dataset.sceneX), 1);
+      expect(call[2]).toBeCloseTo(Number(a.dataset.sceneY), 1);
+    } finally {
+      if (original) Object.defineProperty(HTMLCanvasElement.prototype, 'requestPaint', original);
+      else Reflect.deleteProperty(HTMLCanvasElement.prototype, 'requestPaint');
+    }
+  });
+  it("描画modeを途中で切り替えても現在座標と待機を保持する", () => {
+    const item = (id:string) => ({ id, content:<span>{id}</span> });
+    const { rerender } = render(<CanvasScene items={[item('a'),item('b'),item('c')]} />);
+    flushFrame(0);
+    rerender(<CanvasScene items={[item('new'),item('a'),item('b'),item('c')]} />);
+    flushFrame(16); flushFrame(48);
+    const card = document.querySelector<HTMLElement>('[data-scene-card="new"]')!;
+    const y = card.dataset.sceneY;
+    const target = card.dataset.sceneTargetY;
+    fireEvent.click(screen.getByRole('button', { name:'DOMに切替' }));
+    flushFrame(64);
+    expect(card.dataset.sceneY).toBe(y);
+    expect(card.dataset.sceneTargetY).toBe(target);
+    flushFrame(80);
+    expect(Number(card.dataset.sceneY)).toBeGreaterThanOrEqual(Number(y));
+  });
+  it("移動途中のfocusは実表示位置をholdし、続く新着でも入力を動かさない", () => {
+    const a = { id:'a', content:<input aria-label="移動中の入力" /> };
+    const { rerender } = render(<CanvasScene items={[a]} />);
+    flushFrame(0);
+    rerender(<CanvasScene items={[{ id:'new',content:<span>new</span> }, a]} />);
+    flushFrame(16); flushFrame(100); flushFrame(164);
+    const card = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const y = card.dataset.sceneY;
+    act(() => screen.getByRole('textbox', {name:'移動中の入力'}).focus());
+    flushFrame(180);
+    expect(card.dataset.scenePhase).toBe('held');
+    expect(card.dataset.sceneY).toBe(y);
+    rerender(<CanvasScene items={[{ id:'newer',content:<span>newer</span> }, { id:'new',content:<span>new</span> }, a]} />);
+    flushFrame(196); flushFrame(260);
+    expect(card.dataset.sceneY).toBe(y);
+  });
+  it("reduced motionでは新着と押出しを即座に確定する", () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
+    const { rerender } = render(<CanvasScene items={[{ id:'a', content:<span>a</span> }]} />);
+    flushFrame();
+    rerender(<CanvasScene items={[{ id:'new', content:<span>new</span> }, { id:'a', content:<span>a</span> }]} />);
+    flushFrame(16);
+    for (const card of document.querySelectorAll<HTMLElement>('[data-scene-card]')) expect(card.dataset.sceneY).toBe(card.dataset.sceneTargetY);
+    expect(frames.size).toBe(0);
+  });
+
   it("固定サイズ画像のload通知で再描画frameを予約する", () => {
     render(<CanvasScene items={[{ id: "image", content: <span data-testid="loaded-image" /> }]} />);
     flushFrame();

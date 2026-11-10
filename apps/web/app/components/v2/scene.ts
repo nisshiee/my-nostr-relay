@@ -1,43 +1,142 @@
-/** V2の座標はCSS px。既存スロットの順序を保持してライブ更新での跳ねを防ぐ。 */
+/** V2の配置とモーションはカメラから独立したCSS pxのワールド座標で扱う。 */
 export interface SceneBox { x: number; y: number; width: number; height: number }
 export interface Camera { x: number; y: number; zoom: number }
-export function layoutScene(ids: string[], heights: ReadonlyMap<string, number>, viewport: number, previous: ReadonlyMap<string, SceneBox>, held: ReadonlySet<string> = new Set()): Map<string, SceneBox> {
-  const width = Math.max(160, Math.min(360, viewport - 32));
-  const columns = Math.max(1, Math.floor((viewport - 16) / (width + 16)));
-  const ends = Array.from({ length: columns }, () => 16);
-  const result = new Map<string, SceneBox>();
-  // hold中は列と位置を保持し、高さが増えたカードの後続だけを押し下げる。
-  if (held.size) {
-    const placed: SceneBox[] = [];
-    for (const id of ids.filter(id => held.has(id))) {
+export interface SceneLayoutResult {
+  boxes: Map<string, SceneBox>;
+  chainOrder: Map<string, number>;
+  columnCount: number;
+}
+
+const MARGIN = 16;
+const GAP = 16;
+const DEFAULT_HEIGHT = 180;
+const EMPTY_IDS: ReadonlySet<string> = new Set();
+
+function heightFor(id: string, heights: ReadonlyMap<string, number>, previous?: SceneBox): number {
+  const height = heights.get(id) ?? previous?.height ?? DEFAULT_HEIGHT;
+  return Number.isFinite(height) ? Math.max(1, height) : DEFAULT_HEIGHT;
+}
+
+/** holdを障害物として下へ迂回する。yが増えるだけなので必ず終了する。 */
+function belowHeld(box: SceneBox, held: readonly SceneBox[]): number {
+  let y = box.y;
+  for (const obstacle of held) {
+    if (box.x < obstacle.x + obstacle.width && box.x + box.width > obstacle.x &&
+        y < obstacle.y + obstacle.height + GAP && y + box.height + GAP > obstacle.y) {
+      y = obstacle.y + obstacle.height + GAP;
+    }
+  }
+  return y;
+}
+
+/**
+ * 新着を列の先頭へ差し込み、同じ列の後続だけを押し下げる。
+ * 既存のスコア更新では列と列内順序を変えず、列数変更時だけ入力順に配り直す。
+ * previousは目標座標、frozenCurrentBoxesはholdを開始した時点の実表示座標。
+ */
+export function planSceneLayout(
+  ids: readonly string[],
+  heights: ReadonlyMap<string, number>,
+  viewport: number,
+  previous: ReadonlyMap<string, SceneBox>,
+  heldIds: ReadonlySet<string> = EMPTY_IDS,
+  frozenCurrentBoxes: ReadonlyMap<string, SceneBox> = previous,
+  previousColumnCount?: number,
+): SceneLayoutResult {
+  const viewportWidth = Number.isFinite(viewport) ? Math.max(1, viewport) : 400;
+  const width = Math.max(160, Math.min(360, viewportWidth - MARGIN * 2));
+  const columnCount = Math.max(1, Math.floor((viewportWidth - MARGIN) / (width + GAP)));
+  const boxes = new Map<string, SceneBox>();
+  const chainOrder = new Map<string, number>();
+  const uniqueIds = [...new Set(ids)];
+  const present = new Set(uniqueIds);
+  const oldEntries = [...previous].filter(([id]) => present.has(id));
+  const resized = previousColumnCount !== undefined && previousColumnCount !== columnCount ||
+    oldEntries.some(([id, box]) => !heldIds.has(id) &&
+      (box.width !== width || box.x < MARGIN || box.x >= MARGIN + columnCount * (width + GAP)));
+  const initial = previous.size === 0 || resized;
+  const queues: string[][] = Array.from({ length: columnCount }, () => []);
+  const incoming: string[][] = Array.from({ length: columnCount }, () => []);
+  const weights = Array.from({ length: columnCount }, () => MARGIN);
+
+  for (const id of uniqueIds) {
+    if (!heldIds.has(id)) continue;
+    const frozen = frozenCurrentBoxes.get(id) ?? previous.get(id);
+    if (frozen) boxes.set(id, { ...frozen, height: heightFor(id, heights, frozen) });
+  }
+  const obstacles = [...boxes.values()].sort((a, b) => a.y - b.y);
+  for (let col = 0; col < columnCount; col++) {
+    const x = MARGIN + col * (width + GAP);
+    for (const obstacle of obstacles) {
+      if (x < obstacle.x + obstacle.width && x + width > obstacle.x) {
+        weights[col] = Math.max(weights[col], obstacle.y + obstacle.height + GAP);
+      }
+    }
+  }
+
+  const shortestColumn = (id: string, insertAtTop: boolean): number => {
+    const height = heightFor(id, heights, previous.get(id));
+    let best = 0;
+    let bestTop = Infinity;
+    let bestWeight = Infinity;
+    for (let col = 0; col < columnCount; col++) {
+      const x = MARGIN + col * (width + GAP);
+      const top = insertAtTop ? belowHeld({ x, y: MARGIN, width, height }, obstacles) : MARGIN;
+      if (top < bestTop || top === bestTop && weights[col] < bestWeight) {
+        best = col;
+        bestTop = top;
+        bestWeight = weights[col];
+      }
+    }
+    return best;
+  };
+
+  if (initial) {
+    for (const id of uniqueIds) {
+      if (boxes.has(id)) continue;
+      const col = shortestColumn(id, false);
+      queues[col].push(id);
+      weights[col] += heightFor(id, heights, previous.get(id)) + GAP;
+    }
+  } else {
+    // 前回の目標yで並べる。アニメーション途中のyや現在のスコアは使わない。
+    for (const [id, old] of oldEntries.sort((a, b) => a[1].y - b[1].y || a[1].x - b[1].x)) {
+      if (boxes.has(id)) continue;
+      const col = Math.max(0, Math.min(columnCount - 1, Math.round((old.x - MARGIN) / (width + GAP))));
+      queues[col].push(id);
+      weights[col] += heightFor(id, heights, old) + GAP;
+    }
+    for (const id of uniqueIds) {
+      if (previous.has(id) || boxes.has(id)) continue;
+      const col = shortestColumn(id, true);
+      incoming[col].push(id);
+      weights[col] += heightFor(id, heights) + GAP;
+    }
+  }
+
+  for (let col = 0; col < columnCount; col++) {
+    let y = MARGIN;
+    let chain = 0;
+    const hasInsertion = incoming[col].length > 0;
+    for (const id of [...incoming[col], ...queues[col]]) {
       const old = previous.get(id);
-      if (!old) continue;
-      const box = { ...old, height: heights.get(id) ?? old.height };
-      result.set(id, box); placed.push(box);
-    }
-    const rest = ids.filter(id => previous.has(id) && !held.has(id)).sort((a,b) => previous.get(a)!.y - previous.get(b)!.y);
-    for (const id of rest) {
-      const old = previous.get(id)!;
-      const box = { ...old, height: heights.get(id) ?? old.height };
-      let overlap: SceneBox | undefined;
-      while ((overlap = placed.find(p => box.x < p.x + p.width && box.x + box.width > p.x && box.y < p.y + p.height + 16 && box.y + box.height + 16 > p.y))) box.y = overlap.y + overlap.height + 16;
-      result.set(id, box); placed.push(box);
-    }
-    for (const box of placed) {
-      const col = Math.min(columns - 1, Math.max(0, Math.round((box.x - 16) / (width + 16))));
-      ends[col] = Math.max(ends[col], box.y + box.height + 16);
+      const box = { x: MARGIN + col * (width + GAP), y, width, height: heightFor(id, heights, old) };
+      box.y = belowHeld(box, obstacles);
+      boxes.set(id, box);
+      y = box.y + box.height + GAP;
+      // 無関係な列・動かないカードには待機時間を付けない。
+      if (hasInsertion && (!old || box.y > old.y || box.x !== old.x)) chainOrder.set(id, chain++);
     }
   }
-  const existing = ids.filter(id => previous.has(id));
-  existing.sort((a,b) => previous.get(a)!.y - previous.get(b)!.y || previous.get(a)!.x - previous.get(b)!.x);
-  for (const id of [...existing, ...ids.filter(id => !previous.has(id))]) {
-    if (result.has(id)) continue;
-    const col = ends.indexOf(Math.min(...ends));
-    const height = Math.max(1, heights.get(id) ?? 180);
-    result.set(id, { x: 16 + col * (width + 16), y: ends[col], width, height });
-    ends[col] += height + 16;
-  }
-  return result;
+  return { boxes, chainOrder, columnCount };
+}
+
+/** 配置だけを使う呼び出し元のための互換ラッパー。 */
+export function layoutScene(
+  ids: readonly string[], heights: ReadonlyMap<string, number>, viewport: number,
+  previous: ReadonlyMap<string, SceneBox>, held: ReadonlySet<string> = EMPTY_IDS,
+): Map<string, SceneBox> {
+  return planSceneLayout(ids, heights, viewport, previous, held).boxes;
 }
 export function zoomCamera(camera: Camera, zoom: number, x: number, y: number): Camera {
   const next = Math.max(0.35, Math.min(2, zoom));

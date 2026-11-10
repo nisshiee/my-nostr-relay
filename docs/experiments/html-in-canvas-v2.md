@@ -142,3 +142,13 @@ BASEはbaseec-img-mng.akamaized.netの/images/item/origin/32hex画像だけ、�
 POSTにはJSON読取前のprocess token bucket（burst10・毎秒1補充）も追加する。無効なJSONも予算を消費し、枯渇時は本文を読む前に429を返す。これもinstance内の補助制限であり、分散課金上限・強制CPU停止の保証ではない。
 
 実機でdata PNGがまだ拒否された原因は、base64 payload内のASCII SPACE 197文字だった（空白除去後は4の倍数で正常）。許可MIME・raw長上限を維持し、payloadからASCIIのHT/LF/FF/CR/SPACEだけを除去した後、従来の厳密base64/byte/decode検査を行う。clientの共有取得identityとserver cache digestも正規化後へ統一する。Unicode空白、percent encoding、URL-safe alphabet、欠けたpadding、不正末尾bitの補修はしない。参考: https://infra.spec.whatwg.org/#forgiving-base64-decode 。これは空白処理だけの採用で、forgiving decode全体を許可する変更ではない。
+
+## V2の新着入場とドミノ移動
+
+従来V2は既存カード優先で新着を末尾へ追加し、位置変更も即時だった。新着を列の上部に差し込み、その列で実際に押されたカードだけに連鎖順を付ける配置へ変更する。既存slotの列と列内順序は維持し、スコアの定期更新だけで再ソートしない。列数/幅変更時は配置し直す。V1のgravityによる列間移動やスコア依存の押出し候補探索を全面移植する変更ではない。
+
+V1と同じ100msの連鎖差、stiffness300/damping30の減衰ばねを使い、長い列でも開始待機は最大600msに制限する。初期大量ロードは即配置し、それ以降の新規slotだけは目標より上から入場する。既知slotのカード内容・画像高さ変更は入場を再実行せず現在位置/速度から目標を変更する。連続新着でも進行中の待機を最初から延ばし直さない。休止タブから復帰したときの1frame差分は64msへ制限し、収束したらrAFを停止する。
+
+layout再計測はitems/hold/ResizeObserver/画像load等が変わった時だけ行い、cameraだけのpan/zoomは描画のみ。native drawElementImageとDOM fallbackは同じ現在座標を使用し、hit geometryもnative描画位置に追従させる。操作中/focusカードは目標ではなく実表示位置で固定し、手動DOM/native切替でも現在位置・速度・待機・目標を保持する。reduced-motionでは即配置し、設定変更イベントにも応答する。
+
+実機観察用のDOM属性: 各[data-scene-card]のdata-scene-x/yは現在ワールド座標、data-scene-target-x/yは目標、data-scene-phaseはwaiting/moving/settled/held、data-scene-delayは残待機ms。viewportのdata-scene-motionはanimating/settled/reduced。これらは同一描画フレームの値で、画面座標はcameraのpan/zoomを別途合成する。native描画・座標クリック・新着の連鎖は、署名や投稿をせず認証済み実フィードの自然到着で確認する。単体/mockやlabのみで実フィードE2E完了とは扱わない。

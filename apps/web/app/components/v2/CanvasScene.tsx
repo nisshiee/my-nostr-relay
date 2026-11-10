@@ -2,7 +2,9 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { detectCanvasMode, layoutScene, zoomCamera, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
+import { detectCanvasMode, planSceneLayout, zoomCamera, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
+
+import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
 export interface CanvasSceneItem { id: string; content: ReactNode }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
@@ -37,6 +39,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const fallback = useRef<HTMLDivElement>(null);
   const nodes = useRef(new Map<string, HTMLDivElement>());
   const savedBoxes = useRef(new Map<string, SceneBox>());
+  const savedMotion = useRef<SceneMotionState | null>(null);
+  const savedTargets = useRef(new Map<string, SceneBox>());
+  const savedColumns = useRef<number | undefined>(undefined);
   const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; zoomBy: (factor: number) => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
@@ -59,6 +64,13 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     const supported = detectCanvasMode(surface, ctx);
     let mode: CanvasMode = forcedDOM ? 'dom' : supported;
     let boxes = savedBoxes.current;
+    let targets = savedTargets.current;
+    let columnCount = savedColumns.current;
+    let motion = savedMotion.current ?? createSceneMotion();
+    let layoutDirty = true;
+    let lastFrameTime: number | null = null;
+    const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+    let reducedMotion = media?.matches ?? false;
     let frame = 0;
     let disposed = false;
     let painted = false;
@@ -69,11 +81,23 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     const localHeld = new Set<string>();
     let revealFocus = false;
     const observed = new Set<HTMLElement>();
+    const drawOrder = () => {
+      const held = new Set([...current.current.heldIds, ...localHeld]);
+      return [...current.current.items].reverse().sort((a, b) => Number(held.has(a.id)) - Number(held.has(b.id)));
+    };
     const geometry = () => {
+      const order = new Map(drawOrder().map((item, index) => [item.id, index]));
       for (const [id, node] of nodes.current) {
         const box = boxes.get(id);
         if (!box) continue;
         node.style.width = `${box.width}px`;
+        node.style.zIndex = String(order.get(id) ?? 0);
+        const card = motion.cards.get(id);
+        const target = targets.get(id) ?? box;
+        node.dataset.sceneX = box.x.toFixed(2); node.dataset.sceneY = box.y.toFixed(2);
+        node.dataset.sceneTargetX = target.x.toFixed(2); node.dataset.sceneTargetY = target.y.toFixed(2);
+        node.dataset.scenePhase = card?.phase ?? 'settled';
+        node.dataset.sceneDelay = String(Math.round(card?.delayMs ?? 0));
         if (mode === 'dom') node.style.transform = `translate(${camera.x + box.x * camera.zoom}px,${camera.y + box.y * camera.zoom}px) scale(${camera.zoom})`;
       }
     };
@@ -99,9 +123,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         if (selection && (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) && selection[0] !== null && selection[1] !== null) active.setSelectionRange(selection[0], selection[1]);
       }
     };
-    const refresh = () => {
+    const requestFrame = () => {
       if (disposed || frame) return;
-      frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(time => {
         frame = 0;
         const rect = host.getBoundingClientRect();
         const dpr = window.devicePixelRatio || 1;
@@ -109,21 +133,34 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         const h = Math.max(1, Math.round(rect.height * dpr));
         if (surface.width !== w) surface.width = w;
         if (surface.height !== h) surface.height = h;
-        for (const [id, node] of nodes.current) {
-          const parent = mode === 'dom' ? dom : surface;
-          if (node.parentNode !== parent) {
-            node.style.transform = '';
-            if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
-            parent.appendChild(node);
+        if (layoutDirty) {
+          const held = new Set([...current.current.heldIds, ...localHeld]);
+          for (const [id, node] of nodes.current) {
+            const parent = mode === 'dom' ? dom : surface;
+            if (node.parentNode !== parent) {
+              node.style.transform = '';
+              if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
+              parent.appendChild(node);
+            }
+            const measuredWidth = held.has(id) ? boxes.get(id)?.width : undefined;
+            node.style.width = `${measuredWidth ?? Math.max(160, Math.min(360, rect.width - 32))}px`;
+            heights.set(id, node.offsetHeight || 180);
+            if (!observed.has(node)) { observer.observe(node); observed.add(node); }
           }
-          node.style.width = `${Math.max(160, Math.min(360, rect.width - 32))}px`;
-          heights.set(id, node.offsetHeight || 180);
-          if (!observed.has(node)) { observer.observe(node); observed.add(node); }
+          for (const node of observed) if (!Array.from(nodes.current.values()).includes(node as HTMLDivElement)) { observer.unobserve(node); observed.delete(node); }
+          const plan = planSceneLayout(current.current.items.map(item => item.id), heights, rect.width, targets, held, boxes, columnCount);
+          columnCount = plan.columnCount;
+          targets = plan.boxes;
+          motion = retargetSceneMotion(motion, targets, { chainOrder: plan.chainOrder, heldIds: held, reducedMotion });
+          layoutDirty = false;
         }
-        for (const node of observed) if (!Array.from(nodes.current.values()).includes(node as HTMLDivElement)) { observer.unobserve(node); observed.delete(node); }
-        boxes = layoutScene(current.current.items.map(item => item.id), heights, rect.width, boxes, new Set([...current.current.heldIds, ...localHeld]));
+        motion = advanceSceneMotion(motion, lastFrameTime === null ? 0 : Math.max(0, time - lastFrameTime), { heldIds: new Set([...current.current.heldIds, ...localHeld]), reducedMotion });
+        lastFrameTime = time;
+        boxes = sceneMotionBoxes(motion);
+        host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
         if (revealFocus) { revealFocus = false; reveal(document.activeElement); }
         savedBoxes.current = boxes;
+        savedMotion.current = motion; savedTargets.current = targets; savedColumns.current = columnCount;
         geometry();
         runtime.current!.camera = camera;
         if (mode !== 'dom') {
@@ -132,8 +169,13 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
             if (!painted && !disposed) { changeMode('dom'); refresh(); }
           }, 2500);
         }
+        if (motion.active) requestFrame();
+        else lastFrameTime = null;
       });
     };
+    const refresh = () => { layoutDirty = true; requestFrame(); };
+    const preference = () => { reducedMotion = media?.matches ?? false; refresh(); };
+    media?.addEventListener('change', preference);
     const observer = new ResizeObserver(refresh);
     observer.observe(host);
     const paint = () => {
@@ -144,7 +186,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         const dpr = window.devicePixelRatio || 1;
         ctx.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, dpr * camera.x, dpr * camera.y);
         // 省略描画をしないため、古いヒット領域を画面外に残さない。
-        for (const item of current.current.items) {
+        for (const item of drawOrder()) {
           const node = nodes.current.get(item.id);
           const box = boxes.get(item.id);
           if (!node || !box) continue;
@@ -168,7 +210,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         camera = zoomCamera(camera, camera.zoom * Math.exp(-event.deltaY * 0.005), event.clientX - rect.left, event.clientY - rect.top);
       } else camera = { ...camera, x: camera.x - event.deltaX, y: camera.y - event.deltaY };
       setZoom(Math.round(camera.zoom * 100));
-      refresh();
+      requestFrame();
     };
     const down = (event: PointerEvent) => {
       if (interactive(event.target) || event.button !== 0) return;
@@ -179,7 +221,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       if (!dragging || event.pointerId !== dragging.id) return;
       camera = { ...camera, x: camera.x + event.clientX - dragging.x, y: camera.y + event.clientY - dragging.y };
       dragging.x = event.clientX; dragging.y = event.clientY;
-      refresh();
+      requestFrame();
     };
     const up = () => { dragging = null; };
     const key = (event: KeyboardEvent) => {
@@ -188,7 +230,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       if (event.key === 'Home') camera = { x: 0, y: 0, zoom: 1 };
       else if (dy) camera = { ...camera, y: camera.y + dy };
       else return;
-      event.preventDefault(); refresh(); setZoom(Math.round(camera.zoom * 100));
+      event.preventDefault(); requestFrame(); setZoom(Math.round(camera.zoom * 100));
     };
     const reveal = (target: EventTarget | null) => {
       const node = target instanceof Element ? target.closest<HTMLElement>('[data-scene-card]') : null;
@@ -201,7 +243,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       while (cursor && cursor !== node && node?.contains(cursor)) { offsetY += cursor.offsetTop; cursor = cursor.offsetParent as HTMLElement | null; }
       const top = box.y + offsetY;
       if (camera.y + top * camera.zoom < 0 || camera.y + (top + controlHeight) * camera.zoom > r.height || camera.x + box.x * camera.zoom < 0 || camera.x + (box.x + box.width) * camera.zoom > r.width) {
-        camera = { ...camera, x: 16 - box.x * camera.zoom, y: 16 - top * camera.zoom }; refresh();
+        camera = { ...camera, x: 16 - box.x * camera.zoom, y: 16 - top * camera.zoom }; requestFrame();
       }
     };
     const focus = (event: FocusEvent) => {
@@ -214,8 +256,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       const rect = host.getBoundingClientRect();
       camera = zoomCamera(camera, camera.zoom * factor, rect.width / 2, rect.height / 2);
       setZoom(Math.round(camera.zoom * 100));
-      refresh();
-    }, reset: () => { camera = { x: 0, y: 0, zoom: 1 }; refresh(); }, attach: node => {
+      requestFrame();
+    }, reset: () => { camera = { x: 0, y: 0, zoom: 1 }; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
     } };
@@ -229,6 +271,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     window.addEventListener('resize', refresh);
     changeMode(mode); refresh();
     return () => {
+      media?.removeEventListener('change', preference);
       disposed = true; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect();
       surface.removeEventListener('paint', paint); host.removeEventListener('wheel', wheel);
       host.removeEventListener('canvas-image-ready', refresh);
