@@ -1,5 +1,7 @@
 "use client";
 
+import { MediaImage } from "../CanvasAwareImage";
+
 import { useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { ImageLightbox } from "./ImageLightbox";
@@ -37,7 +39,7 @@ export function ImageNode({
 
   return (
     <>
-      <img
+      <MediaImage imageSize={640}
         src={url}
         alt="投稿画像"
         loading="lazy"

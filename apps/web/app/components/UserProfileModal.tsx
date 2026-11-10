@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Image from "next/image";
+import Image from "./CanvasAwareImage";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import type { Event } from "nostr-tools/core";

@@ -1,5 +1,7 @@
 "use client";
 
+import { MediaImage } from "./CanvasAwareImage";
+
 import { useRef, useEffect, useState, useCallback } from "react";
 import type { NoteCard as NoteCardType, NostrProfile, ReactionSummary } from "../lib/types";
 import { reactionKey } from "../lib/reactions";
@@ -317,7 +319,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
                 }`}
               >
                 {imageUrl ? (
-                  <img
+                  <MediaImage imageSize={64}
                     src={imageUrl}
                     alt={emoji}
                     className="inline-block h-4 w-4"

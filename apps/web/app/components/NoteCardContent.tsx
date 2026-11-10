@@ -1,7 +1,7 @@
 "use client";
 
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from "react";
-import Image from "next/image";
+import Image from "./CanvasAwareImage";
 import { ContentRenderer } from "./content/ContentRenderer";
 import type { EventCache } from "../hooks/useEventCache";
 import type { NostrProfile } from "../lib/types";

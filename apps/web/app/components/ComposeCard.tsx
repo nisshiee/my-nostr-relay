@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
-import Image from "next/image";
+import Image from "./CanvasAwareImage";
 import type { NoteCard, NostrProfile } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
 import type { EventCache } from "../hooks/useEventCache";

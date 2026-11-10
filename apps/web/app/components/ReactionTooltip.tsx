@@ -1,5 +1,7 @@
 "use client";
 
+import { MediaImage } from "./CanvasAwareImage";
+
 import { useRef, useEffect, useState, useCallback } from "react";
 import { createPortal } from "react-dom";
 import type { NostrProfile } from "../lib/types";
@@ -152,7 +154,7 @@ export function ReactionTooltip({
             <div key={pubkey} className="flex items-center gap-2">
               {/* アバター画像 */}
               {profile?.picture ? (
-                <img
+                <MediaImage imageSize={64}
                   src={profile.picture}
                   alt={name}
                   className="w-5 h-5 rounded-full object-cover flex-shrink-0"

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { CanvasImageProvider } from "./CanvasAwareImage";
 import { CanvasScene } from "./v2/CanvasScene";
 import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
 import {
@@ -378,7 +379,7 @@ export function LiveCanvasV2({ notes, threadCards, profiles, reactions, status, 
       >f で戻す</button>}
       <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="V2 Live Canvas">
         <EmptyState status={status} hasNotes={items.length > 0} isProcessing={isProcessing} />
-        {items.length > 0 && !isProcessing && <CanvasScene items={items} heldIds={holdSet} />}
+        {items.length > 0 && !isProcessing && <CanvasImageProvider><CanvasScene items={items} heldIds={holdSet} /></CanvasImageProvider>}
         {status === "connected" && items.length === 0 && !isProcessing && (
           <p className="py-16 text-center text-sm text-gray-500 dark:text-gray-400">
             表示するノートはまだありません。投稿ボタンから新しいノートを書けます。

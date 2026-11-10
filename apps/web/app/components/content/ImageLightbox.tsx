@@ -1,5 +1,7 @@
 "use client";
 
+import { MediaImage } from "../CanvasAwareImage";
+
 import { useState, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
@@ -121,7 +123,7 @@ export function ImageLightbox({
       )}
 
       {/* 画像 */}
-      <img
+      <MediaImage imageSize={1280}
         src={images[index]}
         alt="拡大画像"
         className="max-h-[90vh] max-w-[90vw] object-contain"
