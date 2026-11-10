@@ -97,7 +97,6 @@ describe("public image fetch", () => {
   });
   it.each([
     ["image/jpg", "image-jpg"],
-    ["application/octet-stream", "octet-stream"],
     ["image/avif", "avif"],
     ["image/gif", "gif"],
     ["text/html; charset=utf-8", "text-html"],
@@ -109,6 +108,29 @@ describe("public image fetch", () => {
   ])("reports bounded MIME category for %s without allowing it", async (mime, category) => {
     response(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), { "content-type": mime });
     await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow(`Public image rejected: MIME ${category}`);
+  });
+  it.each(["jpeg", "png", "webp"] as const)("accepts octet-stream only after valid %s decoding", async format => {
+    const raster = await sharp({ create: { width: 20, height: 10, channels: 3, background: "red" } }).toFormat(format).toBuffer();
+    response(raster, { "content-type": "application/octet-stream" });
+    const result = await fetchPublicImage("https://cdn.example.com/a", 32);
+    expect(await sharp(result).metadata()).toMatchObject({ format: "webp", width: 20, height: 10 });
+  });
+  it.each([
+    Buffer.from("<html>not an image</html>"),
+    Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>"),
+    Buffer.from("GIF89a"),
+    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    Buffer.from([0xff, 0xd8, 0xff]),
+    Buffer.from("RIFF0000WEBP"),
+    Buffer.alloc(0),
+  ])("rejects unsupported or truncated octet-stream %j", async body => {
+    response(body, { "content-type": "application/octet-stream" });
+    await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow();
+  });
+  it("still rejects canonical MIME and magic mismatch", async () => {
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();
+    response(png, { "content-type": "image/jpeg" });
+    await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow("magic bytes");
   });
   it("rejects oversized streaming body without content-length", async () => {
     response(Buffer.alloc(5 * 1024 * 1024 + 1));

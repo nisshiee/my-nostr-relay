@@ -94,7 +94,7 @@ E2E中に限定許可を受け、上記2つの非secret設定をVercel target=pr
 - 公開HTTPS標準portのhostnameのみ。userinfo、query/fragment、IP literal、SVGを拒否する。host制限撤去は認証付き画像やsigned URLの対応を意味しない。
 - Node runtimeでDNSの全候補を検査し、検査済みIPだけを接続lookupに固定する。TLS hostnameとSNIは元hostnameを維持し、redirectごとに検査する。
 - DNSを含む10秒deadline、redirect最大2回、stream入力5MiB上限を設ける。上流cookie/Authorization/Refererは送らず、上流headerを応答へ転送しない。
-- JPEG/PNG/WebPのMIMEとmagicを確認し、Sharpの1600万画素・1frame・協調的処理時間制限を通して固定幅（32/64/128/640/1280）・quality75のWebPに再エンコードし、出力2MiB上限を設ける。出力byte検査前にnative側でbufferが確保され得るため、この値だけでprocess memory上限を保証しない。SVG・アニメーション等の非対応画像は拒否する。
+- JPEG/PNG/WebPのMIMEとmagicを確認し（application/octet-streamのみmagicでこの3形式へ限定して判定し）、Sharpの1600万画素・1frame・協調的処理時間制限を通して固定幅（32/64/128/640/1280）・quality75のWebPに再エンコードし、出力2MiB上限を設ける。出力byte検査前にnative側でbufferが確保され得るため、この値だけでprocess memory上限を保証しない。SVG・アニメーション等の非対応画像は拒否する。
 - 取得・変換失敗時に外部URLへfallbackしない。ファイル選択で自前生成したblobプレビューと自前iconは従来通り。
 
 ### 濫用・コスト制約
@@ -114,3 +114,7 @@ routeにはprocess内の同時実行制限、token bucket、容量制限付きTT
 V2専用のsame-origin fetch queue（max2）、同一URLdedupe、bounded retry/cooldown、未使用blobに32件/16MiB/30秒の制限を持つcacheを追加する。表示中blobは参照がある間保持するため、この値は全体memory上限ではない。429はRetry-Afterに従い専用再試行8回まで、通常失敗は追加1回まで、503は停止する。元の外部URLへのfallbackはしない。成功画像bytesのblob URLは同一originとして扱うが、native描画の実機確認を別途行う。V1は変更しない。
 
 serverは同時2件を維持し、process bucketをburst60・毎秒4補充へ調整する。これは保護Preview内の補助制限であり、一般公開の費用保証ではない。実feedの多数画像、pan、profile表示、非対応query/formatによる欠落と一時制限による欠落を分けて確認するまでE2E完了とはしない。
+
+### 実フィードのMIME不整合
+
+認証済み実フィードでavatar/本文写真・pan後の増分画像・profile開閉を確認した。残失敗の1例は通常imgで表示できる画像がVercel取得時に `application/octet-stream` を返すことが固定分類ログで判明した。拡張子を信用せず、octet-streamだけは入力上限内でbytesを読み、JPEG/PNG/WebP magicと完全decodeを通ったもののみWebPへ再encodeする。HTML/SVG/GIF/未知形式は通さず、標準MIMEとmagicの不一致も拒否する。query/認証/ネットワーク制限は変更しない。

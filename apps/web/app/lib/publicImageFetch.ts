@@ -99,7 +99,7 @@ async function download(url: URL, signal: AbortSignal): Promise<Response> {
       if (res.statusCode !== 200) return fail("status");
       if (res.headers["content-encoding"] && res.headers["content-encoding"].toLowerCase() !== "identity") return fail("encoding");
       const mime = (res.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
-      if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) {
+      if (!["image/jpeg", "image/png", "image/webp", "application/octet-stream"].includes(mime)) {
         // 診断には固定カテゴリのみを使い、上流ヘッダの任意文字列を露出させない。
         const category: Record<string, string> = {
           "image/jpg": "image-jpg",
@@ -159,7 +159,9 @@ function magicMime(body: Buffer): string | undefined {
 
 async function decode(body: Buffer, mime: string, width: PublicImageWidth, signal: AbortSignal, end: number, onNativeStart: () => void): Promise<Buffer> {
   signal.throwIfAborted();
-  if (magicMime(body) !== mime) reject("magic bytes");
+  const detectedMime = magicMime(body);
+  if (mime === "application/octet-stream" && detectedMime) mime = detectedMime;
+  if (!detectedMime || detectedMime !== mime) reject("magic bytes");
   rejectAnimation(body, mime);
   onNativeStart();
   const image = sharp(body, { limitInputPixels: MAX_PIXELS, failOn: "warning", animated: false });
