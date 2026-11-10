@@ -30,11 +30,11 @@ export const PUSH_EFFECT_FADE_IN_MS = 80;
 export const PUSH_EFFECT_MAX_TRACES = 4;
 export const PUSH_EFFECT_MAX_EDGES = 96;
 export const PUSH_EFFECT_STYLE = Object.freeze({
-  color: '#7dd3fc',
-  mainWidth: 1.25,
-  mainAlpha: 0.48,
-  haloWidth: 3.5,
-  haloAlpha: 0.1,
+  color: '#0284c7',
+  mainWidth: 2,
+  mainAlpha: 0.6,
+  haloWidth: 4.5,
+  haloAlpha: 0.14,
 });
 
 const GUTTER = 6;

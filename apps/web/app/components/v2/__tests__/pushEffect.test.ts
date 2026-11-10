@@ -37,6 +37,13 @@ function fakeContext() {
   return { ctx, initial, strokeStates, writes };
 }
 
+describe('因果線の視認性', () => {
+  it('nativeとSVG共通の濃色・線幅を固定し、blurなしの短い効果を維持する', () => {
+    expect(PUSH_EFFECT_STYLE).toEqual({color:'#0284c7', mainWidth:2, mainAlpha:0.6, haloWidth:4.5, haloAlpha:0.14});
+    expect(PUSH_EFFECT_DURATION_MS).toBe(1400);
+  });
+});
+
 describe('V2の押出因果パス', () => {
   it('分岐と独立した根を実際の親子辺だけで描き、順序から接続を補わない', () => {
     const boxes = new Map([
