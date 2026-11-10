@@ -7,7 +7,7 @@ import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, ty
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
 import type { Card } from "../../lib/types";
-import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, PUSH_EFFECT_STYLE, type PushEffectPath } from "./pushEffect";
+import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath } from "./pushEffect";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
@@ -44,7 +44,6 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const fallback = useRef<HTMLDivElement>(null);
   const effectSvg = useRef<SVGSVGElement>(null);
   const effectGroup = useRef<SVGGElement>(null);
-  const effectTrailGroup = useRef<SVGGElement>(null);
   const effectParticleGroup = useRef<SVGGElement>(null);
   const savedEffect = useRef({ revision: 0, startedAt: 0, active: false });
   const nodes = useRef(new Map<string, HTMLDivElement>());
@@ -188,37 +187,23 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         effectOpacity = effect.active ? pushEffectOpacity(effectAge) : 0;
         effectPaths = effect.active ? createPushPaths(layout.insertion.traces, boxes, { x: 0, y: host.scrollTop, width: viewportWidth, height: viewportHeight }) : [];
         host.dataset.scenePushEffect = reducedMotion ? 'reduced' : effect.active ? 'active' : 'idle';
-        // DOM fallbackでは前面SVG、nativeではカード描画後のcanvasへ同じ軌跡と粒を描く。
-        const group = effectTrailGroup.current!;
-        const svgPaths = mode === 'dom' ? effectPaths : [];
-        const strokes = [
-          {color:PUSH_EFFECT_STYLE.outerColor,width:PUSH_EFFECT_STYLE.outerWidth,alpha:PUSH_EFFECT_STYLE.outerAlpha},
-          {color:PUSH_EFFECT_STYLE.haloColor,width:PUSH_EFFECT_STYLE.haloWidth,alpha:PUSH_EFFECT_STYLE.haloAlpha},
-          {color:PUSH_EFFECT_STYLE.color,width:PUSH_EFFECT_STYLE.mainWidth,alpha:PUSH_EFFECT_STYLE.mainAlpha},
-          {color:PUSH_EFFECT_STYLE.coreColor,width:PUSH_EFFECT_STYLE.coreWidth,alpha:PUSH_EFFECT_STYLE.coreAlpha},
-        ];
-        while (group.children.length > svgPaths.length * strokes.length) group.lastElementChild!.remove();
-        for (let i = 0; i < svgPaths.length * strokes.length; i++) {
-          let path = group.children[i];
-          if (!path) { path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); group.appendChild(path); }
-          const stroke = strokes[Math.floor(i / svgPaths.length)];
-          path.setAttribute('d', svgPaths[i % svgPaths.length].d);
-          path.setAttribute('fill', 'none'); path.setAttribute('stroke', stroke.color);
-          path.setAttribute('stroke-width', String(stroke.width));
-          path.setAttribute('stroke-opacity', String(effectOpacity * stroke.alpha));
-          path.setAttribute('stroke-linecap', 'round');
-        }
+        // 曲線は粒子の配置にだけ使い、前面に独立した光点だけを描く。
         const particles = mode === 'dom' && effectOpacity > 0 ? createPushParticles(effectPaths, effectAge) : [];
         const particleGroup = effectParticleGroup.current!;
-        while (particleGroup.children.length > particles.length) particleGroup.lastElementChild!.remove();
+        while (particleGroup.children.length > particles.length * 2) particleGroup.lastElementChild!.remove();
         for (let i = 0; i < particles.length; i++) {
-          let path = particleGroup.children[i];
-          if (!path) { path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); particleGroup.appendChild(path); }
-          path.setAttribute('d', particles[i].d);
-          path.setAttribute('fill', PUSH_EFFECT_STYLE.particleColor);
-          path.setAttribute('stroke', PUSH_EFFECT_STYLE.particleOutlineColor);
-          path.setAttribute('stroke-width', String(PUSH_EFFECT_STYLE.particleOutlineWidth));
-          path.setAttribute('opacity', String(effectOpacity * particles[i].alpha));
+          const particle = particles[i];
+          let halo = particleGroup.children[i * 2];
+          if (!halo) { halo = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); particleGroup.appendChild(halo); }
+          halo.setAttribute('cx', String(particle.x)); halo.setAttribute('cy', String(particle.y));
+          halo.setAttribute('r', String(particle.haloRadius));
+          halo.setAttribute('fill', particle.haloColor);
+          halo.setAttribute('opacity', String(effectOpacity * particle.haloAlpha));
+          let shape = particleGroup.children[i * 2 + 1];
+          if (!shape) { shape = document.createElementNS('http://www.w3.org/2000/svg', 'path'); particleGroup.appendChild(shape); }
+          shape.setAttribute('d', particle.d);
+          shape.setAttribute('fill', particle.color);
+          shape.setAttribute('opacity', String(effectOpacity * particle.alpha));
         }
         effectGroup.current!.setAttribute('transform', `translate(0 ${camera.y})`);
         host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
@@ -321,7 +306,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         <div ref={layer} className="sticky top-0 w-full overflow-clip">
           <canvas ref={canvas} className="absolute inset-0 z-0 h-full w-full" aria-label="ライブカード" />
           <div ref={fallback} className="absolute inset-0 z-0 isolate" />
-          <svg ref={effectSvg} aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible"><g ref={effectGroup}><g ref={effectTrailGroup} /><g ref={effectParticleGroup} /></g></svg>
+          <svg ref={effectSvg} aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible"><g ref={effectGroup}><g ref={effectParticleGroup} /></g></svg>
         </div>
       </div>
       {items.map(item => <CardRoot key={item.id} item={item} register={register} />)}

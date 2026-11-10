@@ -59,7 +59,7 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
-  it("実新着の因果線だけ短時間表示し、mode切替で再開始せず終了後frameを止める", () => {
+  it("実新着の因果に沿う星屑だけ短時間表示し、mode切替で再開始せず終了後frameを止める", () => {
     const item = (id:string) => ({id, content:<span>{id}</span>});
     const {rerender} = render(<CanvasScene items={[item('a'),item('b')]} />);
     flushFrame(0);
@@ -82,9 +82,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(svg.querySelectorAll('path').length).toBe(0);
     expect(frames.size).toBe(0);
   });
-  it("nativeでは魔法の軌跡をカードより後にcanvasへ描き、SVGを重ねない", () => {
-    const stroke = vi.fn(), draw = vi.fn();
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,arc:vi.fn(),fill:vi.fn(),lineTo:vi.fn(),closePath:vi.fn(),save:vi.fn(),restore:vi.fn(),beginPath:vi.fn(),moveTo:vi.fn(),bezierCurveTo:vi.fn(),stroke,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
+  it("nativeでは連続線なしの星屑をカードより後にcanvasへ描き、SVGを重ねない", () => {
+    const stroke = vi.fn(), fill = vi.fn(), draw = vi.fn();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,arc:vi.fn(),fill,lineTo:vi.fn(),closePath:vi.fn(),save:vi.fn(),restore:vi.fn(),beginPath:vi.fn(),moveTo:vi.fn(),bezierCurveTo:vi.fn(),stroke,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
     try {
@@ -92,8 +92,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       flushFrame(0);
       rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
       flushFrame(16); flushFrame(100);
-      expect(stroke).toHaveBeenCalled();
-      expect(stroke.mock.invocationCallOrder.at(-1)!).toBeGreaterThan(draw.mock.invocationCallOrder.at(-1)!);
+      expect(stroke).not.toHaveBeenCalled();
+      expect(fill).toHaveBeenCalled();
+      expect(fill.mock.invocationCallOrder.at(-1)!).toBeGreaterThan(draw.mock.invocationCallOrder.at(-1)!);
       expect(document.querySelectorAll('svg path').length).toBe(0);
       expect(screen.getByRole('status').textContent).toContain('native');
     } finally {
@@ -114,7 +115,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(svg.previousElementSibling?.classList.contains('isolate')).toBe(true);
     const particles = svg.querySelector('g > g:last-child')!;
     expect(particles.children.length).toBeGreaterThan(0);
-    expect(particles.children.length).toBeLessThanOrEqual(48);
+    expect(particles.querySelectorAll('path').length).toBeLessThanOrEqual(240);
+    expect(svg.querySelectorAll('[stroke]').length).toBe(0);
+    expect([...svg.querySelectorAll('path')].every(path => !path.getAttribute('d')?.includes(' C '))).toBe(true);
     fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
     expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
     fireEvent.change(screen.getByRole('textbox',{name:'下書き'}),{target:{value:'星の下でも入力'}});

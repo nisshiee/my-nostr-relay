@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity,
   PUSH_EFFECT_DURATION_MS, PUSH_EFFECT_FADE_IN_MS, PUSH_EFFECT_MAX_EDGES,
-  PUSH_EFFECT_MAX_TRACES, PUSH_EFFECT_MAX_PARTICLES, PUSH_EFFECT_STYLE,
+  PUSH_EFFECT_MAX_TRACES, PUSH_EFFECT_MAX_PARTICLES, PUSH_EFFECT_MAX_HALOS, PUSH_EFFECT_STYLE,
   type PushEffectBox, type PushEffectContext, type PushEffectTrace,
 } from '../pushEffect';
 
@@ -40,15 +40,11 @@ function fakeContext() {
 }
 
 describe('魔法の杖の視認性', () => {
-  it('nativeとSVG共通の太い紫と桃色の光・白金の芯を使う', () => {
-    expect(PUSH_EFFECT_STYLE).toMatchObject({
-      outerColor: '#7c3aed', outerWidth: 18,
-      haloColor: '#f472b6', haloWidth: 10,
-      color: '#f0abfc', mainWidth: 5,
-      coreColor: '#fff7d6', coreWidth: 1.8,
-      particleColor: '#fff8c5', particleOutlineColor: '#d946ef',
+  it('nativeとSVG共通の金と白の砂だけを使い、連続線のスタイルを持たない', () => {
+    expect(PUSH_EFFECT_STYLE).toEqual({
+      dustColor: '#dba52c', warmDustColor: '#f4ca5b', brightDustColor: '#fff0b5',
+      whiteColor: '#fffef4', starColor: '#f3cf63', haloColor: '#f9cb44',
     });
-    expect(PUSH_EFFECT_STYLE.mainAlpha).toBeGreaterThan(0.9);
     expect(PUSH_EFFECT_DURATION_MS).toBe(2200);
   });
 });
@@ -187,9 +183,9 @@ describe('V2の押出因果パス', () => {
     expect(createPushPaths(traces, new Map([['a', box(900, 0)], ['b', box(900, 100)]]), viewport)).toEqual([]);
   });
 
-  it('線幅が画面端にかかる曲線を除外しない', () => {
+  it('軌道が画面外でも砂の広がりが画面端にかかるなら除外しない', () => {
     const traces = [trace('a', [['a', 'b']])];
-    const boxes = new Map([['a', box(-186, 0)], ['b', box(-186, 0)]]);
+    const boxes = new Map([['a', box(-230, 0)], ['b', box(-230, 0)]]);
     expect(createPushPaths(traces, boxes, { x: 0, y: 0, width: 400, height: 300 })).toHaveLength(1);
   });
 });
@@ -207,36 +203,36 @@ describe('V2の押出エフェクトの寿命と描画', () => {
     for (const age of [-1, 2201, 60000, NaN, Infinity]) expect(pushEffectOpacity(age)).toBe(0);
   });
 
-  it('独立した曲線の4層と星を描き、ぼかし・影・文字を追加せず描画状態を戻す', () => {
+  it('独立した砂と星だけをfillし、連続線・輪郭線・ぼかし・影を描かない', () => {
     const paths = createPushPaths([trace('a', [['a', 'b'], ['a', 'c']])], new Map([
       ['a', box(16, 0)], ['b', box(16, 132)], ['c', box(392, 132)],
     ]));
     const particles = createPushParticles(paths, 500);
-    const { ctx, initial, strokeStates, fillStates, writes } = fakeContext();
+    const { ctx, initial, fillStates, writes } = fakeContext();
     drawPushPaths(ctx, paths, 0.8, 500);
     expect(ctx.save).toHaveBeenCalledOnce();
     expect(ctx.restore).toHaveBeenCalledOnce();
-    expect(ctx.beginPath).toHaveBeenCalledTimes(1 + particles.length);
-    expect(ctx.moveTo.mock.calls.slice(0, paths.length)).toEqual(paths.map(path => [path.startX, path.startY]));
-    expect(ctx.bezierCurveTo.mock.calls).toEqual(paths.map(path => [path.control1X, path.control1Y, path.control2X, path.control2Y, path.endX, path.endY]));
-    expect(ctx.stroke).toHaveBeenCalledTimes(4 + particles.length);
-    expect(strokeStates.slice(0, 4).map(state => state.lineWidth)).toEqual([
-      PUSH_EFFECT_STYLE.outerWidth, PUSH_EFFECT_STYLE.haloWidth, PUSH_EFFECT_STYLE.mainWidth, PUSH_EFFECT_STYLE.coreWidth,
-    ]);
-    expect(strokeStates.slice(0, 4).map(state => state.strokeStyle)).toEqual([
-      PUSH_EFFECT_STYLE.outerColor, PUSH_EFFECT_STYLE.haloColor, PUSH_EFFECT_STYLE.color, PUSH_EFFECT_STYLE.coreColor,
-    ]);
-    expect(strokeStates[0].globalAlpha).toBeCloseTo(0.5 * 0.8 * PUSH_EFFECT_STYLE.outerAlpha);
-    expect(strokeStates[2].globalAlpha).toBeCloseTo(0.5 * 0.8 * PUSH_EFFECT_STYLE.mainAlpha);
-    expect(ctx.fill).toHaveBeenCalledTimes(particles.length);
-    expect(ctx.arc.mock.calls).toEqual(particles.filter(particle => particle.kind === 'dot').map(particle => [particle.x, particle.y, particle.radius, 0, Math.PI * 2]));
+    const haloCount = particles.filter(particle => particle.haloRadius > 0).length;
+    expect(ctx.beginPath).toHaveBeenCalledTimes(particles.length + haloCount);
+    expect(ctx.moveTo.mock.calls).toEqual(particles.filter(particle => particle.kind === 'star').map(particle => [particle.points[0].x, particle.points[0].y]));
+    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
+    expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.fill).toHaveBeenCalledTimes(particles.length + haloCount);
+    expect(ctx.arc.mock.calls).toEqual(particles.flatMap(particle => [
+      ...(particle.haloRadius > 0 ? [[particle.x, particle.y, particle.haloRadius, 0, Math.PI * 2]] : []),
+      ...(particle.kind === 'dot' ? [[particle.x, particle.y, particle.radius, 0, Math.PI * 2]] : []),
+    ]));
     expect(ctx.lineTo.mock.calls).toEqual(particles.flatMap(particle => particle.points.slice(1).map(point => [point.x, point.y])));
-    for (let index = 0; index < particles.length; index++) {
-      expect(fillStates[index].globalAlpha).toBeCloseTo(0.5 * 0.8 * particles[index].alpha);
-      expect(fillStates[index].fillStyle).toBe(PUSH_EFFECT_STYLE.particleColor);
+    const expectedFills = particles.flatMap(particle => [
+      ...(particle.haloRadius > 0 ? [{ alpha: particle.haloAlpha, color: particle.haloColor }] : []),
+      { alpha: particle.alpha, color: particle.color },
+    ]);
+    for (let index = 0; index < expectedFills.length; index++) {
+      expect(fillStates[index].globalAlpha).toBeCloseTo(0.5 * 0.8 * expectedFills[index].alpha);
+      expect(fillStates[index].fillStyle).toBe(expectedFills[index].color);
     }
-    for (const state of strokeStates) {
-      expect(state).toMatchObject({ lineCap: 'round', lineJoin: 'round', shadowBlur: 0, shadowColor: 'transparent', filter: 'none' });
+    for (const state of fillStates) {
+      expect(state).toMatchObject({ shadowBlur: 0, shadowColor: 'transparent', filter: 'none' });
     }
     expect(writes.filter(([property]) => property === 'filter')).toEqual([['filter', 'none']]);
     expect(writes.filter(([property]) => property === 'shadowBlur')).toEqual([['shadowBlur', 0]]);
@@ -250,7 +246,7 @@ describe('V2の押出エフェクトの寿命と描画', () => {
     for (const age of [0, -1, PUSH_EFFECT_DURATION_MS, NaN, Infinity]) drawPushPaths(ctx, paths, 1, age);
     drawPushPaths(ctx, [], 1, 500);
     expect(ctx.save).not.toHaveBeenCalled();
-    ctx.stroke.mockImplementation(() => { throw new Error('描画失敗'); });
+    ctx.fill.mockImplementation(() => { throw new Error('描画失敗'); });
     expect(() => drawPushPaths(ctx as PushEffectContext, paths, 1, 500)).toThrow('描画失敗');
     expect(ctx.restore).toHaveBeenCalledOnce();
     expect(ctx).toMatchObject(initial);
@@ -260,27 +256,45 @@ describe('V2の押出エフェクトの寿命と描画', () => {
 describe('決定的な魔法の星と光点', () => {
   const paths = createPushPaths([trace('a', [['a', 'b']])], new Map([['a', box(16, 0)], ['b', box(16, 300)]]));
 
-  it('IDと経過時間から同じ星を作り、乱数を使わず曲線上を進ませる', () => {
+  it('IDと経過時間から同じ砂を作り、乱数を使わず粒子を進ませる', () => {
     const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw new Error('乱数は禁止'); });
     try {
       const first = createPushParticles(paths, 500);
       expect(createPushParticles(paths, 500)).toEqual(first);
       expect(createPushParticles(paths, 600)).not.toEqual(first);
-      expect(first.map(particle => particle.kind)).toEqual(['star', 'star', 'dot']);
+      expect(first.length).toBeGreaterThan(160);
+      expect(first.filter(particle => particle.kind === 'dot').length).toBeGreaterThan(first.length * 0.9);
+      expect(first.some(particle => particle.kind === 'star')).toBe(true);
       for (const particle of first) {
-        const progress = (particle.y - paths[0].startY) / (paths[0].endY - paths[0].startY);
-        const remaining = 1 - progress;
-        const expectedX = remaining ** 3 * paths[0].startX + 3 * remaining ** 2 * progress * paths[0].control1X +
-          3 * remaining * progress ** 2 * paths[0].control2X + progress ** 3 * paths[0].endX;
-        expect(particle.x).toBeCloseTo(expectedX, 8);
-        expect(progress).toBeGreaterThanOrEqual(0);
-        expect(progress).toBeLessThan(1);
+        expect(Number.isFinite(particle.x)).toBe(true);
+        expect(Number.isFinite(particle.y)).toBe(true);
         expect(particle.alpha).toBeGreaterThanOrEqual(0);
         expect(particle.alpha).toBeLessThanOrEqual(1);
         expect(particle.radius).toBeGreaterThan(0);
         expect(Number.isFinite(particle.rotation)).toBe(true);
+        expect(particle.haloAlpha).toBeGreaterThanOrEqual(0);
+        expect(particle.haloAlpha).toBeLessThanOrEqual(particle.alpha);
+        expect(Object.values(PUSH_EFFECT_STYLE)).toContain(particle.color);
       }
     } finally { random.mockRestore(); }
+  });
+
+  it('細い整列線にせず、左右へ不規則に広がる大小の砂と少数の鋭い星を作る', () => {
+    const straight = { ...paths[0], control1X: paths[0].startX, control2X: paths[0].startX };
+    const particles = createPushParticles([straight], 700);
+    const offsets = particles.map(particle => particle.x - straight.startX);
+    expect(Math.min(...offsets)).toBeLessThan(-20);
+    expect(Math.max(...offsets)).toBeGreaterThan(20);
+    expect(new Set(offsets.map(offset => Math.round(offset))).size).toBeGreaterThan(35);
+    const dots = particles.filter(particle => particle.kind === 'dot');
+    expect(dots.filter(particle => particle.radius < 2).length).toBeGreaterThan(dots.length * 0.8);
+    expect(Math.min(...dots.map(particle => particle.radius))).toBeLessThan(0.7);
+    expect(Math.max(...dots.map(particle => particle.radius))).toBeGreaterThan(2);
+    const stars = particles.filter(particle => particle.kind === 'star');
+    expect(stars.length).toBeLessThan(particles.length * 0.1);
+    expect(stars.some(particle => particle.points.length === 8)).toBe(true);
+    expect(stars.some(particle => particle.points.length === 16)).toBe(true);
+    expect(stars.every(particle => particle.radius > 3)).toBe(true);
   });
 
   it('粒子の位相は配列順や現在の表示位置では変わらない', () => {
@@ -298,7 +312,7 @@ describe('決定的な魔法の星と光点', () => {
   it('SVGの星もnativeと同じ回転済み頂点を使う', () => {
     for (const particle of createPushParticles(paths, 700)) {
       if (particle.kind === 'star') {
-        expect(particle.points).toHaveLength(8);
+        expect([8, 16]).toContain(particle.points.length);
         expect(particle.d).toBe(`${particle.points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`);
       } else {
         expect(particle.points).toEqual([]);
@@ -307,10 +321,11 @@ describe('決定的な魔法の星と光点', () => {
     }
   });
 
-  it('大きい連鎖でも48個までに抑え、先頭と末尾を含む辺へ分散させる', () => {
+  it('大きい連鎖でも240粒と24個の光までに抑え、先頭と末尾を含む辺へ分散させる', () => {
     const many = Array.from({ length: 220 }, (_, index) => ({ ...paths[0], toId: `child-${index}` }));
     const particles = createPushParticles(many, 500);
     expect(particles).toHaveLength(PUSH_EFFECT_MAX_PARTICLES);
+    expect(particles.filter(particle => particle.haloRadius > 0).length).toBeLessThanOrEqual(PUSH_EFFECT_MAX_HALOS);
     expect(new Set(particles.map(particle => particle.id)).size).toBe(PUSH_EFFECT_MAX_PARTICLES);
     expect(particles[0].id).toContain('child-0');
     expect(particles.at(-1)?.id).toContain('child-95');

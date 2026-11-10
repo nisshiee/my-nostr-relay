@@ -32,6 +32,10 @@ export interface PushEffectParticle {
   readonly radius: number;
   readonly rotation: number;
   readonly alpha: number;
+  readonly color: string;
+  readonly haloRadius: number;
+  readonly haloAlpha: number;
+  readonly haloColor: string;
   readonly kind: 'star' | 'dot';
   readonly d: string;
   readonly points: readonly { readonly x: number; readonly y: number }[];
@@ -42,23 +46,15 @@ export const PUSH_EFFECT_FADE_IN_MS = 80;
 export const PUSH_EFFECT_FADE_OUT_START_MS = 900;
 export const PUSH_EFFECT_MAX_TRACES = 4;
 export const PUSH_EFFECT_MAX_EDGES = 96;
-export const PUSH_EFFECT_MAX_PARTICLES = 48;
+export const PUSH_EFFECT_MAX_PARTICLES = 240;
+export const PUSH_EFFECT_MAX_HALOS = 24;
 export const PUSH_EFFECT_STYLE = Object.freeze({
-  outerColor: '#7c3aed',
-  outerWidth: 18,
-  outerAlpha: 0.22,
-  haloColor: '#f472b6',
-  haloWidth: 10,
-  haloAlpha: 0.6,
-  color: '#f0abfc',
-  mainWidth: 5,
-  mainAlpha: 0.95,
-  coreColor: '#fff7d6',
-  coreWidth: 1.8,
-  coreAlpha: 1,
-  particleColor: '#fff8c5',
-  particleOutlineColor: '#d946ef',
-  particleOutlineWidth: 1.1,
+  dustColor: '#dba52c',
+  warmDustColor: '#f4ca5b',
+  brightDustColor: '#fff0b5',
+  whiteColor: '#fffef4',
+  starColor: '#f3cf63',
+  haloColor: '#f9cb44',
 });
 
 function validBox(box: PushEffectBox | undefined): box is PushEffectBox {
@@ -68,7 +64,8 @@ function validBox(box: PushEffectBox | undefined): box is PushEffectBox {
 
 /** 制御点の外接矩形でのみ除外し、画面を横切る曲線を端点だけで落とさない。 */
 function outsideViewport(path: PushEffectPath, viewport: PushEffectBox): boolean {
-  const padding = Math.max(PUSH_EFFECT_STYLE.outerWidth / 2, 12);
+  // 軌道から広がる砂と、少数の星の局所的な光も含めて判定する。
+  const padding = 80;
   const xs = [path.startX, path.control1X, path.control2X, path.endX];
   const ys = [path.startY, path.control1Y, path.control2Y, path.endY];
   return Math.max(...xs) + padding < viewport.x ||
@@ -150,50 +147,92 @@ function curvePoint(path: PushEffectPath, progress: number): { x: number; y: num
   };
 }
 
+function noise(seed: number, salt: number): number {
+  let hash = seed ^ Math.imul(salt, 0x9e3779b9);
+  hash = Math.imul(hash ^ (hash >>> 16), 0x21f0aaad);
+  hash = Math.imul(hash ^ (hash >>> 15), 0x735a2d97);
+  return ((hash ^ (hash >>> 15)) >>> 0) / 4294967296;
+}
+
+function curveNormal(path: PushEffectPath, progress: number): { x: number; y: number } {
+  const remaining = 1 - progress;
+  const dx = 3 * remaining ** 2 * (path.control1X - path.startX) +
+    6 * remaining * progress * (path.control2X - path.control1X) +
+    3 * progress ** 2 * (path.endX - path.control2X);
+  const dy = 3 * remaining ** 2 * (path.control1Y - path.startY) +
+    6 * remaining * progress * (path.control2Y - path.control1Y) +
+    3 * progress ** 2 * (path.endY - path.control2Y);
+  const distance = Math.hypot(dx, dy);
+  return distance === 0 ? { x: 1, y: 0 } : { x: -dy / distance, y: dx / distance };
+}
+
 /**
  * 根と辺のID・経過時間だけで光点を決める。フレームごとの乱数・タイマー・履歴は使わない。
- * 長い連鎖も最大16辺を均等に選び、星2個と光点1個ずつの合計48個までに制限する。
+ * 曲線自体は描かず、周囲へ不規則に広がる金の砂を配置する。
+ * 短い1辺でも密度を保ち、長い連鎖は最大24辺・240粒・24個の小さな光までに制限する。
  */
 export function createPushParticles(paths: readonly PushEffectPath[], ageMs: number): readonly PushEffectParticle[] {
   if (!Number.isFinite(ageMs) || ageMs <= 0 || ageMs >= PUSH_EFFECT_DURATION_MS) return [];
   const pathCount = Math.min(paths.length, PUSH_EFFECT_MAX_EDGES);
-  const selectedCount = Math.min(pathCount, PUSH_EFFECT_MAX_PARTICLES / 3);
+  const selectedCount = Math.min(pathCount, 24);
+  const particleCount = Math.min(PUSH_EFFECT_MAX_PARTICLES, 160 + pathCount * 16);
   const particles: PushEffectParticle[] = [];
+  let haloCount = 0;
   for (let index = 0; index < selectedCount; index++) {
     const pathIndex = selectedCount === 1 ? 0 : Math.round(index * (pathCount - 1) / (selectedCount - 1));
     const path = paths[pathIndex];
     const edgeId = JSON.stringify([path.sourceId, path.fromId, path.toId]);
-    const seed = hashId(edgeId);
-    const cycleMs = 1100 + seed % 350;
-    const phase = (seed >>> 8) % 1000 / 1000;
-    for (let slot = 0; slot < 3; slot++) {
-      const progress = ((ageMs / cycleMs + phase - slot * 0.12) % 1 + 1) % 1;
-      const { x, y } = curvePoint(path, progress);
-      const kind = slot === 2 ? 'dot' : 'star';
-      const baseRadius = slot === 0 ? 8.5 + seed % 3 : slot === 1 ? 4.5 + seed % 2 : 2.5;
-      const radius = baseRadius * (0.9 + 0.1 * Math.sin(ageMs / 160 + seed % 31 + slot));
-      const rotation = (seed % 360) * Math.PI / 180 + ageMs / 700 + slot;
-      const alpha = Math.sin(Math.PI * progress) * (slot === 0 ? 1 : 0.85);
-      const points = kind === 'star' ? Array.from({ length: 8 }, (_, pointIndex) => {
-        const angle = rotation + pointIndex * Math.PI / 4;
-        const reach = pointIndex % 2 === 0 ? radius : radius * 0.27;
+    const edgeParticleCount = Math.floor(particleCount / selectedCount) + (index < particleCount % selectedCount ? 1 : 0);
+    for (let slot = 0; slot < edgeParticleCount; slot++) {
+      const id = `${edgeId}:${slot}`;
+      const seed = hashId(id);
+      const cycleMs = 1500 + noise(seed, 1) * 700;
+      const phase = noise(seed, 2);
+      const progress = (ageMs / cycleMs + phase) % 1;
+      const center = curvePoint(path, progress);
+      const normal = curveNormal(path, progress);
+      const spread = 18 + 40 * Math.sin(Math.PI * progress);
+      const lateral = (noise(seed, 3) + noise(seed, 4) - 1) * spread + Math.sin(ageMs / 400 + phase * Math.PI * 2) * 3;
+      const x = center.x + normal.x * lateral;
+      const y = center.y + normal.y * lateral;
+      const kind = seed % 37 === 0 || slot === 13 ? 'star' : 'dot';
+      const baseRadius = kind === 'star' ? 4.4 + noise(seed, 5) * 4.6
+        : seed % 13 === 0 ? 2 + noise(seed, 5) * 1.3 : 0.55 + noise(seed, 5) * 1.1;
+      const radius = baseRadius * (0.9 + 0.1 * Math.sin(ageMs / 190 + phase * Math.PI * 2));
+      const rotation = phase * Math.PI * 2 + ageMs / 1500;
+      const twinkle = 0.55 + 0.45 * Math.sin(ageMs / 170 + phase * Math.PI * 2) ** 2;
+      const alpha = Math.sin(Math.PI * progress) ** 0.4 * twinkle * (kind === 'star' ? 1 : 0.34 + noise(seed, 6) * 0.66);
+      const shade = noise(seed, 7);
+      const color = kind === 'star' ? shade < 0.3 ? PUSH_EFFECT_STYLE.whiteColor : PUSH_EFFECT_STYLE.starColor
+        : shade < 0.12 ? PUSH_EFFECT_STYLE.whiteColor : shade < 0.35 ? PUSH_EFFECT_STYLE.brightDustColor
+          : shade < 0.65 ? PUSH_EFFECT_STYLE.warmDustColor : PUSH_EFFECT_STYLE.dustColor;
+      const halo = haloCount < PUSH_EFFECT_MAX_HALOS && (kind === 'star' || seed % 47 === 0);
+      if (halo) haloCount++;
+      const haloRadius = halo ? radius * (kind === 'star' ? 1.8 : 2.6) : 0;
+      const haloAlpha = halo ? alpha * (kind === 'star' ? 0.2 : 0.16) : 0;
+      const rayCount = seed % 2 === 0 ? 4 : 8;
+      const points = kind === 'star' ? Array.from({ length: rayCount * 2 }, (_, pointIndex) => {
+        const angle = rotation + pointIndex * Math.PI / rayCount;
+        const reach = pointIndex % 2 === 1 ? radius * 0.16
+          : rayCount === 8 && pointIndex % 4 !== 0 ? radius * 0.6 : radius;
         return { x: x + Math.cos(angle) * reach, y: y + Math.sin(angle) * reach };
       }) : [];
       const d = kind === 'star'
         ? `${points.map((point, pointIndex) => `${pointIndex === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`
         : `M ${x + radius} ${y} A ${radius} ${radius} 0 1 0 ${x - radius} ${y} A ${radius} ${radius} 0 1 0 ${x + radius} ${y} Z`;
-      particles.push({ id: `${edgeId}:${slot}`, x, y, radius, rotation, alpha, kind, d, points });
+      particles.push({ id, x, y, radius, rotation, alpha, color, haloRadius, haloAlpha,
+        haloColor: PUSH_EFFECT_STYLE.haloColor, kind, d, points });
     }
   }
   return particles;
 }
 
 export type PushEffectContext = Pick<CanvasRenderingContext2D,
-  'save' | 'restore' | 'beginPath' | 'moveTo' | 'lineTo' | 'closePath' | 'arc' | 'bezierCurveTo' | 'stroke' | 'fill' |
-  'strokeStyle' | 'fillStyle' | 'globalAlpha' | 'lineWidth' | 'lineCap' | 'lineJoin' |
+  'save' | 'restore' | 'beginPath' | 'moveTo' | 'lineTo' | 'closePath' | 'arc' | 'fill' |
+  'fillStyle' | 'globalAlpha' |
   'shadowBlur' | 'shadowColor' | 'filter'>;
 
-/** カードの前面に描く。SVGと同じ重ね線と星だけを使い、ぼかしやテキストは描かない。 */
+/** カード前面へ独立した砂と星だけを描く。連続した線・輪郭線・ぼかしは一切描かない。 */
 export function drawPushPaths(
   ctx: PushEffectContext, paths: readonly PushEffectPath[], opacity: number, ageMs: number,
 ): void {
@@ -202,33 +241,19 @@ export function drawPushPaths(
   const alpha = Math.min(1, opacity) * ctx.globalAlpha;
   ctx.save();
   try {
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'transparent';
     ctx.filter = 'none';
-    ctx.beginPath();
-    for (const path of paths) {
-      ctx.moveTo(path.startX, path.startY);
-      ctx.bezierCurveTo(path.control1X, path.control1Y, path.control2X, path.control2Y, path.endX, path.endY);
-    }
-    const layers = [
-      [PUSH_EFFECT_STYLE.outerColor, PUSH_EFFECT_STYLE.outerWidth, PUSH_EFFECT_STYLE.outerAlpha],
-      [PUSH_EFFECT_STYLE.haloColor, PUSH_EFFECT_STYLE.haloWidth, PUSH_EFFECT_STYLE.haloAlpha],
-      [PUSH_EFFECT_STYLE.color, PUSH_EFFECT_STYLE.mainWidth, PUSH_EFFECT_STYLE.mainAlpha],
-      [PUSH_EFFECT_STYLE.coreColor, PUSH_EFFECT_STYLE.coreWidth, PUSH_EFFECT_STYLE.coreAlpha],
-    ] as const;
-    for (const [color, width, layerAlpha] of layers) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = width;
-      ctx.globalAlpha = alpha * layerAlpha;
-      ctx.stroke();
-    }
-    ctx.fillStyle = PUSH_EFFECT_STYLE.particleColor;
-    ctx.strokeStyle = PUSH_EFFECT_STYLE.particleOutlineColor;
-    ctx.lineWidth = PUSH_EFFECT_STYLE.particleOutlineWidth;
     for (const particle of createPushParticles(paths, ageMs)) {
+      if (particle.haloRadius > 0) {
+        ctx.globalAlpha = alpha * particle.haloAlpha;
+        ctx.fillStyle = particle.haloColor;
+        ctx.beginPath();
+        ctx.arc(particle.x, particle.y, particle.haloRadius, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.globalAlpha = alpha * particle.alpha;
+      ctx.fillStyle = particle.color;
       ctx.beginPath();
       if (particle.kind === 'dot') {
         ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
@@ -238,7 +263,6 @@ export function drawPushPaths(
         ctx.closePath();
       }
       ctx.fill();
-      ctx.stroke();
     }
   } finally {
     ctx.restore();
