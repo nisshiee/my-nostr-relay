@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { CanvasScene } from "../CanvasScene";
+import { PUSH_EFFECT_DURATION_MS } from "../pushEffect";
 import { buildInitialLayout, insertCard, reflow } from "../../../lib/layoutEngine";
 import type { Card } from "../../../lib/types";
 
@@ -74,16 +75,16 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));
     flushFrame(900);
     expect(host.dataset.scenePushEffect).toBe('active');
-    flushFrame(1420);
+    flushFrame(PUSH_EFFECT_DURATION_MS + 20);
     expect(host.dataset.scenePushEffect).toBe('idle');
-    for(let time=1436; time<4000 && frames.size; time+=16) flushFrame(time);
+    for(let time=PUSH_EFFECT_DURATION_MS + 36; time<4000 && frames.size; time+=16) flushFrame(time);
     expect(host.dataset.scenePushEffect).toBe('idle');
     expect(svg.querySelectorAll('path').length).toBe(0);
     expect(frames.size).toBe(0);
   });
-  it("nativeでは因果線をカードより先にcanvasへ描き、SVGを重ねない", () => {
+  it("nativeでは魔法の軌跡をカードより後にcanvasへ描き、SVGを重ねない", () => {
     const stroke = vi.fn(), draw = vi.fn();
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({save:vi.fn(),restore:vi.fn(),beginPath:vi.fn(),moveTo:vi.fn(),bezierCurveTo:vi.fn(),stroke,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,arc:vi.fn(),fill:vi.fn(),lineTo:vi.fn(),closePath:vi.fn(),save:vi.fn(),restore:vi.fn(),beginPath:vi.fn(),moveTo:vi.fn(),bezierCurveTo:vi.fn(),stroke,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
     try {
@@ -92,13 +93,32 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
       flushFrame(16); flushFrame(100);
       expect(stroke).toHaveBeenCalled();
-      expect(stroke.mock.invocationCallOrder.at(-1)!).toBeLessThan(draw.mock.invocationCallOrder.at(-1)!);
+      expect(stroke.mock.invocationCallOrder.at(-1)!).toBeGreaterThan(draw.mock.invocationCallOrder.at(-1)!);
       expect(document.querySelectorAll('svg path').length).toBe(0);
       expect(screen.getByRole('status').textContent).toContain('native');
     } finally {
       if(original) Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',original);
       else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
     }
+  });
+  it("前面のSVGはカードの上に重なるが操作を遮らず、粒数を制限する", () => {
+    const original = {id:'a',content:<InteractiveCard />};
+    const {rerender} = render(<CanvasScene items={[original]} />);
+    flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]} />);
+    flushFrame(16); flushFrame(400);
+    const host = screen.getByLabelText('カード領域。縦スクロールで移動');
+    const svg = host.querySelector('svg')!;
+    expect(svg.classList.contains('z-10')).toBe(true);
+    expect(svg.classList.contains('pointer-events-none')).toBe(true);
+    expect(svg.previousElementSibling?.classList.contains('isolate')).toBe(true);
+    const particles = svg.querySelector('g > g:last-child')!;
+    expect(particles.children.length).toBeGreaterThan(0);
+    expect(particles.children.length).toBeLessThanOrEqual(48);
+    fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
+    expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
+    fireEvent.change(screen.getByRole('textbox',{name:'下書き'}),{target:{value:'星の下でも入力'}});
+    expect((screen.getByRole('textbox',{name:'下書き'}) as HTMLInputElement).value).toBe('星の下でも入力');
   });
   it("途中でreduced-motionへ変えると即停止し、解除しても旧効果を再生しない", () => {
     let changed: (() => void) | undefined;
@@ -204,7 +224,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
   it("native描画に現在位置を渡し、縦scrollで待機timelineを再開しない", () => {
     const draw = vi.fn();
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({ save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(), stroke: vi.fn(), resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw } as unknown as CanvasRenderingContext2D);
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({ globalAlpha:1, arc:vi.fn(),fill:vi.fn(), lineTo:vi.fn(), closePath:vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(), stroke: vi.fn(), resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw } as unknown as CanvasRenderingContext2D);
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype, 'requestPaint', { configurable:true, value(this: HTMLCanvasElement) { this.dispatchEvent(new Event('paint')); } });
     try {
@@ -382,7 +402,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     // APIを明示的に模倣する単体テスト。実ブラウザのnative描画検証ではない。
     const draw = vi.fn(() => { throw new Error("unsupported draw"); });
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
-      save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(), stroke: vi.fn(), resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw,
+      globalAlpha:1, arc:vi.fn(),fill:vi.fn(), lineTo:vi.fn(), closePath:vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(), stroke: vi.fn(), resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw,
     } as unknown as CanvasRenderingContext2D);
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "requestPaint");
     Object.defineProperty(HTMLCanvasElement.prototype, "requestPaint", {

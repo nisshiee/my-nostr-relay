@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createPushPaths, drawPushPaths, pushEffectOpacity,
+  createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity,
   PUSH_EFFECT_DURATION_MS, PUSH_EFFECT_FADE_IN_MS, PUSH_EFFECT_MAX_EDGES,
-  PUSH_EFFECT_MAX_TRACES, PUSH_EFFECT_STYLE,
+  PUSH_EFFECT_MAX_TRACES, PUSH_EFFECT_MAX_PARTICLES, PUSH_EFFECT_STYLE,
   type PushEffectBox, type PushEffectContext, type PushEffectTrace,
 } from '../pushEffect';
 
@@ -13,11 +13,12 @@ const trace = (sourceId: string, pairs: readonly [string, string][]): PushEffect
 
 function fakeContext() {
   const initial = {
-    strokeStyle: 'red', globalAlpha: 0.5, lineWidth: 7,
+    strokeStyle: 'red', fillStyle: 'blue', globalAlpha: 0.5, lineWidth: 7,
     lineCap: 'butt' as CanvasLineCap, lineJoin: 'miter' as CanvasLineJoin,
     shadowBlur: 8, shadowColor: 'purple', filter: 'blur(3px)',
   };
   const strokeStates: typeof initial[] = [];
+  const fillStates: typeof initial[] = [];
   const writes: [PropertyKey, unknown][] = [];
   const currentState = () => Object.fromEntries(Object.keys(initial).map(key => [key, target[key as keyof typeof initial]]));
   let saved: Record<string, unknown> = {};
@@ -25,8 +26,9 @@ function fakeContext() {
     ...initial,
     save: vi.fn(() => { saved = currentState(); }),
     restore: vi.fn(() => { Object.assign(target, saved); }),
-    beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(),
+    beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), arc: vi.fn(), bezierCurveTo: vi.fn(),
     stroke: vi.fn(() => { strokeStates.push(currentState() as typeof initial); }),
+    fill: vi.fn(() => { fillStates.push(currentState() as typeof initial); }),
   };
   const ctx = new Proxy(target, {
     set(object, property, value) {
@@ -34,13 +36,20 @@ function fakeContext() {
       return Reflect.set(object, property, value);
     },
   });
-  return { ctx, initial, strokeStates, writes };
+  return { ctx, initial, strokeStates, fillStates, writes };
 }
 
-describe('因果線の視認性', () => {
-  it('nativeとSVG共通の濃色・線幅を固定し、blurなしの短い効果を維持する', () => {
-    expect(PUSH_EFFECT_STYLE).toEqual({color:'#0284c7', mainWidth:2, mainAlpha:0.6, haloWidth:4.5, haloAlpha:0.14});
-    expect(PUSH_EFFECT_DURATION_MS).toBe(1400);
+describe('魔法の杖の視認性', () => {
+  it('nativeとSVG共通の太い紫と桃色の光・白金の芯を使う', () => {
+    expect(PUSH_EFFECT_STYLE).toMatchObject({
+      outerColor: '#7c3aed', outerWidth: 18,
+      haloColor: '#f472b6', haloWidth: 10,
+      color: '#f0abfc', mainWidth: 5,
+      coreColor: '#fff7d6', coreWidth: 1.8,
+      particleColor: '#fff8c5', particleOutlineColor: '#d946ef',
+    });
+    expect(PUSH_EFFECT_STYLE.mainAlpha).toBeGreaterThan(0.9);
+    expect(PUSH_EFFECT_DURATION_MS).toBe(2200);
   });
 });
 
@@ -60,32 +69,34 @@ describe('V2の押出因果パス', () => {
     expect(paths.every(path => path.d.match(/M /g)?.length === 1)).toBe(true);
   });
 
-  it('同じ列は左の余白を通り、小さいカードも上側24px以内へ接続する', () => {
+  it('カードの高さにかかわらず中央同士をS字でつなぐ', () => {
     const [path] = createPushPaths([trace('a', [['a', 'b']])], new Map([
       ['a', box(16, 10, 30)], ['b', box(16, 170)],
     ]));
-    expect([path.startX, path.startY, path.endX, path.endY]).toEqual([10, 25, 10, 194]);
-    expect(path.control1X).toBeLessThan(10);
-    expect(path.control2X).toBeLessThan(10);
-    expect(path.control1X).toBeGreaterThanOrEqual(2);
-    expect(path.control2X).toBeGreaterThanOrEqual(2);
+    expect([path.startX, path.startY, path.endX, path.endY]).toEqual([196, 25, 196, 230]);
+    expect(path.control1X).toBeLessThan(path.startX);
+    expect(path.control2X).toBeGreaterThan(path.endX);
     expect(path.control1Y).toBeGreaterThan(path.startY);
     expect(path.control2Y).toBeLessThan(path.endY);
   });
 
-  it('右方向も左方向も相手を向くカード側面へつなぐ', () => {
-    const boxes = new Map([['a', box(16, 20)], ['b', box(392, 160)]]);
+  it('右方向も左方向も中央へつなぎ、水平な押出も曲線にする', () => {
+    const boxes = new Map([['a', box(16, 20)], ['b', box(392, 20)]]);
     const [right] = createPushPaths([trace('a', [['a', 'b']])], boxes);
     const [left] = createPushPaths([trace('b', [['b', 'a']])], boxes);
-    expect([right.startX, right.startY, right.endX, right.endY]).toEqual([382, 44, 386, 184]);
+    expect([right.startX, right.startY, right.endX, right.endY]).toEqual([196, 80, 572, 80]);
     expect(right.control1X).toBeGreaterThan(right.startX);
     expect(right.control2X).toBeLessThan(right.endX);
-    expect([left.startX, left.startY, left.endX, left.endY]).toEqual([386, 184, 382, 44]);
+    expect(right.control1Y).toBeGreaterThan(right.startY);
+    expect(right.control2Y).toBeLessThan(right.endY);
+    expect([left.startX, left.startY, left.endX, left.endY]).toEqual([572, 80, 196, 80]);
     expect(left.control1X).toBeLessThan(left.startX);
     expect(left.control2X).toBeGreaterThan(left.endX);
+    expect(left.control1Y).toBeLessThan(left.startY);
+    expect(left.control2Y).toBeGreaterThan(left.endY);
   });
 
-  it('横移動の開始や左右反転でアンカーを跳ばさず、半幅離れたら側面へ接続する', () => {
+  it('横移動の開始や左右反転で中央のアンカーと制御点を跳ばさない', () => {
     const traces = [trace('a', [['a', 'b']])];
     const pathAt = (offset: number) => createPushPaths(traces, new Map([
       ['a', box(16, 0)], ['b', box(16 + offset, 132)],
@@ -97,11 +108,9 @@ describe('V2の押出因果パス', () => {
         expect(Math.abs(path[key] - middle[key])).toBeLessThan(1.1);
       }
     }
-    const approaching = pathAt(90);
-    expect(approaching.startX).toBeGreaterThan(middle.startX);
-    expect(approaching.startX).toBeLessThan(382);
-    expect(pathAt(180).startX).toBe(382);
-    expect(pathAt(-180).endX).toBe(202);
+    expect(pathAt(90).startX).toBe(middle.startX);
+    expect(pathAt(180).endX).toBe(376);
+    expect(pathAt(-180).endX).toBe(16);
   });
 
   it('毎フレームの表示座標を使い、SVGもnativeも同じ曲線を表す', () => {
@@ -110,10 +119,10 @@ describe('V2の押出因果パス', () => {
     const [before] = createPushPaths(traces, boxes);
     boxes.set('b', box(392, 240));
     const [after] = createPushPaths(traces, boxes);
-    expect(before.endX).toBe(10);
-    expect(before.endY).toBe(156);
-    expect(after.endX).toBe(386);
-    expect(after.endY).toBe(264);
+    expect(before.endX).toBe(196);
+    expect(before.endY).toBe(192);
+    expect(after.endX).toBe(572);
+    expect(after.endY).toBe(300);
     expect(after.d).toBe(`M ${after.startX} ${after.startY} C ${after.control1X} ${after.control1Y} ${after.control2X} ${after.control2Y} ${after.endX} ${after.endY}`);
     expect(createPushPaths(traces, boxes)).toEqual([after]);
   });
@@ -180,40 +189,54 @@ describe('V2の押出因果パス', () => {
 
   it('線幅が画面端にかかる曲線を除外しない', () => {
     const traces = [trace('a', [['a', 'b']])];
-    const boxes = new Map([['a', box(5, 0)], ['b', box(5, 100)]]);
+    const boxes = new Map([['a', box(-186, 0)], ['b', box(-186, 0)]]);
     expect(createPushPaths(traces, boxes, { x: 0, y: 0, width: 400, height: 300 })).toHaveLength(1);
   });
 });
 
 describe('V2の押出エフェクトの寿命と描画', () => {
-  it('80msで薄く現れて1400msで消え、時刻やフレーム回数に依存しない', () => {
-    expect(PUSH_EFFECT_DURATION_MS).toBe(1400);
+  it('80msで現れ900msまで明るさを保ち2200msで消える', () => {
+    expect(PUSH_EFFECT_DURATION_MS).toBe(2200);
     expect(PUSH_EFFECT_FADE_IN_MS).toBe(80);
     expect(pushEffectOpacity(0)).toBe(0);
     expect(pushEffectOpacity(40)).toBe(0.5);
     expect(pushEffectOpacity(80)).toBe(1);
-    expect(pushEffectOpacity(740)).toBe(0.5);
-    expect(pushEffectOpacity(1400)).toBe(0);
-    for (const age of [-1, 1401, 60000, NaN, Infinity]) expect(pushEffectOpacity(age)).toBe(0);
+    expect(pushEffectOpacity(900)).toBe(1);
+    expect(pushEffectOpacity(1550)).toBe(0.5);
+    expect(pushEffectOpacity(2200)).toBe(0);
+    for (const age of [-1, 2201, 60000, NaN, Infinity]) expect(pushEffectOpacity(age)).toBe(0);
   });
 
-  it('独立した曲線を2回だけstrokeし、ぼかし・影・文字を追加せず描画状態を戻す', () => {
+  it('独立した曲線の4層と星を描き、ぼかし・影・文字を追加せず描画状態を戻す', () => {
     const paths = createPushPaths([trace('a', [['a', 'b'], ['a', 'c']])], new Map([
       ['a', box(16, 0)], ['b', box(16, 132)], ['c', box(392, 132)],
     ]));
-    const { ctx, initial, strokeStates, writes } = fakeContext();
-    drawPushPaths(ctx, paths, 0.8);
+    const particles = createPushParticles(paths, 500);
+    const { ctx, initial, strokeStates, fillStates, writes } = fakeContext();
+    drawPushPaths(ctx, paths, 0.8, 500);
     expect(ctx.save).toHaveBeenCalledOnce();
     expect(ctx.restore).toHaveBeenCalledOnce();
-    expect(ctx.beginPath).toHaveBeenCalledOnce();
-    expect(ctx.moveTo.mock.calls).toEqual(paths.map(path => [path.startX, path.startY]));
+    expect(ctx.beginPath).toHaveBeenCalledTimes(1 + particles.length);
+    expect(ctx.moveTo.mock.calls.slice(0, paths.length)).toEqual(paths.map(path => [path.startX, path.startY]));
     expect(ctx.bezierCurveTo.mock.calls).toEqual(paths.map(path => [path.control1X, path.control1Y, path.control2X, path.control2Y, path.endX, path.endY]));
-    expect(ctx.stroke).toHaveBeenCalledTimes(2);
-    expect(strokeStates.map(state => state.lineWidth)).toEqual([PUSH_EFFECT_STYLE.haloWidth, PUSH_EFFECT_STYLE.mainWidth]);
-    expect(strokeStates[0].globalAlpha).toBeCloseTo(0.5 * 0.8 * PUSH_EFFECT_STYLE.haloAlpha);
-    expect(strokeStates[1].globalAlpha).toBeCloseTo(0.5 * 0.8 * PUSH_EFFECT_STYLE.mainAlpha);
+    expect(ctx.stroke).toHaveBeenCalledTimes(4 + particles.length);
+    expect(strokeStates.slice(0, 4).map(state => state.lineWidth)).toEqual([
+      PUSH_EFFECT_STYLE.outerWidth, PUSH_EFFECT_STYLE.haloWidth, PUSH_EFFECT_STYLE.mainWidth, PUSH_EFFECT_STYLE.coreWidth,
+    ]);
+    expect(strokeStates.slice(0, 4).map(state => state.strokeStyle)).toEqual([
+      PUSH_EFFECT_STYLE.outerColor, PUSH_EFFECT_STYLE.haloColor, PUSH_EFFECT_STYLE.color, PUSH_EFFECT_STYLE.coreColor,
+    ]);
+    expect(strokeStates[0].globalAlpha).toBeCloseTo(0.5 * 0.8 * PUSH_EFFECT_STYLE.outerAlpha);
+    expect(strokeStates[2].globalAlpha).toBeCloseTo(0.5 * 0.8 * PUSH_EFFECT_STYLE.mainAlpha);
+    expect(ctx.fill).toHaveBeenCalledTimes(particles.length);
+    expect(ctx.arc.mock.calls).toEqual(particles.filter(particle => particle.kind === 'dot').map(particle => [particle.x, particle.y, particle.radius, 0, Math.PI * 2]));
+    expect(ctx.lineTo.mock.calls).toEqual(particles.flatMap(particle => particle.points.slice(1).map(point => [point.x, point.y])));
+    for (let index = 0; index < particles.length; index++) {
+      expect(fillStates[index].globalAlpha).toBeCloseTo(0.5 * 0.8 * particles[index].alpha);
+      expect(fillStates[index].fillStyle).toBe(PUSH_EFFECT_STYLE.particleColor);
+    }
     for (const state of strokeStates) {
-      expect(state).toMatchObject({ strokeStyle: PUSH_EFFECT_STYLE.color, lineCap: 'round', lineJoin: 'round', shadowBlur: 0, shadowColor: 'transparent', filter: 'none' });
+      expect(state).toMatchObject({ lineCap: 'round', lineJoin: 'round', shadowBlur: 0, shadowColor: 'transparent', filter: 'none' });
     }
     expect(writes.filter(([property]) => property === 'filter')).toEqual([['filter', 'none']]);
     expect(writes.filter(([property]) => property === 'shadowBlur')).toEqual([['shadowBlur', 0]]);
@@ -223,12 +246,78 @@ describe('V2の押出エフェクトの寿命と描画', () => {
   it('非表示なら描かず、描画に失敗してもsaveした状態を復元する', () => {
     const paths = createPushPaths([trace('a', [['a', 'b']])], new Map([['a', box(16, 0)], ['b', box(16, 132)]]));
     const { ctx, initial } = fakeContext();
-    for (const opacity of [0, -1, NaN, Infinity]) drawPushPaths(ctx, paths, opacity);
-    drawPushPaths(ctx, [], 1);
+    for (const opacity of [0, -1, NaN, Infinity]) drawPushPaths(ctx, paths, opacity, 500);
+    for (const age of [0, -1, PUSH_EFFECT_DURATION_MS, NaN, Infinity]) drawPushPaths(ctx, paths, 1, age);
+    drawPushPaths(ctx, [], 1, 500);
     expect(ctx.save).not.toHaveBeenCalled();
     ctx.stroke.mockImplementation(() => { throw new Error('描画失敗'); });
-    expect(() => drawPushPaths(ctx as PushEffectContext, paths, 1)).toThrow('描画失敗');
+    expect(() => drawPushPaths(ctx as PushEffectContext, paths, 1, 500)).toThrow('描画失敗');
     expect(ctx.restore).toHaveBeenCalledOnce();
     expect(ctx).toMatchObject(initial);
+  });
+});
+
+describe('決定的な魔法の星と光点', () => {
+  const paths = createPushPaths([trace('a', [['a', 'b']])], new Map([['a', box(16, 0)], ['b', box(16, 300)]]));
+
+  it('IDと経過時間から同じ星を作り、乱数を使わず曲線上を進ませる', () => {
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => { throw new Error('乱数は禁止'); });
+    try {
+      const first = createPushParticles(paths, 500);
+      expect(createPushParticles(paths, 500)).toEqual(first);
+      expect(createPushParticles(paths, 600)).not.toEqual(first);
+      expect(first.map(particle => particle.kind)).toEqual(['star', 'star', 'dot']);
+      for (const particle of first) {
+        const progress = (particle.y - paths[0].startY) / (paths[0].endY - paths[0].startY);
+        const remaining = 1 - progress;
+        const expectedX = remaining ** 3 * paths[0].startX + 3 * remaining ** 2 * progress * paths[0].control1X +
+          3 * remaining * progress ** 2 * paths[0].control2X + progress ** 3 * paths[0].endX;
+        expect(particle.x).toBeCloseTo(expectedX, 8);
+        expect(progress).toBeGreaterThanOrEqual(0);
+        expect(progress).toBeLessThan(1);
+        expect(particle.alpha).toBeGreaterThanOrEqual(0);
+        expect(particle.alpha).toBeLessThanOrEqual(1);
+        expect(particle.radius).toBeGreaterThan(0);
+        expect(Number.isFinite(particle.rotation)).toBe(true);
+      }
+    } finally { random.mockRestore(); }
+  });
+
+  it('粒子の位相は配列順や現在の表示位置では変わらない', () => {
+    const others = createPushPaths([trace('x', [['x', 'y']])], new Map([['x', box(400, 0)], ['y', box(400, 300)]]));
+    const first = createPushParticles(paths, 500);
+    expect(createPushParticles([...others, ...paths], 500).filter(particle => particle.id === first[0].id)).toEqual([first[0]]);
+    const translated = createPushPaths([trace('a', [['a', 'b']])], new Map([['a', box(116, 200)], ['b', box(116, 500)]]));
+    const moved = createPushParticles(translated, 500);
+    expect(moved[0].x).toBeCloseTo(first[0].x + 100);
+    expect(moved[0].y).toBeCloseTo(first[0].y + 200);
+    expect(moved[0].alpha).toBe(first[0].alpha);
+    expect(moved[0].rotation).toBe(first[0].rotation);
+  });
+
+  it('SVGの星もnativeと同じ回転済み頂点を使う', () => {
+    for (const particle of createPushParticles(paths, 700)) {
+      if (particle.kind === 'star') {
+        expect(particle.points).toHaveLength(8);
+        expect(particle.d).toBe(`${particle.points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`);
+      } else {
+        expect(particle.points).toEqual([]);
+        expect(particle.d).toBe(`M ${particle.x + particle.radius} ${particle.y} A ${particle.radius} ${particle.radius} 0 1 0 ${particle.x - particle.radius} ${particle.y} A ${particle.radius} ${particle.radius} 0 1 0 ${particle.x + particle.radius} ${particle.y} Z`);
+      }
+    }
+  });
+
+  it('大きい連鎖でも48個までに抑え、先頭と末尾を含む辺へ分散させる', () => {
+    const many = Array.from({ length: 220 }, (_, index) => ({ ...paths[0], toId: `child-${index}` }));
+    const particles = createPushParticles(many, 500);
+    expect(particles).toHaveLength(PUSH_EFFECT_MAX_PARTICLES);
+    expect(new Set(particles.map(particle => particle.id)).size).toBe(PUSH_EFFECT_MAX_PARTICLES);
+    expect(particles[0].id).toContain('child-0');
+    expect(particles.at(-1)?.id).toContain('child-95');
+  });
+
+  it('有効な寿命外や空のパスでは粒子を作らない', () => {
+    for (const age of [-1, 0, PUSH_EFFECT_DURATION_MS, 60000, NaN, Infinity]) expect(createPushParticles(paths, age)).toEqual([]);
+    expect(createPushParticles([], 500)).toEqual([]);
   });
 });

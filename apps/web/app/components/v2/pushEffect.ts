@@ -25,19 +25,41 @@ export interface PushEffectPath {
   readonly d: string;
 }
 
-export const PUSH_EFFECT_DURATION_MS = 1400;
+export interface PushEffectParticle {
+  readonly id: string;
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly rotation: number;
+  readonly alpha: number;
+  readonly kind: 'star' | 'dot';
+  readonly d: string;
+  readonly points: readonly { readonly x: number; readonly y: number }[];
+}
+
+export const PUSH_EFFECT_DURATION_MS = 2200;
 export const PUSH_EFFECT_FADE_IN_MS = 80;
+export const PUSH_EFFECT_FADE_OUT_START_MS = 900;
 export const PUSH_EFFECT_MAX_TRACES = 4;
 export const PUSH_EFFECT_MAX_EDGES = 96;
+export const PUSH_EFFECT_MAX_PARTICLES = 48;
 export const PUSH_EFFECT_STYLE = Object.freeze({
-  color: '#0284c7',
-  mainWidth: 2,
-  mainAlpha: 0.6,
-  haloWidth: 4.5,
-  haloAlpha: 0.14,
+  outerColor: '#7c3aed',
+  outerWidth: 18,
+  outerAlpha: 0.22,
+  haloColor: '#f472b6',
+  haloWidth: 10,
+  haloAlpha: 0.6,
+  color: '#f0abfc',
+  mainWidth: 5,
+  mainAlpha: 0.95,
+  coreColor: '#fff7d6',
+  coreWidth: 1.8,
+  coreAlpha: 1,
+  particleColor: '#fff8c5',
+  particleOutlineColor: '#d946ef',
+  particleOutlineWidth: 1.1,
 });
-
-const GUTTER = 6;
 
 function validBox(box: PushEffectBox | undefined): box is PushEffectBox {
   return box !== undefined && Number.isFinite(box.x) && Number.isFinite(box.y) &&
@@ -46,7 +68,7 @@ function validBox(box: PushEffectBox | undefined): box is PushEffectBox {
 
 /** 制御点の外接矩形でのみ除外し、画面を横切る曲線を端点だけで落とさない。 */
 function outsideViewport(path: PushEffectPath, viewport: PushEffectBox): boolean {
-  const padding = PUSH_EFFECT_STYLE.haloWidth / 2;
+  const padding = Math.max(PUSH_EFFECT_STYLE.outerWidth / 2, 12);
   const xs = [path.startX, path.control1X, path.control2X, path.endX];
   const ys = [path.startY, path.control1Y, path.control2Y, path.endY];
   return Math.max(...xs) + padding < viewport.x ||
@@ -77,29 +99,19 @@ export function createPushPaths(
       const to = boxes.get(edge.toId);
       if (!validBox(from) || !validBox(to)) continue;
 
-      const horizontalDistance = to.x - from.x;
-      const direction = horizontalDistance >= 0 ? 1 : -1;
-      const progress = Math.min(1, Math.abs(horizontalDistance) / Math.max(1, Math.min(from.width, to.width) / 2));
-      // 横移動を始めた瞬間に接続先が反対側へ飛ばないよう、余白から側面へ連続的に寄せる。
-      const blend = progress * progress * (3 - 2 * progress);
-      const interpolate = (column: number, crossColumn: number) => column + (crossColumn - column) * blend;
-      const leftStartX = from.x - GUTTER;
-      const leftEndX = to.x - GUTTER;
-      const crossStartX = direction < 0 ? leftStartX : from.x + from.width + GUTTER;
-      const crossEndX = direction > 0 ? leftEndX : to.x + to.width + GUTTER;
-      const startX = interpolate(leftStartX, crossStartX);
-      const endX = interpolate(leftEndX, crossEndX);
-      const startY = from.y + Math.min(from.height / 2, 24);
-      const endY = to.y + Math.min(to.height / 2, 24);
+      const startX = from.x + from.width / 2;
+      const endX = to.x + to.width / 2;
+      const startY = from.y + from.height / 2;
+      const endY = to.y + to.height / 2;
+      const horizontalDistance = endX - startX;
       const verticalDistance = endY - startY;
-      const gutterX = Math.min(leftStartX, leftEndX);
-      // 左端の列でも曲線を画面外へ膨らませず、細いハロー分の余白を残す。
-      const bend = Math.min(18, Math.abs(verticalDistance) * 0.08, Math.max(0, gutterX - 2));
-      const reach = Math.max(12, Math.min(96, Math.abs(crossEndX - crossStartX) * 0.45));
-      const control1X = interpolate(gutterX - bend, crossStartX + direction * reach);
-      const control2X = interpolate(gutterX - bend, crossEndX - direction * reach);
-      const control1Y = interpolate(startY + verticalDistance * 0.28, startY);
-      const control2Y = interpolate(endY - verticalDistance * 0.28, endY);
+      const distance = Math.hypot(horizontalDistance, verticalDistance);
+      // 中央同士をなめらかなS字で結ぶ。縦横の切替でも制御点を飛ばさない。
+      const bend = distance === 0 ? 0 : Math.min(0.22, 88 / distance);
+      const control1X = startX + horizontalDistance / 3 - verticalDistance * bend;
+      const control2X = endX - horizontalDistance / 3 + verticalDistance * bend;
+      const control1Y = startY + verticalDistance / 3 + horizontalDistance * bend;
+      const control2Y = endY - verticalDistance / 3 - horizontalDistance * bend;
       const path: PushEffectPath = {
         sourceId: trace.sourceId, fromId: edge.fromId, toId: edge.toId,
         startX, startY, control1X, control1Y, control2X, control2Y, endX, endY,
@@ -111,27 +123,85 @@ export function createPushPaths(
   return paths;
 }
 
-/** 開始時は短く現れ、その後は1400msまで穏やかに消える。時刻は呼び出し元が保持する。 */
+/** 80msで現れ、杖の軌跡が見える間は明るさを保ち、2200msまでに消える。 */
 export function pushEffectOpacity(ageMs: number): number {
   if (!Number.isFinite(ageMs) || ageMs <= 0 || ageMs >= PUSH_EFFECT_DURATION_MS) return 0;
   if (ageMs < PUSH_EFFECT_FADE_IN_MS) return ageMs / PUSH_EFFECT_FADE_IN_MS;
-  return (PUSH_EFFECT_DURATION_MS - ageMs) / (PUSH_EFFECT_DURATION_MS - PUSH_EFFECT_FADE_IN_MS);
+  if (ageMs <= PUSH_EFFECT_FADE_OUT_START_MS) return 1;
+  const progress = (ageMs - PUSH_EFFECT_FADE_OUT_START_MS) / (PUSH_EFFECT_DURATION_MS - PUSH_EFFECT_FADE_OUT_START_MS);
+  return 1 - progress * progress * (3 - 2 * progress);
+}
+
+function hashId(id: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < id.length; index++) hash = Math.imul(hash ^ id.charCodeAt(index), 16777619);
+  return hash >>> 0;
+}
+
+function curvePoint(path: PushEffectPath, progress: number): { x: number; y: number } {
+  const remaining = 1 - progress;
+  const start = remaining ** 3;
+  const first = 3 * remaining ** 2 * progress;
+  const second = 3 * remaining * progress ** 2;
+  const end = progress ** 3;
+  return {
+    x: start * path.startX + first * path.control1X + second * path.control2X + end * path.endX,
+    y: start * path.startY + first * path.control1Y + second * path.control2Y + end * path.endY,
+  };
+}
+
+/**
+ * 根と辺のID・経過時間だけで光点を決める。フレームごとの乱数・タイマー・履歴は使わない。
+ * 長い連鎖も最大16辺を均等に選び、星2個と光点1個ずつの合計48個までに制限する。
+ */
+export function createPushParticles(paths: readonly PushEffectPath[], ageMs: number): readonly PushEffectParticle[] {
+  if (!Number.isFinite(ageMs) || ageMs <= 0 || ageMs >= PUSH_EFFECT_DURATION_MS) return [];
+  const pathCount = Math.min(paths.length, PUSH_EFFECT_MAX_EDGES);
+  const selectedCount = Math.min(pathCount, PUSH_EFFECT_MAX_PARTICLES / 3);
+  const particles: PushEffectParticle[] = [];
+  for (let index = 0; index < selectedCount; index++) {
+    const pathIndex = selectedCount === 1 ? 0 : Math.round(index * (pathCount - 1) / (selectedCount - 1));
+    const path = paths[pathIndex];
+    const edgeId = JSON.stringify([path.sourceId, path.fromId, path.toId]);
+    const seed = hashId(edgeId);
+    const cycleMs = 1100 + seed % 350;
+    const phase = (seed >>> 8) % 1000 / 1000;
+    for (let slot = 0; slot < 3; slot++) {
+      const progress = ((ageMs / cycleMs + phase - slot * 0.12) % 1 + 1) % 1;
+      const { x, y } = curvePoint(path, progress);
+      const kind = slot === 2 ? 'dot' : 'star';
+      const baseRadius = slot === 0 ? 8.5 + seed % 3 : slot === 1 ? 4.5 + seed % 2 : 2.5;
+      const radius = baseRadius * (0.9 + 0.1 * Math.sin(ageMs / 160 + seed % 31 + slot));
+      const rotation = (seed % 360) * Math.PI / 180 + ageMs / 700 + slot;
+      const alpha = Math.sin(Math.PI * progress) * (slot === 0 ? 1 : 0.85);
+      const points = kind === 'star' ? Array.from({ length: 8 }, (_, pointIndex) => {
+        const angle = rotation + pointIndex * Math.PI / 4;
+        const reach = pointIndex % 2 === 0 ? radius : radius * 0.27;
+        return { x: x + Math.cos(angle) * reach, y: y + Math.sin(angle) * reach };
+      }) : [];
+      const d = kind === 'star'
+        ? `${points.map((point, pointIndex) => `${pointIndex === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`
+        : `M ${x + radius} ${y} A ${radius} ${radius} 0 1 0 ${x - radius} ${y} A ${radius} ${radius} 0 1 0 ${x + radius} ${y} Z`;
+      particles.push({ id: `${edgeId}:${slot}`, x, y, radius, rotation, alpha, kind, d, points });
+    }
+  }
+  return particles;
 }
 
 export type PushEffectContext = Pick<CanvasRenderingContext2D,
-  'save' | 'restore' | 'beginPath' | 'moveTo' | 'bezierCurveTo' | 'stroke' |
-  'strokeStyle' | 'globalAlpha' | 'lineWidth' | 'lineCap' | 'lineJoin' |
+  'save' | 'restore' | 'beginPath' | 'moveTo' | 'lineTo' | 'closePath' | 'arc' | 'bezierCurveTo' | 'stroke' | 'fill' |
+  'strokeStyle' | 'fillStyle' | 'globalAlpha' | 'lineWidth' | 'lineCap' | 'lineJoin' |
   'shadowBlur' | 'shadowColor' | 'filter'>;
 
-/** カードより先に描く。SVGと同じ2本の線だけを使い、ぼかしやテキストは描かない。 */
+/** カードの前面に描く。SVGと同じ重ね線と星だけを使い、ぼかしやテキストは描かない。 */
 export function drawPushPaths(
-  ctx: PushEffectContext, paths: readonly PushEffectPath[], opacity: number,
+  ctx: PushEffectContext, paths: readonly PushEffectPath[], opacity: number, ageMs: number,
 ): void {
-  if (paths.length === 0 || !Number.isFinite(opacity) || opacity <= 0) return;
+  if (paths.length === 0 || !Number.isFinite(opacity) || opacity <= 0 ||
+    !Number.isFinite(ageMs) || ageMs <= 0 || ageMs >= PUSH_EFFECT_DURATION_MS) return;
   const alpha = Math.min(1, opacity) * ctx.globalAlpha;
   ctx.save();
   try {
-    ctx.strokeStyle = PUSH_EFFECT_STYLE.color;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.shadowBlur = 0;
@@ -142,12 +212,34 @@ export function drawPushPaths(
       ctx.moveTo(path.startX, path.startY);
       ctx.bezierCurveTo(path.control1X, path.control1Y, path.control2X, path.control2Y, path.endX, path.endY);
     }
-    ctx.lineWidth = PUSH_EFFECT_STYLE.haloWidth;
-    ctx.globalAlpha = alpha * PUSH_EFFECT_STYLE.haloAlpha;
-    ctx.stroke();
-    ctx.lineWidth = PUSH_EFFECT_STYLE.mainWidth;
-    ctx.globalAlpha = alpha * PUSH_EFFECT_STYLE.mainAlpha;
-    ctx.stroke();
+    const layers = [
+      [PUSH_EFFECT_STYLE.outerColor, PUSH_EFFECT_STYLE.outerWidth, PUSH_EFFECT_STYLE.outerAlpha],
+      [PUSH_EFFECT_STYLE.haloColor, PUSH_EFFECT_STYLE.haloWidth, PUSH_EFFECT_STYLE.haloAlpha],
+      [PUSH_EFFECT_STYLE.color, PUSH_EFFECT_STYLE.mainWidth, PUSH_EFFECT_STYLE.mainAlpha],
+      [PUSH_EFFECT_STYLE.coreColor, PUSH_EFFECT_STYLE.coreWidth, PUSH_EFFECT_STYLE.coreAlpha],
+    ] as const;
+    for (const [color, width, layerAlpha] of layers) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.globalAlpha = alpha * layerAlpha;
+      ctx.stroke();
+    }
+    ctx.fillStyle = PUSH_EFFECT_STYLE.particleColor;
+    ctx.strokeStyle = PUSH_EFFECT_STYLE.particleOutlineColor;
+    ctx.lineWidth = PUSH_EFFECT_STYLE.particleOutlineWidth;
+    for (const particle of createPushParticles(paths, ageMs)) {
+      ctx.globalAlpha = alpha * particle.alpha;
+      ctx.beginPath();
+      if (particle.kind === 'dot') {
+        ctx.arc(particle.x, particle.y, particle.radius, 0, Math.PI * 2);
+      } else {
+        ctx.moveTo(particle.points[0].x, particle.points[0].y);
+        for (let index = 1; index < particle.points.length; index++) ctx.lineTo(particle.points[index].x, particle.points[index].y);
+        ctx.closePath();
+      }
+      ctx.fill();
+      ctx.stroke();
+    }
   } finally {
     ctx.restore();
   }
