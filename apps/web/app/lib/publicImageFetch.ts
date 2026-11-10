@@ -12,7 +12,11 @@ const MAX_OUTPUT = 2 * 1024 * 1024;
 const MAX_PIXELS = 16_000_000;
 const DEADLINE_MS = 10_000;
 
-export class PublicImageDeadlineError extends Error {}
+export class PublicImageDeadlineError extends Error {
+  constructor(message: string, readonly nativeWorkMayRemain: boolean = true) {
+    super(message);
+  }
+}
 
 function reject(reason: string): never {
   throw new Error(`Public image rejected: ${reason}`);
@@ -142,10 +146,11 @@ function magicMime(body: Buffer): string | undefined {
   if (body.length >= 12 && body.toString("ascii", 0, 4) === "RIFF" && body.toString("ascii", 8, 12) === "WEBP") return "image/webp";
 }
 
-async function decode(body: Buffer, mime: string, width: PublicImageWidth, signal: AbortSignal, end: number): Promise<Buffer> {
+async function decode(body: Buffer, mime: string, width: PublicImageWidth, signal: AbortSignal, end: number, onNativeStart: () => void): Promise<Buffer> {
   signal.throwIfAborted();
   if (magicMime(body) !== mime) reject("magic bytes");
   rejectAnimation(body, mime);
+  onNativeStart();
   const image = sharp(body, { limitInputPixels: MAX_PIXELS, failOn: "warning", animated: false });
   const destroy = () => { image.destroy(); };
   signal.addEventListener("abort", destroy, { once: true });
@@ -178,10 +183,11 @@ export async function fetchPublicImage(rawUrl: string, width: PublicImageWidth):
   let url = validatePublicImageUrl(rawUrl);
   const controller = new AbortController();
   const end = Date.now() + DEADLINE_MS;
+  let nativeWorkMayRemain = false;
   let timer: ReturnType<typeof setTimeout>;
   const deadline = new Promise<never>((_, rejectPromise) => {
     timer = setTimeout(() => {
-      controller.abort(new PublicImageDeadlineError("Public image deadline exceeded"));
+      controller.abort(new PublicImageDeadlineError("Public image deadline exceeded", nativeWorkMayRemain));
       rejectPromise(controller.signal.reason);
     }, DEADLINE_MS);
   });
@@ -192,7 +198,13 @@ export async function fetchPublicImage(rawUrl: string, width: PublicImageWidth):
         if (redirects >= 2) reject("redirect limit");
         url = validatePublicImageUrl(new URL(response.redirect, url).href);
       } else {
-        return decode(response.body, response.mime, width, controller.signal, end);
+        try {
+          return await decode(response.body, response.mime, width, controller.signal, end, () => {
+            nativeWorkMayRemain = true;
+          });
+        } finally {
+          nativeWorkMayRemain = false;
+        }
       }
     }
   };

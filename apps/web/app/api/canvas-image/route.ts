@@ -21,7 +21,7 @@ const processState = globalThis as typeof globalThis & { [STATE_KEY]?: State };
 function state(): State {
   return processState[STATE_KEY] ??= {
     cache: new Map(), bytes: 0, inflight: new Map(), active: 0,
-    tokens: 10, refillAt: Date.now(),
+    tokens: 60, refillAt: Date.now(),
   };
 }
 
@@ -43,7 +43,7 @@ const headers = {
 };
 function failure(status: number): Response {
   return new Response(`Image unavailable (${status})`, {
-    status, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
+    status, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8", ...(status === 429 ? { "Retry-After": "1" } : {}) },
   });
 }
 function image(bytes: Buffer): Response {
@@ -99,11 +99,14 @@ export async function GET(request: Request): Promise<Response> {
   }
   let job = s.inflight.get(key);
   if (!job) {
-    // 同一プロセス内のみ: 同時2件、バースト10件、毎分60ミス。
+    // 同一プロセス内のみ: 同時2件、バースト60件、毎分240ミス。
     // 分散環境全体の費用・濫用対策ではないため、本番の公開許可には使用しない。
-    s.tokens = Math.min(10, s.tokens + Math.max(0, now - s.refillAt) / 1000);
+    s.tokens = Math.min(60, s.tokens + Math.max(0, now - s.refillAt) / 250);
     s.refillAt = now;
-    if (s.active >= 2 || s.tokens < 1) return failure(429);
+    if (s.active >= 2 || s.tokens < 1) {
+      console.warn("canvas-image: rate-limited", s.active >= 2 ? "concurrency" : "tokens");
+      return failure(429);
+    }
     s.tokens -= 1;
     s.active += 1;
     job = Promise.resolve().then(() => fetchPublicImage(url, width as PublicImageWidth)).then((bytes) => {
@@ -111,8 +114,8 @@ export async function GET(request: Request): Promise<Response> {
       s.active -= 1;
       return bytes;
     }).catch((error: unknown) => {
-      // 締切時だけはネイティブ処理終了を証明できず、再起動まで枠を保持する。
-      if (!(error instanceof PublicImageDeadlineError)) s.active -= 1;
+      // ネイティブ処理中の締切だけは終了を証明できず、再起動まで枠を保持する。
+      if (!(error instanceof PublicImageDeadlineError) || !error.nativeWorkMayRemain) s.active -= 1;
       throw error;
     }).finally(() => {
       s.inflight.delete(key);

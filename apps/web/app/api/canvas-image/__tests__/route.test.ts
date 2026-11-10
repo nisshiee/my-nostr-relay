@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "../route";
 import { fetchPublicImage, PublicImageDeadlineError } from "../../../lib/publicImageFetch";
 
-vi.mock("../../../lib/publicImageFetch", () => ({ fetchPublicImage: vi.fn(), PublicImageDeadlineError: class extends Error {} }));
+vi.mock("../../../lib/publicImageFetch", () => ({ fetchPublicImage: vi.fn(), PublicImageDeadlineError: class extends Error {
+  constructor(message: string, public readonly nativeWorkMayRemain = true) { super(message); }
+} }));
 const fetchImage = vi.mocked(fetchPublicImage);
 function request(url = "https://images.example/a.png", width = "64", extra = "") {
   return new Request(`http://localhost/api/canvas-image?url=${encodeURIComponent(url)}&w=${width}${extra}`);
@@ -91,18 +93,22 @@ describe("canvas-image default-off route", () => {
     const first = GET(request());
     const same = GET(request());
     const second = GET(request("https://images.example/b.png"));
-    expect((await GET(request("https://images.example/c.png"))).status).toBe(429);
+    const limited = await GET(request("https://images.example/c.png"));
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get("retry-after")).toBe("1");
     expect(fetchImage).toHaveBeenCalledTimes(2);
     finish(Buffer.from("done"));
     expect((await first).status).toBe(200);
     expect((await same).status).toBe(200);
     expect((await second).status).toBe(200);
+    fetchImage.mockResolvedValue(Buffer.from("recovered"));
+    expect((await GET(request("https://images.example/c.png"))).status).toBe(200);
   });
-  it("bounds burst to ten misses, refills one per second, and permits cache hits", async () => {
-    for (let i = 0; i < 10; i++) expect((await GET(request(`https://images.example/${i}.png`))).status).toBe(200);
+  it("bounds burst to sixty misses, refills four per second, and permits cache hits", async () => {
+    for (let i = 0; i < 60; i++) expect((await GET(request(`https://images.example/${i}.png`))).status).toBe(200);
     expect((await GET(request("https://images.example/new.png"))).status).toBe(429);
     expect((await GET(request("https://images.example/0.png"))).status).toBe(200);
-    vi.mocked(Date.now).mockReturnValue(101_000);
+    vi.mocked(Date.now).mockReturnValue(100_250);
     expect((await GET(request("https://images.example/new.png"))).status).toBe(200);
   });
   it("expires cached entries after five minutes", async () => {
@@ -144,6 +150,14 @@ describe("canvas-image default-off route", () => {
   it("releases slots for settled validation and upstream failures", async () => {
     fetchImage.mockRejectedValueOnce(new Error("invalid URL"))
       .mockRejectedValueOnce(new Error("upstream 404"));
+    expect((await GET(request())).status).toBe(502);
+    expect((await GET(request())).status).toBe(502);
+    expect((await GET(request())).status).toBe(200);
+    expect(fetchImage).toHaveBeenCalledTimes(3);
+  });
+  it("releases DNS and HTTP deadline slots so later images can load", async () => {
+    fetchImage.mockRejectedValueOnce(new PublicImageDeadlineError("DNS timeout", false))
+      .mockRejectedValueOnce(new PublicImageDeadlineError("HTTP timeout", false));
     expect((await GET(request())).status).toBe(502);
     expect((await GET(request())).status).toBe(502);
     expect((await GET(request())).status).toBe(200);

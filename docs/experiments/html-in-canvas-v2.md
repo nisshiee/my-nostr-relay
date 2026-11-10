@@ -99,10 +99,18 @@ E2E中に限定許可を受け、上記2つの非secret設定をVercel target=pr
 
 ### 濫用・コスト制約
 
-routeにはprocess内の同時実行制限、token bucket、容量制限付きTTL cache、inflight dedupeを設ける。Sharpのtimeoutは協調的で、native処理の即時停止・強制CPU隔離は保証しない。deadline超過では未終了処理の可能性があるためslotを保持し、2slotが残存した場合そのprocessの新規取得は停止する。通常の取得拒否はslotを解放する。ただしserverless複数instance全体のquotaではなく、総費用上限を保証しない。任意URLの量産やinstance増加への分散制御は残る。Nostr pubkeyの提示、Origin/Referer、匿名署名だけを認証・濫用防止と扱わない。
+routeにはprocess内の同時実行制限、token bucket、容量制限付きTTL cache、inflight dedupeを設ける。Sharpのtimeoutは協調的で、native処理の即時停止・強制CPU隔離は保証しない。native decode中のdeadline超過では未終了処理の可能性があるためslotを保持し、2slotが残存した場合そのprocessの新規取得は停止する。通常の取得拒否とDNS/HTTP段階のtimeoutはslotを解放する。ただしserverless複数instance全体のquotaではなく、総費用上限を保証しない。任意URLの量産やinstance増加への分散制御は残る。Nostr pubkeyの提示、Origin/Referer、匿名署名だけを認証・濫用防止と扱わない。
 
 このため一般公開を有効にする前に、分散quotaまたは検証済みの入口制限等を別途整備する必要がある。新権限・資源・設定が必要になれば追加判断を求める。画像URL・bytesはアプリ基盤を経由するためprivacyと課金の評価も必要。新routeの大量feed性能、Vercel上のdecode資源境界、実ブラウザ画像描画は未検証。
 
 ### 検証の区別
 
 単体テストではdefault-off、URL検査、DNS/IP固定、redirect、timeout、byte/MIME/decode境界、cache/同時数、V1維持、V2 srcとエラーplaceholderを検証する。mock HTTP/DNSによる境界テストは本番ネットワークの実証ではない。限定Previewの保護と有効化が確認できない場合は新routeの実機QAを行わず、local/test結果のみを報告する。
+
+### 多数画像と実フィード検証
+
+`/v2/lab` の成功は部品検証であり、認証済み実フィードのE2E成功を意味しない。off復旧版で画像がplaceholderになるのはgateの期待動作。これとは別に、旧UIでは同時2件を超えた429も初回onErrorで永久placeholderとなる欠陥があった。
+
+V2専用のsame-origin fetch queue（max2）、同一URLdedupe、bounded retry/cooldown、未使用blobに32件/16MiB/30秒の制限を持つcacheを追加する。表示中blobは参照がある間保持するため、この値は全体memory上限ではない。429はRetry-Afterに従い専用再試行8回まで、通常失敗は追加1回まで、503は停止する。元の外部URLへのfallbackはしない。成功画像bytesのblob URLは同一originとして扱うが、native描画の実機確認を別途行う。V1は変更しない。
+
+serverは同時2件を維持し、process bucketをburst60・毎秒4補充へ調整する。これは保護Preview内の補助制限であり、一般公開の費用保証ではない。実feedの多数画像、pan、profile表示、非対応query/formatによる欠落と一時制限による欠落を分けて確認するまでE2E完了とはしない。

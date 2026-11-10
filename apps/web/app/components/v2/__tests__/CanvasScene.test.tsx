@@ -56,6 +56,14 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("固定サイズ画像のload通知で再描画frameを予約する", () => {
+    render(<CanvasScene items={[{ id: "image", content: <span data-testid="loaded-image" /> }]} />);
+    flushFrame();
+    expect(frames.size).toBe(0);
+    act(() => screen.getByTestId("loaded-image").dispatchEvent(new CustomEvent("canvas-image-ready", { bubbles: true })));
+    expect(frames.size).toBe(1);
+    flushFrame();
+  });
   it("SSRと初回hydrationを一致させ、回復可能エラーなしでportalを操作できる", async () => {
     const element = <CanvasScene items={[{ id: "one", content: <InteractiveCard focus /> }]} />;
     const browserDocument = document;

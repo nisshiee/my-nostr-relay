@@ -32,7 +32,7 @@ beforeEach(() => {
   mocks.resolve4.mockResolvedValue(["8.8.8.8"]);
   mocks.resolve6.mockResolvedValue([]);
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("public image policy", () => {
   it.each([
@@ -152,7 +152,7 @@ describe("public image fetch", () => {
       req.end = () => callback(Object.assign(new PassThrough(), { statusCode: 200, headers: { "content-type": "image/png" } }));
       return req;
     });
-    const pending = expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toBeInstanceOf(PublicImageDeadlineError);
+    const pending = expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toMatchObject({ nativeWorkMayRemain: false });
     await vi.advanceTimersByTimeAsync(10_000);
     await pending;
     expect(signal?.aborted).toBe(true);
@@ -160,11 +160,21 @@ describe("public image fetch", () => {
   it("deadline includes DNS and cancels pending resolution", async () => {
     vi.useFakeTimers();
     mocks.resolve4.mockImplementation(() => new Promise(() => {}));
-    const pending = expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toBeInstanceOf(PublicImageDeadlineError);
+    const pending = expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toMatchObject({ nativeWorkMayRemain: false });
     await vi.advanceTimersByTimeAsync(10_000);
     await pending;
     expect(mocks.cancel).toHaveBeenCalled();
     expect(mocks.request).not.toHaveBeenCalled();
+  });
+  it("retains native-work marker when sharp metadata is still pending", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(sharp.prototype, "metadata").mockImplementation(() => new Promise(() => {}));
+    response(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const outcome = fetchPublicImage("https://cdn.example.com/a", 32).catch(error => error);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const error = await outcome;
+    expect(error).toBeInstanceOf(PublicImageDeadlineError);
+    expect(error.nativeWorkMayRemain).toBe(true);
   });
   it("rejects arbitrary widths before DNS", async () => {
     await expect(fetchPublicImage("https://cdn.example.com/a", 100 as 32)).rejects.toThrow("width");

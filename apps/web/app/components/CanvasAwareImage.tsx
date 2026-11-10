@@ -1,8 +1,10 @@
 "use client";
 
-import { createContext, useContext, useState, type ImgHTMLAttributes, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ImgHTMLAttributes, type ReactNode } from 'react';
 import NextImage, { type ImageProps } from 'next/image';
 import { canvasImageWidth, CANVAS_IMAGE_QUALITY, validateCanvasImageSource } from '../lib/canvasImagePolicy';
+
+import { canvasImageLoader, type CanvasImageLoad } from '../lib/canvasImageLoader';
 
 const CanvasImageContext = createContext(false);
 /** V1は元の画像表示を維持し、V2のカード内だけ同一origin配信を使う。 */
@@ -14,15 +16,22 @@ type MediaImageProps = ImgHTMLAttributes<HTMLImageElement> & { imageSize?: numbe
 function OptimizedCanvasImage({ src, imageSize = 640, ...props }: MediaImageProps) {
   const [failed, setFailed] = useState(false);
   const checked = validateCanvasImageSource(typeof src === 'string' ? src : '');
-  if (!checked.allowed || failed) return <span
+  const url = checked.allowed ? checked.local ? checked.url : `/api/canvas-image?url=${encodeURIComponent(checked.url)}&w=${canvasImageWidth(imageSize)}&q=${CANVAS_IMAGE_QUALITY}` : '';
+  const [loaded, setLoaded] = useState<{ source: string; state: CanvasImageLoad }>();
+  useEffect(() => {
+    if (!url || url === '/icon.svg') return;
+    return canvasImageLoader.subscribe(url, state => setLoaded({ source: url, state }));
+  }, [url]);
+  const state = loaded?.source === url ? loaded.state : { status: 'loading' as const };
+  const ready = url === '/icon.svg' ? url : state.status === 'ready' ? state.url : undefined;
+  if (!checked.allowed || failed || !ready) return <span
     role="img" aria-label={props.alt || '画像'}
-    title={failed ? '画像配信が無効、または画像を取得できませんでした' : !checked.allowed ? checked.reason : undefined}
+    title={!checked.allowed ? checked.reason : state.status === 'loading' && !failed ? '画像を読み込み中' : state.status === 'disabled' ? '画像配信は現在無効です' : '画像を取得できませんでした'}
     className={props.className}
     style={{ ...props.style, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#e4e4e7', color: '#52525b', fontSize: 11, width: props.width, height: props.height }}
   >{props.width ? (props.alt?.charAt(0) || '▧') : '画像未対応'}</span>;
-  const url = checked.local ? checked.url : `/api/canvas-image?url=${encodeURIComponent(checked.url)}&w=${canvasImageWidth(imageSize)}&q=${CANVAS_IMAGE_QUALITY}`;
   // eslint-disable-next-line @next/next/no-img-element -- 安全取得routeの同一origin URLを固定サイズで利用する
-  return <img {...props} alt={props.alt ?? ''} srcSet={undefined} src={url} onError={event => { setFailed(true); props.onError?.(event); }} />;
+  return <img {...props} alt={props.alt ?? ''} srcSet={undefined} src={ready} onLoad={event => { event.currentTarget.dispatchEvent(new CustomEvent('canvas-image-ready', { bubbles: true })); props.onLoad?.(event); }} onError={event => { setFailed(true); props.onError?.(event); }} />;
 }
 
 /** 通常imgを使う本文・preview・絵文字向け。 */

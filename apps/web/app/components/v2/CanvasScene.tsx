@@ -220,6 +220,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       (mode === 'dom' ? dom : surface).appendChild(node);
     } };
     surface.addEventListener('paint', paint);
+    // 固定サイズ画像の読込完了でもnative再描画を要求する。
+    host.addEventListener('canvas-image-ready', refresh);
     host.addEventListener('wheel', wheel, { passive: false });
     host.addEventListener('pointerdown', down); host.addEventListener('pointermove', move);
     host.addEventListener('pointerup', up); host.addEventListener('pointercancel', up); host.addEventListener('lostpointercapture', up);
@@ -229,6 +231,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     return () => {
       disposed = true; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect();
       surface.removeEventListener('paint', paint); host.removeEventListener('wheel', wheel);
+      host.removeEventListener('canvas-image-ready', refresh);
       host.removeEventListener('pointerdown', down); host.removeEventListener('pointermove', move);
       host.removeEventListener('pointerup', up); host.removeEventListener('pointercancel', up); host.removeEventListener('lostpointercapture', up);
       host.removeEventListener('keydown', key); host.removeEventListener('focusin', focus); host.removeEventListener('focusout', blur); window.removeEventListener('resize', refresh);
