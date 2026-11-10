@@ -42,8 +42,8 @@ function fakeContext() {
 describe('魔法の杖の視認性', () => {
   it('nativeとSVG共通の金と白の砂だけを使い、連続線のスタイルを持たない', () => {
     expect(PUSH_EFFECT_STYLE).toEqual({
-      dustColor: '#dba52c', warmDustColor: '#f4ca5b', brightDustColor: '#fff0b5',
-      whiteColor: '#fffef4', starColor: '#f3cf63', haloColor: '#f9cb44',
+      dustColor: '#a86d00', warmDustColor: '#cf8d09', brightDustColor: '#e7b329',
+      whiteColor: '#fff4b7', starColor: '#b87900', haloColor: '#e9ac20',
     });
     expect(PUSH_EFFECT_DURATION_MS).toBe(2200);
   });
@@ -191,14 +191,15 @@ describe('V2の押出因果パス', () => {
 });
 
 describe('V2の押出エフェクトの寿命と描画', () => {
-  it('80msで現れ900msまで明るさを保ち2200msで消える', () => {
+  it('80msで現れ1000msまで明るさを保ち2200msで消える', () => {
     expect(PUSH_EFFECT_DURATION_MS).toBe(2200);
     expect(PUSH_EFFECT_FADE_IN_MS).toBe(80);
     expect(pushEffectOpacity(0)).toBe(0);
     expect(pushEffectOpacity(40)).toBe(0.5);
     expect(pushEffectOpacity(80)).toBe(1);
     expect(pushEffectOpacity(900)).toBe(1);
-    expect(pushEffectOpacity(1550)).toBe(0.5);
+    expect(pushEffectOpacity(1000)).toBe(1);
+    expect(pushEffectOpacity(1600)).toBe(0.5);
     expect(pushEffectOpacity(2200)).toBe(0);
     for (const age of [-1, 2201, 60000, NaN, Infinity]) expect(pushEffectOpacity(age)).toBe(0);
   });
@@ -207,25 +208,34 @@ describe('V2の押出エフェクトの寿命と描画', () => {
     const paths = createPushPaths([trace('a', [['a', 'b'], ['a', 'c']])], new Map([
       ['a', box(16, 0)], ['b', box(16, 132)], ['c', box(392, 132)],
     ]));
-    const particles = createPushParticles(paths, 500);
+    const viewport = { x: 0, y: 0, width: 400, height: 500 };
+    const particles = createPushParticles(paths, 500, viewport);
     const { ctx, initial, fillStates, writes } = fakeContext();
-    drawPushPaths(ctx, paths, 0.8, 500);
+    drawPushPaths(ctx, paths, 0.8, 500, viewport);
     expect(ctx.save).toHaveBeenCalledOnce();
     expect(ctx.restore).toHaveBeenCalledOnce();
     const haloCount = particles.filter(particle => particle.haloRadius > 0).length;
-    expect(ctx.beginPath).toHaveBeenCalledTimes(particles.length + haloCount);
-    expect(ctx.moveTo.mock.calls).toEqual(particles.filter(particle => particle.kind === 'star').map(particle => [particle.points[0].x, particle.points[0].y]));
+    const coreCount = particles.filter(particle => particle.coreRadius > 0).length;
+    expect(ctx.beginPath).toHaveBeenCalledTimes(particles.length + haloCount + coreCount);
+    expect(ctx.moveTo.mock.calls).toEqual(particles.filter(particle => particle.kind === 'star').flatMap(particle => [
+      [particle.points[0].x, particle.points[0].y], [particle.corePoints[0].x, particle.corePoints[0].y],
+    ]));
     expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
     expect(ctx.stroke).not.toHaveBeenCalled();
-    expect(ctx.fill).toHaveBeenCalledTimes(particles.length + haloCount);
+    expect(ctx.fill).toHaveBeenCalledTimes(particles.length + haloCount + coreCount);
     expect(ctx.arc.mock.calls).toEqual(particles.flatMap(particle => [
       ...(particle.haloRadius > 0 ? [[particle.x, particle.y, particle.haloRadius, 0, Math.PI * 2]] : []),
       ...(particle.kind === 'dot' ? [[particle.x, particle.y, particle.radius, 0, Math.PI * 2]] : []),
+      ...(particle.kind === 'dot' && particle.coreRadius > 0 ? [[particle.x, particle.y, particle.coreRadius, 0, Math.PI * 2]] : []),
     ]));
-    expect(ctx.lineTo.mock.calls).toEqual(particles.flatMap(particle => particle.points.slice(1).map(point => [point.x, point.y])));
+    expect(ctx.lineTo.mock.calls).toEqual(particles.flatMap(particle => [
+      ...particle.points.slice(1).map(point => [point.x, point.y]),
+      ...particle.corePoints.slice(1).map(point => [point.x, point.y]),
+    ]));
     const expectedFills = particles.flatMap(particle => [
       ...(particle.haloRadius > 0 ? [{ alpha: particle.haloAlpha, color: particle.haloColor }] : []),
       { alpha: particle.alpha, color: particle.color },
+      ...(particle.coreRadius > 0 ? [{ alpha: particle.coreAlpha, color: particle.coreColor }] : []),
     ]);
     for (let index = 0; index < expectedFills.length; index++) {
       expect(fillStates[index].globalAlpha).toBeCloseTo(0.5 * 0.8 * expectedFills[index].alpha);
@@ -288,13 +298,34 @@ describe('決定的な魔法の星と光点', () => {
     expect(new Set(offsets.map(offset => Math.round(offset))).size).toBeGreaterThan(35);
     const dots = particles.filter(particle => particle.kind === 'dot');
     expect(dots.filter(particle => particle.radius < 2).length).toBeGreaterThan(dots.length * 0.8);
-    expect(Math.min(...dots.map(particle => particle.radius))).toBeLessThan(0.7);
+    expect(Math.min(...dots.map(particle => particle.radius))).toBeLessThan(1);
     expect(Math.max(...dots.map(particle => particle.radius))).toBeGreaterThan(2);
     const stars = particles.filter(particle => particle.kind === 'star');
     expect(stars.length).toBeLessThan(particles.length * 0.1);
     expect(stars.some(particle => particle.points.length === 8)).toBe(true);
     expect(stars.some(particle => particle.points.length === 16)).toBe(true);
-    expect(stars.every(particle => particle.radius > 3)).toBe(true);
+    expect(stars.every(particle => particle.radius > 5)).toBe(true);
+    expect(stars.every(particle => particle.color === PUSH_EFFECT_STYLE.starColor)).toBe(true);
+    expect(stars.every(particle => particle.haloRadius === 0)).toBe(true);
+  });
+
+  it('白いカードでも濃い星の形と小さい明色の芯が残り、最初の1秒は強く見える', () => {
+    for (const age of [100, 500, 1000]) {
+      const particles = createPushParticles(paths, age);
+      const alphas = particles.map(particle => particle.alpha).sort((left, right) => left - right);
+      expect(alphas[Math.floor(alphas.length / 2)]).toBeGreaterThan(0.7);
+      for (const particle of particles.filter(particle => particle.kind === 'star')) {
+        expect(particle.coreRadius).toBeCloseTo(particle.radius * 0.36);
+        expect(particle.coreColor).toBe(PUSH_EFFECT_STYLE.whiteColor);
+        expect(particle.corePoints.length).toBe(particle.points.length);
+        expect(particle.coreAlpha).toBe(particle.alpha);
+        expect(particle.coreD).toBe(`${particle.corePoints.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ')} Z`);
+        for (let index = 0; index < particle.points.length; index++) {
+          expect(particle.corePoints[index].x - particle.x).toBeCloseTo((particle.points[index].x - particle.x) * 0.36);
+          expect(particle.corePoints[index].y - particle.y).toBeCloseTo((particle.points[index].y - particle.y) * 0.36);
+        }
+      }
+    }
   });
 
   it('粒子の位相は配列順や現在の表示位置では変わらない', () => {
@@ -329,6 +360,53 @@ describe('決定的な魔法の星と光点', () => {
     expect(new Set(particles.map(particle => particle.id)).size).toBe(PUSH_EFFECT_MAX_PARTICLES);
     expect(particles[0].id).toContain('child-0');
     expect(particles.at(-1)?.id).toContain('child-95');
+  });
+
+  it('両端も32分割の標本も画面外の長い辺で、画面を横切る部分に砂を集中する', () => {
+    const crossing = createPushPaths([trace('a', [['a', 'b']])], new Map([
+      ['a', box(16, -100060)], ['b', box(16, 99940)],
+    ]));
+    const viewport = { x: 0, y: 12345, width: 400, height: 120 };
+    const inside = (particle: { x: number; y: number }) => particle.x >= viewport.x && particle.x <= viewport.x + viewport.width &&
+      particle.y >= viewport.y && particle.y <= viewport.y + viewport.height;
+    const wholePathParticles = createPushParticles(crossing, 500);
+    const visibleParticles = createPushParticles(crossing, 500, viewport);
+    expect(wholePathParticles.filter(inside).length).toBeLessThan(5);
+    expect(visibleParticles.length).toBeGreaterThan(160);
+    expect(visibleParticles.filter(inside).length).toBeGreaterThan(130);
+    expect(createPushParticles(crossing, 500, viewport)).toEqual(visibleParticles);
+  });
+
+  it('見えない辺へ粒子を配分せず、画面近くの軌道から届く砂は残す', () => {
+    const distant = createPushPaths([trace('far', [['far', 'far2']])], new Map([
+      ['far', box(2000, 0)], ['far2', box(2000, 300)],
+    ]));
+    const viewport = { x: 0, y: 0, width: 400, height: 400 };
+    expect(createPushParticles(distant, 500, viewport)).toEqual([]);
+    const visible = createPushParticles([...distant, ...paths], 500, viewport);
+    expect(visible.length).toBeGreaterThan(160);
+    expect(visible.every(particle => !particle.id.includes('far'))).toBe(true);
+    const adjacent = { ...paths[0], startX: 430, endX: 430, control1X: 430, control2X: 430 };
+    const adjacentDust = createPushParticles([adjacent], 500, viewport);
+    expect(adjacentDust.some(particle => particle.x < 400)).toBe(true);
+    const outside = { ...viewport, y: 2000 };
+    const { ctx } = fakeContext();
+    drawPushPaths(ctx, paths, 1, 500, outside);
+    expect(ctx.fill).not.toHaveBeenCalled();
+  });
+
+  it('画面が長い辺の始点や終点に近くても、可視部分の砂を暗くしない', () => {
+    const long = createPushPaths([trace('a', [['a', 'b']])], new Map([
+      ['a', box(16, -60)], ['b', box(16, 99940)],
+    ]));
+    for (const y of [20, 99860]) {
+      const viewport = { x: 0, y, width: 400, height: 120 };
+      const particles = createPushParticles(long, 500, viewport);
+      const inside = particles.filter(particle => particle.y >= y && particle.y <= y + viewport.height);
+      expect(inside.length).toBeGreaterThan(130);
+      const alphas = inside.map(particle => particle.alpha).sort((left, right) => left - right);
+      expect(alphas[Math.floor(alphas.length / 2)]).toBeGreaterThan(0.7);
+    }
   });
 
   it('有効な寿命外や空のパスでは粒子を作らない', () => {

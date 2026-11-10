@@ -7,7 +7,7 @@ import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, ty
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
 import type { Card } from "../../lib/types";
-import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath } from "./pushEffect";
+import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
@@ -78,6 +78,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     let layoutDirty = true;
     const effect = savedEffect.current;
     let effectPaths: readonly PushEffectPath[] = [];
+    let effectViewport: PushEffectBox | undefined;
     let effectOpacity = 0;
     let effectAge = 0;
     let lastFrameTime: number | null = null;
@@ -185,25 +186,31 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         if (reducedMotion || !layout.insertion.traces.length || time - effect.startedAt >= PUSH_EFFECT_DURATION_MS) effect.active = false;
         effectAge = time - effect.startedAt;
         effectOpacity = effect.active ? pushEffectOpacity(effectAge) : 0;
-        effectPaths = effect.active ? createPushPaths(layout.insertion.traces, boxes, { x: 0, y: host.scrollTop, width: viewportWidth, height: viewportHeight }) : [];
+        effectViewport = { x: 0, y: host.scrollTop, width: viewportWidth, height: viewportHeight };
+        effectPaths = effect.active ? createPushPaths(layout.insertion.traces, boxes, effectViewport) : [];
         host.dataset.scenePushEffect = reducedMotion ? 'reduced' : effect.active ? 'active' : 'idle';
         // 曲線は粒子の配置にだけ使い、前面に独立した光点だけを描く。
-        const particles = mode === 'dom' && effectOpacity > 0 ? createPushParticles(effectPaths, effectAge) : [];
+        const particles = mode === 'dom' && effectOpacity > 0 ? createPushParticles(effectPaths, effectAge, effectViewport) : [];
         const particleGroup = effectParticleGroup.current!;
-        while (particleGroup.children.length > particles.length * 2) particleGroup.lastElementChild!.remove();
+        while (particleGroup.children.length > particles.length * 3) particleGroup.lastElementChild!.remove();
         for (let i = 0; i < particles.length; i++) {
           const particle = particles[i];
-          let halo = particleGroup.children[i * 2];
+          let halo = particleGroup.children[i * 3];
           if (!halo) { halo = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); particleGroup.appendChild(halo); }
           halo.setAttribute('cx', String(particle.x)); halo.setAttribute('cy', String(particle.y));
           halo.setAttribute('r', String(particle.haloRadius));
           halo.setAttribute('fill', particle.haloColor);
           halo.setAttribute('opacity', String(effectOpacity * particle.haloAlpha));
-          let shape = particleGroup.children[i * 2 + 1];
+          let shape = particleGroup.children[i * 3 + 1];
           if (!shape) { shape = document.createElementNS('http://www.w3.org/2000/svg', 'path'); particleGroup.appendChild(shape); }
           shape.setAttribute('d', particle.d);
           shape.setAttribute('fill', particle.color);
           shape.setAttribute('opacity', String(effectOpacity * particle.alpha));
+          let core = particleGroup.children[i * 3 + 2];
+          if (!core) { core = document.createElementNS('http://www.w3.org/2000/svg', 'path'); particleGroup.appendChild(core); }
+          core.setAttribute('d', particle.coreD);
+          core.setAttribute('fill', particle.coreColor);
+          core.setAttribute('opacity', String(effectOpacity * particle.coreAlpha));
         }
         effectGroup.current!.setAttribute('transform', `translate(0 ${camera.y})`);
         host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
@@ -243,7 +250,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
           if (mode === 'legacy' && transform) node.style.transform = transform.toString();
           painted = true;
         }
-        drawPushPaths(ctx, effectPaths, effectOpacity, effectAge);
+        drawPushPaths(ctx, effectPaths, effectOpacity, effectAge, effectViewport);
         if (painted) { clearTimeout(watchdog.timer); setStatus(`HTML-in-Canvas · native ${mode}`); }
       } catch {
         changeMode('dom');

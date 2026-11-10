@@ -115,7 +115,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(svg.previousElementSibling?.classList.contains('isolate')).toBe(true);
     const particles = svg.querySelector('g > g:last-child')!;
     expect(particles.children.length).toBeGreaterThan(0);
-    expect(particles.querySelectorAll('path').length).toBeLessThanOrEqual(240);
+    expect(particles.querySelectorAll('path').length).toBeLessThanOrEqual(480);
+    expect(particles.children.length).toBeLessThanOrEqual(720);
     expect(svg.querySelectorAll('[stroke]').length).toBe(0);
     expect([...svg.querySelectorAll('path')].every(path => !path.getAttribute('d')?.includes(' C '))).toBe(true);
     fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
