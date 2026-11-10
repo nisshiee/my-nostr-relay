@@ -1,3 +1,4 @@
+import { hasAllowedPublicImageQuery } from "./publicImageQuery";
 import { Resolver } from "node:dns/promises";
 import { request } from "node:https";
 import { isIP } from "node:net";
@@ -26,7 +27,7 @@ export function validatePublicImageUrl(raw: string): URL {
   if (raw.length > 2048 || /[\s\\]/.test(raw)) reject("URL");
   const url = new URL(raw);
   if (url.protocol !== "https:" || (url.port && url.port !== "443")) reject("HTTPS 443 required");
-  if (url.username || url.password || raw.includes("?") || raw.includes("#")) reject("URL credentials/query/fragment");
+  if (url.username || url.password || (raw.includes("?") && !url.search) || !hasAllowedPublicImageQuery(url) || raw.includes("#")) reject("URL credentials/query/fragment");
   if (isIP(url.hostname.replace(/^\[|\]$/g, ""))) reject("IP literal");
   const host = url.hostname.toLowerCase();
   if (!host.includes(".") || host.endsWith(".") || !/^[a-z0-9.-]+$/.test(host) ||
@@ -82,7 +83,7 @@ async function download(url: URL, signal: AbortSignal): Promise<Response> {
       family: target.family,
       // DNS 再問い合わせを避け、検査済みアドレスだけに接続する。TLS/Host は元のホスト名。
       lookup: (_host, _options, callback) => callback(null, target.address, target.family),
-      headers: { Accept: "image/jpeg,image/png,image/webp", "Accept-Encoding": "identity" },
+      headers: { Accept: "image/jpeg,image/png,image/webp,image/avif", "Accept-Encoding": "identity" },
     }, res => {
       const fail = (reason: string) => {
         res.destroy();
@@ -99,7 +100,7 @@ async function download(url: URL, signal: AbortSignal): Promise<Response> {
       if (res.statusCode !== 200) return fail("status");
       if (res.headers["content-encoding"] && res.headers["content-encoding"].toLowerCase() !== "identity") return fail("encoding");
       const mime = (res.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
-      if (!["image/jpeg", "image/png", "image/webp", "application/octet-stream"].includes(mime)) {
+      if (!["image/jpeg", "image/png", "image/webp", "image/avif", "application/octet-stream"].includes(mime)) {
         // 診断には固定カテゴリのみを使い、上流ヘッダの任意文字列を露出させない。
         const category: Record<string, string> = {
           "image/jpg": "image-jpg",
@@ -151,7 +152,27 @@ function rejectAnimation(body: Buffer, mime: string): void {
   }
 }
 
+function isStaticAvif(body: Buffer): boolean {
+  // ftyp は先頭の通常サイズ箱のみ許可し、未知の互換ブランドや動画トラックを拒否する。
+  if (body.length < 24 || body.toString("ascii", 4, 8) !== "ftyp") return false;
+  const size = body.readUInt32BE(0);
+  if (size < 24 || size > body.length || size % 4 !== 0) return false;
+  const brands = [body.toString("ascii", 8, 12)];
+  for (let offset = 16; offset < size; offset += 4) brands.push(body.toString("ascii", offset, offset + 4));
+  if (!brands.includes("avif") || brands.some(brand => !["avif", "mif1", "miaf", "MA1A", "MA1B"].includes(brand))) return false;
+  let offset = size;
+  while (offset < body.length) {
+    if (body.length - offset < 8) return false;
+    const boxSize = body.readUInt32BE(offset);
+    const kind = body.toString("ascii", offset + 4, offset + 8);
+    if (boxSize < 8 || boxSize > body.length - offset || kind === "moov" || kind === "ftyp") return false;
+    offset += boxSize;
+  }
+  return true;
+}
+
 function magicMime(body: Buffer): string | undefined {
+  if (isStaticAvif(body)) return "image/avif";
   if (body.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return "image/jpeg";
   if (body.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "image/png";
   if (body.length >= 12 && body.toString("ascii", 0, 4) === "RIFF" && body.toString("ascii", 8, 12) === "WEBP") return "image/webp";
@@ -160,7 +181,7 @@ function magicMime(body: Buffer): string | undefined {
 async function decode(body: Buffer, mime: string, width: PublicImageWidth, signal: AbortSignal, end: number, onNativeStart: () => void): Promise<Buffer> {
   signal.throwIfAborted();
   const detectedMime = magicMime(body);
-  if (mime === "application/octet-stream" && detectedMime) mime = detectedMime;
+  if (mime === "application/octet-stream" && detectedMime && detectedMime !== "image/avif") mime = detectedMime;
   if (!detectedMime || detectedMime !== mime) reject("magic bytes");
   rejectAnimation(body, mime);
   onNativeStart();
@@ -170,6 +191,7 @@ async function decode(body: Buffer, mime: string, width: PublicImageWidth, signa
   try {
     const metadata = await image.metadata();
     signal.throwIfAborted();
+    if (mime === "image/avif" && (metadata.format !== "heif" || metadata.compression !== "av1" || metadata.pages !== 1)) reject("AVIF format");
     if (!metadata.width || !metadata.height || metadata.width * metadata.height > MAX_PIXELS || (metadata.pages ?? 1) !== 1) reject("pixels/frames");
     // libvips の協調的タイムアウトであり、ネイティブ処理の強制停止を保証しない。
     image.timeout({ seconds: Math.max(1, Math.ceil((end - Date.now()) / 1000)) });

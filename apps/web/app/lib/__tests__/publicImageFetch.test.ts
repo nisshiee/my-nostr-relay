@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import sharp from "sharp";
+import sharp, { type Metadata } from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ resolve4: vi.fn(), resolve6: vi.fn(), cancel: vi.fn(), request: vi.fn() }));
@@ -97,7 +97,6 @@ describe("public image fetch", () => {
   });
   it.each([
     ["image/jpg", "image-jpg"],
-    ["image/avif", "avif"],
     ["image/gif", "gif"],
     ["text/html; charset=utf-8", "text-html"],
     ["image/svg+xml", "svg"],
@@ -131,6 +130,38 @@ describe("public image fetch", () => {
     const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();
     response(png, { "content-type": "image/jpeg" });
     await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow("magic bytes");
+  });
+  it("decodes static AVIF to WebP", async () => {
+    const avif = await sharp({ create: { width: 20, height: 10, channels: 3, background: "red" } }).avif().toBuffer();
+    response(avif, { "content-type": "image/avif" });
+    expect(await sharp(await fetchPublicImage("https://cdn.example.com/a", 32)).metadata()).toMatchObject({ format: "webp", width: 20, height: 10 });
+  });
+  it.each(["avis", "heic", "heix", "unknown"])("rejects AVIF unsupported brand %s", async brand => {
+    const avif = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).avif().toBuffer();
+    avif.write(brand.substring(0, 4), 16);
+    response(avif, { "content-type": "image/avif" });
+    await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow("magic bytes");
+  });
+  it.each(["truncated", "spoof", "moov", "octet", "mismatch"])("rejects AVIF %s", async scenario => {
+    let avif = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).avif().toBuffer();
+    if (scenario === "truncated") avif = avif.subarray(0, 23);
+    if (scenario === "spoof") avif = avif.subarray(0, avif.readUInt32BE(0));
+    if (scenario === "moov") {
+      const box = Buffer.alloc(8); box.writeUInt32BE(8); box.write("moov", 4);
+      avif = Buffer.concat([avif, box]);
+    }
+    response(avif, { "content-type": scenario === "octet" ? "application/octet-stream" : scenario === "mismatch" ? "image/png" : "image/avif" });
+    await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow();
+  });
+  it.each([
+    { format: "heif", compression: "av1", pages: 2, width: 2, height: 2 },
+    { format: "heif", compression: "hevc", pages: 1, width: 2, height: 2 },
+    { format: "heif", compression: "av1", pages: 1, width: 4001, height: 4000 },
+  ])("rejects invalid AVIF decoder metadata %j", async metadata => {
+    const avif = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).avif().toBuffer();
+    vi.spyOn(sharp.prototype, "metadata").mockResolvedValue(metadata as unknown as Metadata);
+    response(avif, { "content-type": "image/avif" });
+    await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow();
   });
   it("rejects oversized streaming body without content-length", async () => {
     response(Buffer.alloc(5 * 1024 * 1024 + 1));

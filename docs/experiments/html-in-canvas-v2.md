@@ -91,10 +91,10 @@ E2E中に限定許可を受け、上記2つの非secret設定をVercel target=pr
 
 ### 取得・画像境界
 
-- 公開HTTPS標準portのhostnameのみ。userinfo、query/fragment、IP literal、SVGを拒否する。host制限撤去は認証付き画像やsigned URLの対応を意味しない。
+- 公開HTTPS標準portのhostnameのみ。userinfo、未許可query/fragment、IP literal、SVGを拒否する。host制限撤去は認証付き画像やsigned URLの対応を意味しない。
 - Node runtimeでDNSの全候補を検査し、検査済みIPだけを接続lookupに固定する。TLS hostnameとSNIは元hostnameを維持し、redirectごとに検査する。
 - DNSを含む10秒deadline、redirect最大2回、stream入力5MiB上限を設ける。上流cookie/Authorization/Refererは送らず、上流headerを応答へ転送しない。
-- JPEG/PNG/WebPのMIMEとmagicを確認し（application/octet-streamのみmagicでこの3形式へ限定して判定し）、Sharpの1600万画素・1frame・協調的処理時間制限を通して固定幅（32/64/128/640/1280）・quality75のWebPに再エンコードし、出力2MiB上限を設ける。出力byte検査前にnative側でbufferが確保され得るため、この値だけでprocess memory上限を保証しない。SVG・アニメーション等の非対応画像は拒否する。
+- JPEG/PNG/WebP/静止AVIFのMIMEと実体を確認し（application/octet-streamはJPEG/PNG/WebPの3形式だけに限定して判定し）、Sharpの1600万画素・1frame・協調的処理時間制限を通して固定幅（32/64/128/640/1280）・quality75のWebPに再エンコードし、出力2MiB上限を設ける。出力byte検査前にnative側でbufferが確保され得るため、この値だけでprocess memory上限を保証しない。SVG・アニメーション等の非対応画像は拒否する。
 - 取得・変換失敗時に外部URLへfallbackしない。ファイル選択で自前生成したblobプレビューと自前iconは従来通り。
 
 ### 濫用・コスト制約
@@ -118,3 +118,11 @@ serverは同時2件を維持し、process bucketをburst60・毎秒4補充へ調
 ### 実フィードのMIME不整合
 
 認証済み実フィードでavatar/本文写真・pan後の増分画像・profile開閉を確認した。残失敗の1例は通常imgで表示できる画像がVercel取得時に `application/octet-stream` を返すことが固定分類ログで判明した。拡張子を信用せず、octet-streamだけは入力上限内でbytesを読み、JPEG/PNG/WebP magicと完全decodeを通ったもののみWebPへ再encodeする。HTML/SVG/GIF/未知形式は通さず、標準MIMEとmagicの不一致も拒否する。query/認証/ネットワーク制限は変更しない。
+
+### 静止AVIFと観測済みquery
+
+実feedの残失敗1件を単独routeと固定MIMEログでAVIFと特定した。AVIFはISOBMFF ftyp brand/box構造を検査し、avis/moov等のsequence・未知brandを拒否する。SharpのHEIF形式・AV1圧縮・pages1検査と既存画素/byte/deadlineを通してWebPへ変換する。octet-streamのAVIFはまだ対象外。
+
+queryはclientとserver共通の狭い許可ルールを使う。実feedで正常表示される0.gravatar.comの /avatar/32桁または64桁hex に限り、唯一のsize=整数1..2048を許可する。公開X metadataで確認したpbs.twimg.com/media/安全なfilenameに限り、format=webpとname=largeの2組だけを許可する。未知key・重複・認証/署名値・別host/pathへは広げない。redirectも同じ検査を通す。
+
+これらは公開サイズ/形式指定でありsecretを含む任意queryは受け付けない。許可された画像URL自体はVercelのリクエスト/キャッシュへ渡るが、アプリはURL全文や上流headerをログしない。Kojiraのv queryは用途未確定で、追加取得403後は調査を止め未許可とした。HTTP画像はTLS制約のため引き続き拒否する。
