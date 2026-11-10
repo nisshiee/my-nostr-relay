@@ -16,12 +16,12 @@ function OptimizedCanvasImage({ src, imageSize = 640, ...props }: MediaImageProp
   const checked = validateCanvasImageSource(typeof src === 'string' ? src : '');
   if (!checked.allowed || failed) return <span
     role="img" aria-label={props.alt || '画像'}
-    title={failed ? '画像を取得できませんでした' : !checked.allowed ? checked.reason : undefined}
+    title={failed ? '画像配信が無効、または画像を取得できませんでした' : !checked.allowed ? checked.reason : undefined}
     className={props.className}
     style={{ ...props.style, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#e4e4e7', color: '#52525b', fontSize: 11, width: props.width, height: props.height }}
   >{props.width ? (props.alt?.charAt(0) || '▧') : '画像未対応'}</span>;
-  const url = checked.local ? checked.url : `/_next/image?url=${encodeURIComponent(checked.url)}&w=${canvasImageWidth(imageSize)}&q=${CANVAS_IMAGE_QUALITY}`;
-  // eslint-disable-next-line @next/next/no-img-element -- Next標準optimizerの同一origin URLを固定サイズで利用する
+  const url = checked.local ? checked.url : `/api/canvas-image?url=${encodeURIComponent(checked.url)}&w=${canvasImageWidth(imageSize)}&q=${CANVAS_IMAGE_QUALITY}`;
+  // eslint-disable-next-line @next/next/no-img-element -- 安全取得routeの同一origin URLを固定サイズで利用する
   return <img {...props} alt={props.alt ?? ''} srcSet={undefined} src={url} onError={event => { setFailed(true); props.onError?.(event); }} />;
 }
 

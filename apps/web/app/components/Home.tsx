@@ -15,7 +15,7 @@ export function Home({ version = "v1" }: { version?: "v1" | "v2" }) {
     <nav aria-label="Canvas version" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 border-b border-zinc-200 bg-zinc-100 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
       <Link href="/" aria-current={version === "v1" ? "page" : undefined} className="font-semibold underline underline-offset-4">V1 · 現行版</Link>
       <Link href="/v2" aria-current={version === "v2" ? "page" : undefined} className="font-semibold underline underline-offset-4">V2 · HTML-in-Canvas実験版</Link>
-      {version === "v2" && <span>実験的な描画方式です。投稿・リアクションは実際のリレーに送信されます。</span>}
+      {version === "v2" && <span>実験的な描画方式です。外部画像の新配信経路は既定で無効です。投稿・リアクションは実際のリレーに送信されます。</span>}
     </nav>
   );
   const {

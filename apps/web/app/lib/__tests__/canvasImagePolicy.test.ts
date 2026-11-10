@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { CANVAS_IMAGE_HOSTS, canvasImageWidth, validateCanvasImageSource } from '../canvasImagePolicy';
+import { canvasImageWidth, validateCanvasImageSource } from '../canvasImagePolicy';
 import config from '../../../next.config';
 
 describe('V2の公開画像許可範囲', () => {
-  it.each(CANVAS_IMAGE_HOSTS)('%sだけをHTTPS/queryなしで許可する', host => {
+  it.each(['i.gyazo.com', 'images.example.org', 'another.example.net'])('%sをHTTPS/queryなしで受付する（IP検査はserver）', host => {
     expect(validateCanvasImageSource(`https://${host}/avatar.png`)).toEqual({ allowed: true, url: `https://${host}/avatar.png`, local: false });
   });
   it.each([
     'http://i.gyazo.com/avatar.png', 'https://i.gyazo.com:8443/avatar.png',
     'https://user:password@i.gyazo.com/avatar.png', 'https://i.gyazo.com/avatar.png?token=private',
     'https://0.gravatar.com/avatar/hash?s=64', 'https://i.gyazo.com/avatar.png#private',
-    'https://i.gyazo.com.evil.test/avatar.png', 'https://127.0.0.1/avatar.png',
+ 'https://127.0.0.1/avatar.png',
     'https://[::1]/avatar.png', 'https://169.254.169.254/avatar.png',
     'https://i.gyazo.com/avatar.SVG', 'https://i.gyazo.com/avatar.svgz',
     '/api/private', '//i.gyazo.com/avatar.png', 'blob:https://example.test/id', 'data:image/svg+xml,<svg/>',
@@ -21,7 +21,7 @@ describe('V2の公開画像許可範囲', () => {
   it('optimizerの幅・quality・hostを固定する', () => {
     expect(canvasImageWidth(48)).toBe(64); expect(canvasImageWidth(9000)).toBe(1280);
     expect(config.images!.qualities).toEqual([75]);
-    expect(config.images!.remotePatterns).toEqual(CANVAS_IMAGE_HOSTS.map(hostname => ({ protocol: 'https', hostname, port: '', pathname: '/**', search: '' })));
+    expect(config.images!.remotePatterns).toEqual([]);
     expect(config.images!.localPatterns).toEqual([]);
     expect(config.images!.dangerouslyAllowSVG).toBe(false);
     expect(config.images!.dangerouslyAllowLocalIP).toBe(false);

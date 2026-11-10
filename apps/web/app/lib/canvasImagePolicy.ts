@@ -1,11 +1,4 @@
-/** 実フィードで確認した公開画像hostだけを許可する。任意hostのproxyにはしない。 */
-export const CANVAS_IMAGE_HOSTS = [
-  'share.yabu.me',
-  'i.gyazo.com',
-  '0.gravatar.com',
-  'cdn.nostrcheck.me',
-  'i.floppy.media',
-] as const;
+/** client側の形式検査。公開IPの判定は必ずserver接続時にも行う。 */
 export const CANVAS_IMAGE_WIDTHS = [32, 64, 128, 640, 1280] as const;
 export const CANVAS_IMAGE_QUALITY = 75;
 
@@ -16,7 +9,7 @@ export function validateCanvasImageSource(source: string): CanvasImageSource {
   let url: URL;
   try { url = new URL(source); } catch { return { allowed: false, reason: '画像URLが不正です' }; }
   if (url.protocol !== 'https:' || url.port || url.username || url.password) return { allowed: false, reason: '公開HTTPS画像のみ対応しています' };
-  if (!(CANVAS_IMAGE_HOSTS as readonly string[]).includes(url.hostname)) return { allowed: false, reason: 'この画像hostはV2の許可対象外です' };
+  if (source.length > 2048 || url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname.startsWith('[') || /^[0-9.]+$/.test(url.hostname)) return { allowed: false, reason: '公開hostnameの画像のみ対応しています' };
   if (url.search || url.hash) return { allowed: false, reason: '認証情報の転送を避けるためquery付き画像は未対応です' };
   if (/\.svg(?:z)?$/i.test(url.pathname)) return { allowed: false, reason: '外部SVG画像はV2では未対応です' };
   return { allowed: true, url: url.href, local: false };

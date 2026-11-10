@@ -1,10 +1,10 @@
 import type { NextConfig } from "next";
-import { CANVAS_IMAGE_HOSTS, CANVAS_IMAGE_QUALITY } from "./app/lib/canvasImagePolicy";
+import { CANVAS_IMAGE_QUALITY } from "./app/lib/canvasImagePolicy";
 
 const nextConfig: NextConfig = {
   images: {
-    // 実フィードの公開画像hostのみ。query/認証付きURLはクライアントでも拒否する。
-    remotePatterns: CANVAS_IMAGE_HOSTS.map(hostname => ({ protocol: 'https' as const, hostname, port: '', pathname: '/**', search: '' })),
+    // 外部取得はdefault-offの専用routeのみ。optimizerからの迂回を許可しない。
+    remotePatterns: [],
     localPatterns: [],
     deviceSizes: [640, 1280],
     imageSizes: [32, 64, 128],
