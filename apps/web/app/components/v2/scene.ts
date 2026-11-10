@@ -1,5 +1,5 @@
 import { DEFAULT_CARD_HEIGHT, COLUMN_GAP } from '../../lib/constants';
-import { buildInitialLayout, insertCard, reflow } from '../../lib/layoutEngine';
+import { buildInitialLayout, insertCard, reflow, type DisplacementEdge } from '../../lib/layoutEngine';
 import type { Grid, Placement } from '../../lib/layoutTypes';
 import type { Card } from '../../lib/types';
 
@@ -7,12 +7,22 @@ import type { Card } from '../../lib/types';
 export interface SceneBox { x: number; y: number; width: number; height: number }
 export interface Camera { x: 0; y: number; zoom: 1 }
 export interface SceneLayoutItem { id: string; card?: Card }
+export interface SceneInsertionTrace {
+  readonly sourceId: string;
+  readonly edges: readonly DisplacementEdge[];
+}
+export interface SceneInsertionBatch {
+  readonly revision: number;
+  readonly traces: readonly SceneInsertionTrace[];
+}
 export interface SceneLayoutResult {
   boxes: Map<string, SceneBox>;
   chainOrder: Map<string, number>;
   columnCount: number;
 }
 export interface SceneLayoutState extends SceneLayoutResult {
+  /** 新着ごとの実際の押し出し関係。移動量・現在列・chainOrderから推測しない。 */
+  insertion: SceneInsertionBatch;
   /** V1エンジンの論理座標。holdの表示座標をここへ書き戻さない。 */
   grid: Grid;
   engineBoxes: Map<string, SceneBox>;
@@ -28,6 +38,15 @@ export interface SceneLayoutState extends SceneLayoutResult {
 
 const MARGIN = 16;
 const EMPTY_IDS: ReadonlySet<string> = new Set();
+
+function insertionBatch(revision: number, traces: readonly SceneInsertionTrace[]): SceneInsertionBatch {
+  return Object.freeze({
+    revision,
+    traces: Object.freeze(traces.map(trace => Object.freeze({
+      sourceId: trace.sourceId, edges: Object.freeze(trace.edges.map(edge => Object.freeze({ ...edge }))),
+    }))),
+  });
+}
 
 function validHeights(heights: ReadonlyMap<string, number>): Map<string, number> {
   return new Map([...heights].filter(([, height]) => Number.isFinite(height) && height >= 0));
@@ -79,6 +98,7 @@ export function createSceneLayout(): SceneLayoutState {
   return {
     boxes: new Map(), engineBoxes: new Map(), grid: new Map(), frozenBoxes: new Map(),
     chainOrder: new Map(), previousIds: new Set(), columnCount: 0, inputs: null,
+    insertion: insertionBatch(0, []),
   };
 }
 
@@ -113,6 +133,7 @@ export function updateSceneLayout(
   let grid: Grid;
   let nextChain: ReadonlyMap<string, number>;
   let inserted = false;
+  let insertion = state.insertion;
 
   if (sameInputs) {
     // 同じ列数で横幅だけ変わった場合は描画変換のみを更新する。
@@ -122,18 +143,25 @@ export function updateSceneLayout(
     const result = buildInitialLayout(cards, columnCount, heightMap);
     grid = result.grid;
     nextChain = result.chain.chainOrder;
+    // 列数変更や空feedの再初期化は新着エフェクトを発生させない。
+    if (insertion.traces.length) insertion = insertionBatch(insertion.revision, []);
   } else {
     const incoming = cards.filter(card => !state.previousIds.has(card.slotId) && !state.grid.has(card.slotId));
     if (incoming.length) {
       inserted = true;
       grid = state.grid;
       const mergedChain = new Map<string, number>();
+      const traces: SceneInsertionTrace[] = [];
       for (const card of incoming) {
-        const result = insertCard(grid, card, cards, columnCount, heightMap, heldIds);
+        const edges: DisplacementEdge[] = [];
+        const result = insertCard(grid, card, cards, columnCount, heightMap, heldIds, edges);
+        // burstの別の新着や最後のreflowと混ぜず、実際の因果関係を保存する。
+        traces.push({ sourceId: card.slotId, edges });
         grid = result.grid;
         for (const [id, order] of result.chain.chainOrder) mergedChain.set(id, order);
       }
       nextChain = mergedChain;
+      insertion = insertionBatch(state.insertion.revision + 1, traces);
     } else {
       const result = reflow(state.grid, cards, columnCount, heightMap);
       grid = result.grid;
@@ -149,7 +177,7 @@ export function updateSceneLayout(
   const chainOrder = new Map(nextChain.size ? nextChain : rebuild ? [] : state.chainOrder);
   return {
     ...projectBoxes(finalGrid, width, heightMap, heldIds, state.frozenBoxes, currentBoxes),
-    grid: finalGrid, previousIds, chainOrder, columnCount,
+    grid: finalGrid, previousIds, chainOrder, columnCount, insertion,
     inputs: { items: uniqueItems.map(item => ({ ...item })), heights: heightMap, heldIds: new Set(heldIds), width },
   };
 }

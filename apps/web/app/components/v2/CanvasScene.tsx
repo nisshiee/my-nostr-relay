@@ -7,6 +7,7 @@ import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, ty
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
 import type { Card } from "../../lib/types";
+import { createPushPaths, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, PUSH_EFFECT_STYLE, type PushEffectPath } from "./pushEffect";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
@@ -41,6 +42,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const extent = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const fallback = useRef<HTMLDivElement>(null);
+  const effectSvg = useRef<SVGSVGElement>(null);
+  const effectGroup = useRef<SVGGElement>(null);
+  const savedEffect = useRef({ revision: 0, startedAt: 0, active: false });
   const nodes = useRef(new Map<string, HTMLDivElement>());
   const savedBoxes = useRef(new Map<string, SceneBox>());
   const savedMotion = useRef<SceneMotionState | null>(null);
@@ -71,6 +75,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     let layout = savedLayout.current;
     let motion = savedMotion.current ?? createSceneMotion();
     let layoutDirty = true;
+    const effect = savedEffect.current;
+    let effectPaths: readonly PushEffectPath[] = [];
+    let effectOpacity = 0;
     let lastFrameTime: number | null = null;
     const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
     let reducedMotion = media?.matches ?? false;
@@ -108,6 +115,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       const selection = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
       mode = next;
       surface.hidden = next === 'dom';
+      effectSvg.current!.style.display = next === 'dom' ? '' : 'none';
       dom.hidden = next !== 'dom';
       surface.removeAttribute('content');
       surface.removeAttribute('layoutsubtree');
@@ -166,6 +174,31 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         extent.current!.style.height = `${bottom}px`;
         host.scrollLeft = 0;
         camera = { x: 0, y: -host.scrollTop, zoom: 1 };
+        // 新着batchだけが効果を開始する。描画modeや通常reflowで寿命を延長しない。
+        if (effect.revision !== layout.insertion.revision) {
+          effect.revision = layout.insertion.revision;
+          effect.startedAt = time;
+          effect.active = !reducedMotion && layout.insertion.traces.some(trace => trace.edges.length > 0);
+        }
+        if (reducedMotion || !layout.insertion.traces.length || time - effect.startedAt >= PUSH_EFFECT_DURATION_MS) effect.active = false;
+        effectOpacity = effect.active ? pushEffectOpacity(time - effect.startedAt) : 0;
+        effectPaths = effect.active ? createPushPaths(layout.insertion.traces, boxes, { x: 0, y: host.scrollTop, width: viewportWidth, height: viewportHeight }) : [];
+        host.dataset.scenePushEffect = reducedMotion ? 'reduced' : effect.active ? 'active' : 'idle';
+        const group = effectGroup.current!;
+        // DOM fallbackだけSVGを使う。nativeでは同じ曲線をcanvas上でカードより先に描く。
+        const svgPaths = mode === 'dom' ? effectPaths : [];
+        while (group.children.length > svgPaths.length * 2) group.lastElementChild!.remove();
+        for (let i = 0; i < svgPaths.length * 2; i++) {
+          let path = group.children[i];
+          if (!path) { path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); group.appendChild(path); }
+          const halo = i % 2 === 0;
+          path.setAttribute('d', svgPaths[Math.floor(i / 2)].d);
+          path.setAttribute('fill', 'none'); path.setAttribute('stroke', PUSH_EFFECT_STYLE.color);
+          path.setAttribute('stroke-width', String(halo ? PUSH_EFFECT_STYLE.haloWidth : PUSH_EFFECT_STYLE.mainWidth));
+          path.setAttribute('stroke-opacity', String(effectOpacity * (halo ? PUSH_EFFECT_STYLE.haloAlpha : PUSH_EFFECT_STYLE.mainAlpha)));
+          path.setAttribute('stroke-linecap', 'round');
+        }
+        group.setAttribute('transform', `translate(0 ${camera.y})`);
         host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
         if (revealFocus) { revealFocus = false; reveal(document.activeElement); }
         savedBoxes.current = boxes;
@@ -178,7 +211,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
             if (!painted && !disposed) { changeMode('dom'); refresh(); }
           }, 2500);
         }
-        if (motion.active) requestFrame();
+        if (motion.active || effect.active) requestFrame();
         else lastFrameTime = null;
       });
     };
@@ -194,6 +227,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         ctx.clearRect(0, 0, surface.width, surface.height);
         const dpr = window.devicePixelRatio || 1;
         ctx.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, dpr * camera.x, dpr * camera.y);
+        drawPushPaths(ctx, effectPaths, effectOpacity);
         // 省略描画をしないため、古いヒット領域を画面外に残さない。
         for (const item of drawOrder()) {
           const node = nodes.current.get(item.id);
@@ -263,6 +297,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
       <div ref={extent} className="relative w-full" style={{ overflowAnchor: 'none' }}>
         <div ref={layer} className="sticky top-0 w-full overflow-clip">
+          <svg ref={effectSvg} aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"><g ref={effectGroup} /></svg>
           <canvas ref={canvas} className="absolute inset-0 h-full w-full" aria-label="ライブカード" />
           <div ref={fallback} className="absolute inset-0" />
         </div>

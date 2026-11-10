@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as layoutEngine from '../../../lib/layoutEngine';
-import { buildInitialLayout, insertCard, reflow } from '../../../lib/layoutEngine';
+import { buildInitialLayout, insertCard, reflow, type DisplacementEdge } from '../../../lib/layoutEngine';
 import { DEFAULT_CARD_HEIGHT, GAP } from '../../../lib/constants';
 import type { Grid, Placement } from '../../../lib/layoutTypes';
 import type { Card, NoteCard } from '../../../lib/types';
@@ -17,6 +17,138 @@ const note = (slotId: string, score: number, pubkey = slotId): NoteCard => ({
 const items = (cards: readonly Card[]) => cards.map(card => ({ id: card.slotId, card }));
 const viewport = (columns: number) => columns * 400;
 const base = () => [note('a', 0.9), note('b', 0.8), note('c', 0.7), note('d', 0.6)];
+
+describe('V2の新着ごとの不変な押し出しtrace', () => {
+  it('空feedと初期配置ではエフェクト用のrevisionを進めない', () => {
+    const empty = updateSceneLayout(createSceneLayout(), [], new Map(), 800);
+    expect(empty.insertion).toEqual({ revision: 0, traces: [] });
+    const cards = base();
+    const first = updateSceneLayout(empty, items(cards), new Map(), 800);
+    expect(first.insertion).toEqual({ revision: 0, traces: [] });
+    const reflowed = updateSceneLayout(first, items(cards), new Map([['a', 300]]), 800);
+    expect(reflowed.insertion).toBe(first.insertion);
+  });
+
+  it('引力が選んだ実際の挿入から始まる因果辺を保存する', () => {
+    const cards = base();
+    const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 800);
+    const nextCards = [note('new', 1, 'a'), ...cards];
+    const edges: DisplacementEdge[] = [];
+    const raw = insertCard(first.grid, nextCards[0], nextCards, 2, new Map(), new Set(), edges);
+    const result = updateSceneLayout(first, items(nextCards), new Map(), 800);
+    expect(raw.grid.get('new')!.col).toBe(1);
+    expect(result.insertion).toEqual({ revision: 1, traces: [{ sourceId: 'new', edges }] });
+    expect(result.insertion.traces[0].edges[0]).toEqual({ fromId: 'new', toId: 'a' });
+    expect(first.insertion).toEqual({ revision: 0, traces: [] });
+  });
+
+  it('burst内のtraceを混ぜず、後から押された前の新着の因果関係も書き換えない', () => {
+    const cards = base();
+    const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 800);
+    const nextCards = [note('new1', 2, 'a'), note('new2', 1.5, 'a'), ...cards];
+    const firstEdges: DisplacementEdge[] = [];
+    const firstInsertion = insertCard(first.grid, nextCards[0], nextCards, 2, new Map(), new Set(), firstEdges);
+    const secondEdges: DisplacementEdge[] = [];
+    const secondInsertion = insertCard(firstInsertion.grid, nextCards[1], nextCards, 2, new Map(), new Set(), secondEdges);
+    const result = updateSceneLayout(first, items(nextCards), new Map(), 800);
+    expect(result.insertion).toEqual({ revision: 1, traces: [
+      { sourceId: 'new1', edges: firstEdges }, { sourceId: 'new2', edges: secondEdges },
+    ] });
+    expect(firstInsertion.grid.get('new1')!.col).toBe(1);
+    expect(secondInsertion.grid.get('new1')!.col).toBe(0);
+    expect(result.insertion.traces[0].edges[0]).toEqual({ fromId: 'new1', toId: 'a' });
+    expect(result.insertion.traces[1].edges[0]).toEqual({ fromId: 'new2', toId: 'new1' });
+    expect(result.insertion.traces[0].edges).not.toBe(result.insertion.traces[1].edges);
+  });
+
+  it('重複slotは一度だけ記録し、同じ入力の再描画は同じbatchを返す', () => {
+    const cards = base();
+    const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 800);
+    const nextCards = [note('new', 1, 'a'), ...cards];
+    const repeated = [...items(nextCards), { id: 'new', card: nextCards[0] }];
+    const result = updateSceneLayout(first, repeated, new Map(), 800);
+    expect(result.insertion.traces).toHaveLength(1);
+    expect(result.insertion.revision).toBe(1);
+    expect(updateSceneLayout(result, repeated, new Map(), 800)).toBe(result);
+    expect(updateSceneLayout(result, items(nextCards), new Map(), 800).insertion).toBe(result.insertion);
+  });
+
+  it('score・高さ・hold・幅・同じslotの内容変更や削除ではbatchを再発行しない', () => {
+    const cards = [note('a', 2), note('b', 1)];
+    const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 400);
+    const nextCards = [note('new', 3), ...cards];
+    const inserted = updateSceneLayout(first, items(nextCards), new Map(), 400);
+    const changedScores = nextCards.map(card => ({ ...card, score: card.score * 0.9 }));
+    const changedContent = nextCards.map(card => ({ ...card, content: '更新', eventId: `${card.eventId}-new` }));
+    const variants = [
+      updateSceneLayout(inserted, items(nextCards), new Map([['a', 300]]), 400),
+      updateSceneLayout(inserted, items(changedScores), new Map(), 400),
+      updateSceneLayout(inserted, items(changedContent), new Map(), 400),
+      updateSceneLayout(inserted, items(nextCards), new Map(), 400, new Set(['a'])),
+      updateSceneLayout(inserted, items(nextCards), new Map(), 340),
+      updateSceneLayout(inserted, items(cards), new Map(), 400),
+    ];
+    for (const result of variants) expect(result.insertion).toBe(inserted.insertion);
+  });
+
+  it('列数変更では古いtraceを消し、次の新着だけがrevisionを進める', () => {
+    const cards = base();
+    const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 800);
+    const nextCards = [note('new', 1, 'a'), ...cards];
+    const inserted = updateSceneLayout(first, items(nextCards), new Map(), 800);
+    const resized = updateSceneLayout(inserted, items(nextCards), new Map(), 400);
+    expect(resized.insertion).toEqual({ revision: 1, traces: [] });
+    expect(inserted.insertion.traces).toHaveLength(1);
+    const laterCards = [note('later', 2), ...nextCards];
+    const later = updateSceneLayout(resized, items(laterCards), new Map(), 400);
+    expect(later.insertion.revision).toBe(2);
+    expect(later.insertion.traces.map(trace => trace.sourceId)).toEqual(['later']);
+    const empty = updateSceneLayout(later, [], new Map(), 400);
+    const repopulated = updateSceneLayout(empty, items(cards), new Map(), 400);
+    expect(repopulated.insertion).toEqual({ revision: 2, traces: [] });
+  });
+
+  it('batch・trace・辺を全て凍結し、描画側から変更できない', () => {
+    const cards = [note('a', 1)];
+    const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 400);
+    const result = updateSceneLayout(first, items([note('new', 2), ...cards]), new Map(), 400);
+    const batch = result.insertion;
+    const trace = batch.traces[0];
+    const edge = trace.edges[0];
+    for (const value of [batch, batch.traces, trace, trace.edges, edge]) expect(Object.isFrozen(value)).toBe(true);
+    expect(Reflect.set(batch, 'revision', 999)).toBe(false);
+    expect(Reflect.set(edge, 'toId', 'fake')).toBe(false);
+    expect(batch).toEqual({ revision: 1, traces: [{ sourceId: 'new', edges: [{ fromId: 'new', toId: 'a' }] }] });
+  });
+
+  it('holdを迂回したtraceはholdを通らず、実際の相手につながる', () => {
+    const cards = [note('lower', 100), note('held', 10, 'shared'), note('adj', 1)];
+    const first = seeded(cards, new Map([
+      ['held', { col: 0, y: 0 }], ['lower', { col: 0, y: 132 }], ['adj', { col: 1, y: 0 }],
+    ]), 2);
+    const nextCards = [note('new', 200, 'shared'), ...cards];
+    const result = updateSceneLayout(first, items(nextCards), new Map(), 800, new Set(['held']));
+    expect(result.insertion).toEqual({ revision: 1, traces: [
+      { sourceId: 'new', edges: [{ fromId: 'new', toId: 'adj' }] },
+    ] });
+    expect(result.boxes.get('held')).toEqual(first.boxes.get('held'));
+  });
+
+  it('高さ補正だけの移動はchainOrderにあってもtraceへ混ぜない', () => {
+    const cards = [note('a', 100), note('b', 50), note('c', 40), note('adj', 10)];
+    const first = seeded(cards, new Map([
+      ['a', { col: 0, y: 0 }], ['b', { col: 0, y: 100 }],
+      ['c', { col: 0, y: 200 }], ['adj', { col: 1, y: 0 }],
+    ]), 2);
+    const heights = new Map([['new', 300], ['a', 40], ['b', 60], ['c', 60], ['adj', 120]]);
+    const result = updateSceneLayout(first, items([note('new', 200), ...cards]), heights, 800);
+    expect(result.chainOrder.has('b')).toBe(true);
+    expect(result.chainOrder.has('c')).toBe(true);
+    expect(result.insertion.traces[0]).toEqual({ sourceId: 'new', edges: [
+      { fromId: 'new', toId: 'a' }, { fromId: 'a', toId: 'adj' },
+    ] });
+  });
+});
 
 describe('V2の新着と同時に隙間のない最終位置を計算する', () => {
   function gapFixture() {
