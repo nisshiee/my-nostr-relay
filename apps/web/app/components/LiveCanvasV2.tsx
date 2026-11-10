@@ -259,6 +259,7 @@ export function LiveCanvasV2({ notes, threadCards, profiles, reactions, status, 
 
   const items = scoredCards.map(note => ({
     id: note.slotId,
+    card: note,
     content: (
       note.type === "compose" ? (
         <ComposeCard

@@ -143,7 +143,7 @@ POSTにはJSON読取前のprocess token bucket（burst10・毎秒1補充）も�
 
 実機でdata PNGがまだ拒否された原因は、base64 payload内のASCII SPACE 197文字だった（空白除去後は4の倍数で正常）。許可MIME・raw長上限を維持し、payloadからASCIIのHT/LF/FF/CR/SPACEだけを除去した後、従来の厳密base64/byte/decode検査を行う。clientの共有取得identityとserver cache digestも正規化後へ統一する。Unicode空白、percent encoding、URL-safe alphabet、欠けたpadding、不正末尾bitの補修はしない。参考: https://infra.spec.whatwg.org/#forgiving-base64-decode 。これは空白処理だけの採用で、forgiving decode全体を許可する変更ではない。
 
-## V2の新着入場とドミノ移動
+## V2の新着入場とドミノ移動（重力継承前の実装履歴）
 
 従来V2は既存カード優先で新着を末尾へ追加し、位置変更も即時だった。新着を列の上部に差し込み、その列で実際に押されたカードだけに連鎖順を付ける配置へ変更する。既存slotの列と列内順序は維持し、スコアの定期更新だけで再ソートしない。列数/幅変更時は配置し直す。V1のgravityによる列間移動やスコア依存の押出し候補探索を全面移植する変更ではない。
 
@@ -160,3 +160,16 @@ layout再計測はitems/hold/ResizeObserver/画像load等が変わった時だ�
 viewportを通常のoverflow-y:auto/overflow-x:hiddenへ変更し、ホイール・touch・キーボード・スクロールバーの縦移動をブラウザへ任せる。current/target両方の最下端をextent高さに反映し、その内側のviewport高さのsticky描画layerへnative canvasとDOMfallbackを置く。layerはoverflow:clipとして独立したscroll containerにせず、focus時の二重offsetを防ぐ。cameraY=-scrollTopを一度だけ合成し、scrollイベントは再描画だけを要求する。scroll anchoringを無効化し、focus revealも必要最小限の縦移動だけにする。先頭ボタンはscrollTopを0に戻す。
 
 ドミノのworld座標・spring・hold・reduced-motionは維持。labも同じ操作仕様と案内に揃える。従来節のpan/zoomは過去版の検証履歴で、現在の機能ではない。今回のsticky/native scrollの実フィード検証は接続環境復旧後に行い、jsdomテストのみで実機完了とは扱わない。
+
+
+## V1の重力とスコア初期配置の継承
+
+実フィードのCanvasSceneItemへslotIdだけでなく、同じscoredCardsのCard全体を渡す。V1の純粋なbuildInitialLayout / insertCard / reflowをV2 adapterから直接利用し、初期配置はスコア降順入力を逆順に各列の先頭スコアで振り分ける方式へ変更する。新着は同一pubkeyに対するgravityCostで列を選び、scoreとgravityを用いる列間押出し・隣列上優先・hold循環回避・高さ補正も同じ関数を通す。スコアだけの定期更新では既存カードを並べ直さない。
+
+エンジンの論理gridをアニメーション現在位置・表示hold座標から分離して保存する。新着burstはscoredCards順に逐次挿入し、chainOrderはV1と同じ上書き順で統合する。高さ変更/削除/hold変更はreflow、列数変更は初期配置の再構築。DOM/native切替でも論理gridを保持する。labのCard情報を持たないfixtureにも入力順スコアと独立pubkeyを与え、同じadapterを通す。
+
+V1との意図的な残差: 横幅360上限・水平間隔16・viewportからの列数計算・外余白16はV2のまま。重力の距離係数はV1のCOLUMN_WIDTH320を変更せず、縦間隔12と未測定高さ120を継承する。初期ロード即配置、新着の上方入場、待機600ms上限、操作中の実表示位置holdは従来V2を維持する。列数変更時も実表示holdを残すため、狭い画面へのresize中にheldカードが画面外に残る既知の差は今回対象外。V1完全同等と表現せず、重力と初期配置の判断が共通であることを検証する。
+
+表示holdは実座標を残す一方、論理gridはV1同様にreflowするため、その差がある間は一時的に表示カードが重なる可能性がある。hold/display差の完全な統一はこの変更に含めない。
+
+比較回帰はV1関数の出力との一致を確認する。実フィードでの重力の列選択・列間押出しと操作は新Preview公開後に確認し、単体テストやlabを実フィードE2Eとは呼ばない。

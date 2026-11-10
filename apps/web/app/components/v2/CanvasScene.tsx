@@ -2,11 +2,13 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { detectCanvasMode, planSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
+import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
 
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
-export interface CanvasSceneItem { id: string; content: ReactNode }
+import type { Card } from "../../lib/types";
+
+export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
 const EMPTY = new Set<string>();
 
@@ -43,7 +45,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const savedBoxes = useRef(new Map<string, SceneBox>());
   const savedMotion = useRef<SceneMotionState | null>(null);
   const savedTargets = useRef(new Map<string, SceneBox>());
-  const savedColumns = useRef<number | undefined>(undefined);
+  const savedLayout = useRef(createSceneLayout());
   const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
@@ -66,7 +68,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     let mode: CanvasMode = forcedDOM ? 'dom' : supported;
     let boxes = savedBoxes.current;
     let targets = savedTargets.current;
-    let columnCount = savedColumns.current;
+    let layout = savedLayout.current;
     let motion = savedMotion.current ?? createSceneMotion();
     let layoutDirty = true;
     let lastFrameTime: number | null = null;
@@ -147,12 +149,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
             }
             const measuredWidth = held.has(id) ? boxes.get(id)?.width : undefined;
             node.style.width = `${measuredWidth ?? Math.max(160, Math.min(360, viewportWidth - 32))}px`;
-            heights.set(id, node.offsetHeight || 180);
+            heights.set(id, node.offsetHeight || 120);
             if (!observed.has(node)) { observer.observe(node); observed.add(node); }
           }
           for (const node of observed) if (!Array.from(nodes.current.values()).includes(node as HTMLDivElement)) { observer.unobserve(node); observed.delete(node); }
-          const plan = planSceneLayout(current.current.items.map(item => item.id), heights, viewportWidth, targets, held, boxes, columnCount);
-          columnCount = plan.columnCount;
+          const plan = updateSceneLayout(layout, current.current.items, heights, viewportWidth, held, boxes);
+          layout = plan;
           targets = plan.boxes;
           motion = retargetSceneMotion(motion, targets, { chainOrder: plan.chainOrder, heldIds: held, reducedMotion });
           layoutDirty = false;
@@ -167,7 +169,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
         if (revealFocus) { revealFocus = false; reveal(document.activeElement); }
         savedBoxes.current = boxes;
-        savedMotion.current = motion; savedTargets.current = targets; savedColumns.current = columnCount;
+        savedMotion.current = motion; savedTargets.current = targets; savedLayout.current = layout;
         geometry();
         runtime.current!.camera = camera;
         if (mode !== 'dom') {

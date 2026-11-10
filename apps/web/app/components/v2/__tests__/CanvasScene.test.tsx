@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { CanvasScene } from "../CanvasScene";
+import { buildInitialLayout, insertCard } from "../../../lib/layoutEngine";
+import type { Card } from "../../../lib/types";
 
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
@@ -56,6 +58,33 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("実カードのscore/pubkeyをV1配置へ渡し、native/DOM往復後も重力のengine座標を保つ", () => {
+    const card = (id: string, score: number, pubkey: string): Card => ({ type: 'compose', slotId: id, score, pubkey, created_at: 0 });
+    const cards = [card('a', 100, 'alice'), card('b', 80, 'bob'), card('c', 60, 'alice'), card('d', 20, 'dave')];
+    const items = (list: Card[]) => list.map(value => ({ id: value.slotId, card: value, content: <span>{value.slotId}</span> }));
+    const { rerender } = render(<CanvasScene items={items(cards)} />);
+    flushFrame(0);
+    const heights = new Map(cards.map(value => [value.slotId, 120]));
+    const initial = buildInitialLayout(cards, 2, heights);
+    const assertGrid = (grid: typeof initial.grid) => {
+      for (const [id, position] of grid) {
+        const node = document.querySelector<HTMLElement>(`[data-scene-card="${id}"]`)!;
+        expect(Number(node.dataset.sceneTargetX)).toBe(16 + position.col * 376);
+        expect(Number(node.dataset.sceneTargetY)).toBe(16 + position.y);
+      }
+    };
+    assertGrid(initial.grid);
+    const added = card('new', 110, 'alice');
+    heights.set('new', 120);
+    rerender(<CanvasScene items={items([added, ...cards])} />);
+    flushFrame(16);
+    const inserted = insertCard(initial.grid, added, [added, ...cards], 2, heights, new Set());
+    assertGrid(inserted.grid);
+    fireEvent.click(screen.getByRole('button', { name: 'DOMに切替' }));
+    flushFrame(32);
+    assertGrid(inserted.grid);
+  });
+
   it("新着で現在位置とtargetを分け、時間差を経て下へ移動し停止する", () => {
     const item = (id: string) => ({ id, content: <button>{id}</button> });
     const { rerender, unmount } = render(<CanvasScene items={[item('a'), item('b'), item('c'), item('d')]} />);

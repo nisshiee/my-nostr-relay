@@ -169,7 +169,7 @@ describe('V2の決定的なドミノモーション', () => {
     const extracted = sceneMotionBoxes(next);
     extracted.get('a')!.y = 999;
     expect(next.cards.size).toBe(1);
-    expect(next.cards.get('a')!.box).toEqual(oldBox);
+    expect(next.cards.get('a')!.box).toEqual({ ...oldBox, height: targets.get('a')!.height });
     expect(before.cards.size).toBe(4);
     expect(before.cards.get('a')!.box).toEqual(oldBox);
     expect(targets.get('a')!.y).toBe(16);
