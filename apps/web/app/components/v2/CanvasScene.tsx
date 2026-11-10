@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
+import { detectCanvasMode, createSceneLayout, updateSceneLayout, compactSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
 
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
@@ -162,6 +162,14 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         motion = advanceSceneMotion(motion, lastFrameTime === null ? 0 : Math.max(0, time - lastFrameTime), { heldIds: new Set([...current.current.heldIds, ...localHeld]), reducedMotion });
         lastFrameTime = time;
         boxes = sceneMotionBoxes(motion);
+        // 押出しが収束した直後に一度だけ詰める。再計測や待機時間の再起動はしない。
+        if (!motion.active && layout.pendingCompaction) {
+          layout = compactSceneLayout(layout, heights, new Set([...current.current.heldIds, ...localHeld]), boxes);
+          targets = layout.boxes;
+          motion = retargetSceneMotion(motion, targets, { chainOrder: layout.chainOrder, heldIds: new Set([...current.current.heldIds, ...localHeld]), reducedMotion });
+          boxes = sceneMotionBoxes(motion);
+        }
+        host.dataset.sceneCompaction = layout.pendingCompaction ? 'pending' : 'idle';
         const bottom = Math.max(viewportHeight, ...[...boxes.values(), ...targets.values()].map(box => box.y + box.height + 16));
         extent.current!.style.height = `${bottom}px`;
         host.scrollLeft = 0;

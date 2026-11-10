@@ -13,6 +13,8 @@ export interface SceneLayoutResult {
   columnCount: number;
 }
 export interface SceneLayoutState extends SceneLayoutResult {
+  /** 新着の押し出しが落ち着いた後、一度だけ列内の空隙を詰める。 */
+  pendingCompaction: boolean;
   /** V1エンジンの論理座標。holdの表示座標をここへ書き戻さない。 */
   grid: Grid;
   engineBoxes: Map<string, SceneBox>;
@@ -28,6 +30,37 @@ export interface SceneLayoutState extends SceneLayoutResult {
 
 const MARGIN = 16;
 const EMPTY_IDS: ReadonlySet<string> = new Set();
+const EMPTY_HEIGHTS: ReadonlyMap<string, number> = new Map();
+
+function validHeights(heights: ReadonlyMap<string, number>): Map<string, number> {
+  return new Map([...heights].filter(([, height]) => Number.isFinite(height) && height >= 0));
+}
+
+/** 論理gridと実表示holdを分離したまま、描画用のBoxへ変換する。 */
+function projectBoxes(
+  grid: Grid, width: number, heights: ReadonlyMap<string, number>,
+  heldIds: ReadonlySet<string>, previousFrozen: ReadonlyMap<string, SceneBox>,
+  currentBoxes: ReadonlyMap<string, SceneBox>,
+): Pick<SceneLayoutState, 'boxes' | 'engineBoxes' | 'frozenBoxes'> {
+  const engineBoxes = new Map<string, SceneBox>();
+  for (const [id, placement] of grid) {
+    engineBoxes.set(id, {
+      x: MARGIN + placement.col * (width + COLUMN_GAP), y: MARGIN + placement.y,
+      width, height: heights.get(id) ?? DEFAULT_CARD_HEIGHT,
+    });
+  }
+  // V2既存仕様: focus/holdは実座標を固定し、列数変更でも表示の固定を保つ。
+  // 論理gridは通常どおりreflowするため、表示上の一時的な重なりは許容する。
+  const frozenBoxes = new Map<string, SceneBox>();
+  for (const id of heldIds) {
+    const target = engineBoxes.get(id);
+    if (!target) continue;
+    const anchor = previousFrozen.get(id) ?? currentBoxes.get(id) ?? target;
+    frozenBoxes.set(id, { ...anchor, height: target.height });
+  }
+  const boxes = new Map([...engineBoxes].map(([id, target]) => [id, { ...(frozenBoxes.get(id) ?? target) }]));
+  return { boxes, engineBoxes, frozenBoxes };
+}
 
 function dimensions(viewport: number): { width: number; columnCount: number } {
   const viewportWidth = Number.isFinite(viewport) ? Math.max(1, viewport) : 400;
@@ -48,7 +81,7 @@ function cardsFor(items: readonly SceneLayoutItem[]): Card[] {
 export function createSceneLayout(): SceneLayoutState {
   return {
     boxes: new Map(), engineBoxes: new Map(), grid: new Map(), frozenBoxes: new Map(),
-    chainOrder: new Map(), previousIds: new Set(), columnCount: 0, inputs: null,
+    chainOrder: new Map(), previousIds: new Set(), columnCount: 0, inputs: null, pendingCompaction: false,
   };
 }
 
@@ -69,7 +102,7 @@ export function updateSceneLayout(
   const cards = cardsFor(uniqueItems);
   const previousIds = new Set(cards.map(card => card.slotId));
   const { width, columnCount } = dimensions(viewport);
-  const heightMap = new Map([...heights].filter(([, height]) => Number.isFinite(height) && height >= 0));
+  const heightMap = validHeights(heights);
   const rebuild = columnCount !== state.columnCount || state.grid.size === 0;
   const inputs = state.inputs;
   const sameInputs = inputs !== null && columnCount === state.columnCount &&
@@ -81,11 +114,13 @@ export function updateSceneLayout(
   if (sameInputs && inputs.width === width) return state;
   let grid: Grid;
   let nextChain: ReadonlyMap<string, number>;
+  let pendingCompaction = false;
 
   if (sameInputs) {
     // 同じ列数で横幅だけ変わった場合は描画変換のみを更新する。
     grid = state.grid;
     nextChain = state.chainOrder;
+    pendingCompaction = state.pendingCompaction;
   } else if (rebuild) {
     const result = buildInitialLayout(cards, columnCount, heightMap);
     grid = result.grid;
@@ -93,6 +128,7 @@ export function updateSceneLayout(
   } else {
     const incoming = cards.filter(card => !state.previousIds.has(card.slotId) && !state.grid.has(card.slotId));
     if (incoming.length) {
+      pendingCompaction = true;
       grid = state.grid;
       const mergedChain = new Map<string, number>();
       for (const card of incoming) {
@@ -112,27 +148,33 @@ export function updateSceneLayout(
   const cleanGrid = new Map<string, Placement>();
   for (const [id, placement] of grid) if (previousIds.has(id)) cleanGrid.set(id, { ...placement });
   const chainOrder = new Map(nextChain.size ? nextChain : rebuild ? [] : state.chainOrder);
-  const engineBoxes = new Map<string, SceneBox>();
-  for (const [id, placement] of cleanGrid) {
-    engineBoxes.set(id, {
-      x: MARGIN + placement.col * (width + COLUMN_GAP), y: MARGIN + placement.y,
-      width, height: heightMap.get(id) ?? DEFAULT_CARD_HEIGHT,
-    });
-  }
-
-  // V2既存仕様: focus/holdは移動途中の実座標を固定し、列数変更でも表示の固定を保つ。
-  // エンジン側は通常どおりreflowするため、表示上の一時的な重なりは許容する。
-  const frozenBoxes = new Map<string, SceneBox>();
-  for (const id of heldIds) {
-    const target = engineBoxes.get(id);
-    if (!target) continue;
-    const anchor = state.frozenBoxes.get(id) ?? currentBoxes.get(id) ?? target;
-    frozenBoxes.set(id, { ...anchor, height: target.height });
-  }
-  const boxes = new Map([...engineBoxes].map(([id, target]) => [id, { ...(frozenBoxes.get(id) ?? target) }]));
   return {
-    boxes, engineBoxes, grid: cleanGrid, frozenBoxes, previousIds, chainOrder, columnCount,
+    ...projectBoxes(cleanGrid, width, heightMap, heldIds, state.frozenBoxes, currentBoxes),
+    grid: cleanGrid, previousIds, chainOrder, columnCount, pendingCompaction,
     inputs: { items: uniqueItems.map(item => ({ ...item })), heights: heightMap, heldIds: new Set(heldIds), width },
+  };
+}
+
+/**
+ * V2専用の二段目。押し出しのモーション完了後に一度だけ呼び、列と旧y順を
+ * 変えず空隙を詰める。新たなドミノ待機は付けず、holdの実表示位置も変えない。
+ */
+export function compactSceneLayout(
+  state: SceneLayoutState,
+  heights: ReadonlyMap<string, number> = state.inputs?.heights ?? EMPTY_HEIGHTS,
+  heldIds: ReadonlySet<string> = state.inputs?.heldIds ?? EMPTY_IDS,
+  currentBoxes: ReadonlyMap<string, SceneBox> = state.boxes,
+): SceneLayoutState {
+  if (!state.pendingCompaction) return state;
+  const inputs = state.inputs;
+  if (!inputs) return { ...state, pendingCompaction: false, chainOrder: new Map() };
+  const heightMap = validHeights(heights);
+  const grid = reflow(state.grid, cardsFor(inputs.items), state.columnCount, heightMap).grid;
+  return {
+    ...state,
+    ...projectBoxes(grid, inputs.width, heightMap, heldIds, state.frozenBoxes, currentBoxes),
+    grid, chainOrder: new Map(), pendingCompaction: false,
+    inputs: { ...inputs, heights: heightMap, heldIds: new Set(heldIds) },
   };
 }
 

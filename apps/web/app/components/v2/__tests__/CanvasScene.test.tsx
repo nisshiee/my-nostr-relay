@@ -58,6 +58,39 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("押出し後に次の入力やscore tickなしで一度だけ隙間を詰める", () => {
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ x:0,y:0,top:0,left:0,right:400,bottom:600,width:400,height:600,toJSON() {} });
+    const heights: Record<string, number> = { a:200, b:120, new:40 };
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return heights[this.dataset.sceneCard ?? ''] ?? 120; });
+    const card = (id:string, score:number): Card => ({ type:'compose', slotId:id, pubkey:id, score, created_at:0 });
+    const a = card('a',2), b = card('b',1), added = card('new',3);
+    const items = (cards:Card[]) => cards.map(card => ({id:card.slotId, card, content:<span>{card.slotId}</span>}));
+    const { rerender } = render(<CanvasScene items={items([a,b])} />);
+    flushFrame(0);
+    rerender(<CanvasScene items={items([added,a,b])} />);
+    flushFrame(16);
+    const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const host = screen.getByLabelText('カード領域。縦スクロールで移動');
+    expect(Number(node.dataset.sceneTargetY)).toBe(228);
+    expect(host.dataset.sceneCompaction).toBe('pending');
+    let sawCompaction = false;
+    for(let time=32; time<5000 && frames.size; time+=16) {
+      flushFrame(time);
+      if(Number(node.dataset.sceneTargetY) === 68) {
+        sawCompaction = true;
+        expect(host.dataset.sceneCompaction).toBe('idle');
+        expect(Number(node.dataset.sceneDelay)).toBe(0);
+      }
+    }
+    expect(sawCompaction).toBe(true);
+    expect(Number(node.dataset.sceneY)).toBeCloseTo(68,1);
+    expect(Number(document.querySelector<HTMLElement>('[data-scene-card="b"]')!.dataset.sceneY)).toBeCloseTo(280,1);
+    expect(frames.size).toBe(0);
+    host.scrollTop=10; fireEvent.scroll(host); flushFrame(5000);
+    expect(frames.size).toBe(0);
+    expect(Number(node.dataset.sceneTargetY)).toBe(68);
+  });
+
   it("実カードのscore/pubkeyをV1配置へ渡し、native/DOM往復後も重力のengine座標を保つ", () => {
     const card = (id: string, score: number, pubkey: string): Card => ({ type: 'compose', slotId: id, score, pubkey, created_at: 0 });
     const cards = [card('a', 100, 'alice'), card('b', 80, 'bob'), card('c', 60, 'alice'), card('d', 20, 'dave')];
