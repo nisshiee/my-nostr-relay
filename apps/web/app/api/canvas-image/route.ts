@@ -41,7 +41,7 @@ const headers = {
   "Cross-Origin-Resource-Policy": "same-origin",
 };
 function failure(status: number): Response {
-  return new Response("Image unavailable", {
+  return new Response(`Image unavailable (${status})`, {
     status, headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
   });
 }
@@ -67,9 +67,16 @@ function store(s: State, key: string, bytes: Buffer): void {
   s.bytes += bytes.length;
 }
 
+let reportedDisabled = false;
+
 export async function GET(request: Request): Promise<Response> {
   // キャッシュ参照より先に判定し、無効時はDNS・外部通信を一切開始しない。
-  if (!enabled()) return failure(503);
+  if (!enabled()) {
+    if (!reportedDisabled) console.warn("canvas-image: disabled", { flag: process.env.CANVAS_IMAGE_PROXY_ENABLED === "1", preview: process.env.VERCEL_ENV === "preview" });
+    reportedDisabled = true;
+    return failure(503);
+  }
+  reportedDisabled = false;
   let params: URLSearchParams;
   try { params = new URL(request.url).searchParams; } catch { return failure(400); }
   if ([...params.keys()].some((key) => !["url", "w", "q"].includes(key)) ||
@@ -115,8 +122,12 @@ export async function GET(request: Request): Promise<Response> {
     const bytes = await job;
     // 処理中に無効化された場合も画像を返さない。
     return enabled() ? image(bytes) : failure(503);
-  } catch {
-    // URLや上流エラーはレスポンスやログに含めない。
+  } catch (error) {
+    // URL・上流messageは出さず、自前の固定reasonだけを診断に残す。
+    const message = error instanceof Error ? error.message : "";
+    const reasons = ["URL", "HTTPS 443 required", "URL credentials/query/fragment", "IP literal", "hostname", "DNS address", "redirect location", "status", "encoding", "MIME", "length", "input size", "magic bytes", "pixels/frames", "output size", "redirect limit", "animation", "width"];
+    const reason = reasons.find(value => message === `Public image rejected: ${value}`);
+    console.warn("canvas-image: failed", error instanceof PublicImageDeadlineError ? "deadline" : reason ?? "network-or-decode");
     return failure(502);
   }
 }

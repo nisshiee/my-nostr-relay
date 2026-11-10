@@ -109,7 +109,7 @@ describe("canvas-image default-off route", () => {
     fetchImage.mockRejectedValue(new PublicImageDeadlineError("secret upstream URL https://private.example/token"));
     const response = await GET(request());
     expect(response.status).toBe(502);
-    expect(await response.text()).toBe("Image unavailable");
+    expect(await response.text()).toBe("Image unavailable (502)");
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect((await GET(request())).status).toBe(502);
     expect((await GET(request())).status).toBe(429);
