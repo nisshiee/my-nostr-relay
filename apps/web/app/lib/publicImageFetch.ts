@@ -99,7 +99,18 @@ async function download(url: URL, signal: AbortSignal): Promise<Response> {
       if (res.statusCode !== 200) return fail("status");
       if (res.headers["content-encoding"] && res.headers["content-encoding"].toLowerCase() !== "identity") return fail("encoding");
       const mime = (res.headers["content-type"] ?? "").split(";")[0].trim().toLowerCase();
-      if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) return fail("MIME");
+      if (!["image/jpeg", "image/png", "image/webp"].includes(mime)) {
+        // 診断には固定カテゴリのみを使い、上流ヘッダの任意文字列を露出させない。
+        const category: Record<string, string> = {
+          "image/jpg": "image-jpg",
+          "application/octet-stream": "octet-stream",
+          "image/avif": "avif",
+          "image/gif": "gif",
+          "text/html": "text-html",
+          "image/svg+xml": "svg",
+        };
+        return fail(`MIME ${Object.hasOwn(category, mime) ? category[mime] : "other"}`);
+      }
       const length = res.headers["content-length"];
       if (length && (!/^\d+$/.test(length) || Number(length) > MAX_INPUT)) return fail("length");
       let size = 0;

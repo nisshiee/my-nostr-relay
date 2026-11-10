@@ -95,6 +95,21 @@ describe("public image fetch", () => {
     response(Buffer.from("bad"), headers);
     await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow(reason);
   });
+  it.each([
+    ["image/jpg", "image-jpg"],
+    ["application/octet-stream", "octet-stream"],
+    ["image/avif", "avif"],
+    ["image/gif", "gif"],
+    ["text/html; charset=utf-8", "text-html"],
+    ["image/svg+xml", "svg"],
+    ["", "other"],
+    ["application/x-private-header-value", "other"],
+    ["constructor", "other"],
+    ["__proto__", "other"],
+  ])("reports bounded MIME category for %s without allowing it", async (mime, category) => {
+    response(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), { "content-type": mime });
+    await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow(`Public image rejected: MIME ${category}`);
+  });
   it("rejects oversized streaming body without content-length", async () => {
     response(Buffer.alloc(5 * 1024 * 1024 + 1));
     await expect(fetchPublicImage("https://cdn.example.com/a", 32)).rejects.toThrow("input size");

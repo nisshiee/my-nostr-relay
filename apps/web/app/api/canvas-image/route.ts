@@ -129,7 +129,7 @@ export async function GET(request: Request): Promise<Response> {
   } catch (error) {
     // URL・上流messageは出さず、自前の固定reasonだけを診断に残す。
     const message = error instanceof Error ? error.message : "";
-    const reasons = ["URL", "HTTPS 443 required", "URL credentials/query/fragment", "IP literal", "hostname", "DNS address", "redirect location", "status", "encoding", "MIME", "length", "input size", "magic bytes", "pixels/frames", "output size", "redirect limit", "animation", "width"];
+    const reasons = ["URL", "HTTPS 443 required", "URL credentials/query/fragment", "IP literal", "hostname", "DNS address", "redirect location", "status", "encoding", "MIME", "MIME image-jpg", "MIME octet-stream", "MIME avif", "MIME gif", "MIME text-html", "MIME svg", "MIME other", "length", "input size", "magic bytes", "pixels/frames", "output size", "redirect limit", "animation", "width"];
     const reason = reasons.find(value => message === `Public image rejected: ${value}`);
     console.warn("canvas-image: failed", error instanceof PublicImageDeadlineError ? "deadline" : reason ?? "network-or-decode");
     return failure(502);
