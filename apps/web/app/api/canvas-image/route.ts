@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizeCanvasInlineImage } from "../../lib/canvasInlineImage";
 import { fetchInlineImage, fetchPublicImage, PublicImageDeadlineError, type PublicImageWidth } from "../../lib/publicImageFetch";
 
 export const runtime = "nodejs";
@@ -145,7 +146,8 @@ export async function POST(request: Request): Promise<Response> {
       typeof record.width !== "number" || !WIDTHS.has(record.width) ||
       !record.data.startsWith("data:")) return failure(400);
   if (!enabled()) return failure(503);
-  const data = record.data;
+  const data = normalizeCanvasInlineImage(record.data);
+  if (data === null) return failure(400);
   const width = record.width as PublicImageWidth;
   const key = `inline:${width}:${createHash("sha256").update(data).digest("hex")}`;
   return serve(key, () => fetchInlineImage(data, width));

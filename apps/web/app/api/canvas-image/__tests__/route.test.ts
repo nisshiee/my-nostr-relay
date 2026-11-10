@@ -227,12 +227,12 @@ describe("inline canvas images", () => {
     expect((await POST(post({ data: "data:" + "A".repeat(3 * 1024 * 1024), width: 64 }))).status).toBe(413);
     expect(fetchInlineImage).not.toHaveBeenCalled();
   });
-  it("keeps helper validation errors private and never fetches an invalid data URI", async () => {
-    vi.mocked(fetchInlineImage).mockRejectedValueOnce(new Error("invalid base64 secret"));
+  it("rejects invalid base64 before invoking the helper", async () => {
     const response = await POST(post({ data: "data:image/png;base64,!!", width: 64 }));
-    expect(response.status).toBe(502);
-    expect(await response.text()).toBe("Image unavailable (502)");
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe("Image unavailable (400)");
     expect(fetchImage).not.toHaveBeenCalled();
+    expect(fetchInlineImage).not.toHaveBeenCalled();
   });
   it("shares concurrent work budget with GET", async () => {
     let finish!: (b: Buffer) => void;
@@ -246,6 +246,15 @@ describe("inline canvas images", () => {
     finish(Buffer.from("ok"));
     await Promise.all([a, b]);
     expect((await POST(post())).status).toBe(200);
+  });
+  it("normalizes ASCII whitespace before inline cache keys and helper calls", async () => {
+    expect((await POST(post({ data: "data:image/png;base64,aG V\tsbG8=\r\n", width: 64 }))).status).toBe(200);
+    expect((await POST(post())).status).toBe(200);
+    expect(fetchInlineImage).toHaveBeenCalledExactlyOnceWith(data, 64);
+  });
+  it("rejects non-ASCII whitespace without helper work", async () => {
+    expect((await POST(post({ data: "data:image/png;base64,aG\u00a0VsbG8=", width: 64 }))).status).toBe(400);
+    expect(fetchInlineImage).not.toHaveBeenCalled();
   });
   it("deduplicates identical inline work", async () => {
     let finish!: (b: Buffer) => void;

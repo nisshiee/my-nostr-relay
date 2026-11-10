@@ -280,6 +280,18 @@ describe("inline image conversion", () => {
     await expect(fetchInlineImage(uri, 32)).rejects.toThrow();
     expect(mocks.request).not.toHaveBeenCalled();
   });
+  it.each(["\t", "\n", "\f", "\r", " "])("accepts ASCII whitespace %j inside inline base64", async whitespace => {
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();
+    const encoded = png.toString("base64");
+    const spaced = `${whitespace}${encoded.slice(0, 8)}${whitespace}${encoded.slice(8)}${whitespace}`;
+    const output = await fetchInlineImage(`data:image/png;base64,${spaced}`, 32);
+    expect(await sharp(output).metadata()).toMatchObject({ format: "webp", width: 2, height: 2 });
+  });
+  it.each(["\u00a0", "\u2003", "\u200b", "\v", "%20", "_", "-"])("rejects unsupported inline separator %j", async separator => {
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();
+    const encoded = png.toString("base64");
+    await expect(fetchInlineImage(`data:image/png;base64,${encoded.slice(0, 8)}${separator}${encoded.slice(8)}`, 32)).rejects.toThrow("inline base64");
+  });
   it("rejects input above decoded limit before native decode", async () => {
     const metadata = vi.spyOn(sharp.prototype, "metadata");
     const uri = `data:image/png;base64,${Buffer.alloc(2 * 1024 * 1024 + 1).toString("base64")}`;

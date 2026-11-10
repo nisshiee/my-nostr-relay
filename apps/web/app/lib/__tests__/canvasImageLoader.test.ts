@@ -38,7 +38,7 @@ describe('canvas image queue', () => {
     const fetcher = vi.fn(async () => image()); vi.stubGlobal('fetch', fetcher);
     const request = { data: 'data:image/png;base64,aGVsbG8=', width: 64 };
     const one = vi.fn(); const two = vi.fn();
-    loader.subscribe(request, one); loader.subscribe({ ...request }, two);
+    loader.subscribe(request, one); loader.subscribe({ ...request, data: 'data:image/png;base64, aG\tVs\nbG8=\r\f' }, two);
     await vi.advanceTimersByTimeAsync(0);
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(fetcher).toHaveBeenCalledWith('/api/canvas-image', expect.objectContaining({

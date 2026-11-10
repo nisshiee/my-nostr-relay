@@ -140,3 +140,5 @@ BASEはbaseec-img-mng.akamaized.netの/images/item/origin/32hex画像だけ、�
 資料: https://docs.gravatar.com/sdk/images/ 、 https://techdocs.akamai.com/ivm/docs/imquery 。新しいdata/追加queryの実フィードE2Eは公開後に別途実施する。従来ded8413aでは認証済み実フィードの225画像、AVIF/Gravatar/X画像のnative表示、pan/zoom/profile/新着を確認済みだが、新経路の成功とは区別する。保護されたbranch Previewはユーザーの継続確認用に有効のまま維持し、設定削除・本番有効化は行わない。
 
 POSTにはJSON読取前のprocess token bucket（burst10・毎秒1補充）も追加する。無効なJSONも予算を消費し、枯渇時は本文を読む前に429を返す。これもinstance内の補助制限であり、分散課金上限・強制CPU停止の保証ではない。
+
+実機でdata PNGがまだ拒否された原因は、base64 payload内のASCII SPACE 197文字だった（空白除去後は4の倍数で正常）。許可MIME・raw長上限を維持し、payloadからASCIIのHT/LF/FF/CR/SPACEだけを除去した後、従来の厳密base64/byte/decode検査を行う。clientの共有取得identityとserver cache digestも正規化後へ統一する。Unicode空白、percent encoding、URL-safe alphabet、欠けたpadding、不正末尾bitの補修はしない。参考: https://infra.spec.whatwg.org/#forgiving-base64-decode 。これは空白処理だけの採用で、forgiving decode全体を許可する変更ではない。

@@ -1,4 +1,4 @@
-import { isAllowedCanvasInlineImage } from './canvasInlineImage';
+import { normalizeCanvasInlineImage } from './canvasInlineImage';
 import { CANVAS_IMAGE_WIDTHS } from './canvasImagePolicy';
 
 export type CanvasImageRequest = string | { data: string; width: number };
@@ -94,12 +94,15 @@ export function createCanvasImageLoader() {
   };
   return {
     subscribe(request: CanvasImageRequest, listener: Listener) {
+      const width = typeof request === 'string' ? 0 : request.width;
+      const inline = typeof request === 'string' ? null : normalizeCanvasInlineImage(request.data);
       // 外部URLや別endpointへ直接アクセスできないよう入口も制限する。
       if (typeof request === 'string'
         ? !request.startsWith('/api/canvas-image?') || request.includes('#')
-        : !isAllowedCanvasInlineImage(request.data) || !CANVAS_IMAGE_WIDTHS.some(width => width === request.width)) {
+        : !inline || !CANVAS_IMAGE_WIDTHS.some(allowed => allowed === width)) {
         listener({ status: 'error' }); return () => {};
       }
+      if (typeof request !== 'string') request = { data: inline!, width: request.width };
       const source = typeof request === 'string' ? request : `inline:${request.width}:${request.data}`;
       let entry = entries.get(source);
       if (!entry) {

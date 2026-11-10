@@ -264,7 +264,7 @@ export async function fetchInlineImage(dataUri: string, width: PublicImageWidth)
   const header = dataUri.slice(0, comma);
   const match = /^data:(image\/(?:jpeg|png|webp|avif));base64$/.exec(header);
   if (!match) reject("inline format");
-  const encoded = dataUri.slice(comma + 1);
+  const encoded = dataUri.slice(comma + 1).replace(/[\t\n\f\r ]/g, "");
   const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
   const content = encoded.slice(0, encoded.length - padding);
   if (!encoded.length || encoded.length % 4 !== 0 || /[^A-Za-z0-9+/]/.test(content)) reject("inline base64");
