@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GET } from "../route";
-import { fetchPublicImage, PublicImageDeadlineError } from "../../../lib/publicImageFetch";
+import { GET, POST } from "../route";
+import { fetchInlineImage, fetchPublicImage, PublicImageDeadlineError } from "../../../lib/publicImageFetch";
 
-vi.mock("../../../lib/publicImageFetch", () => ({ fetchPublicImage: vi.fn(), PublicImageDeadlineError: class extends Error {
+vi.mock("../../../lib/publicImageFetch", () => ({ fetchInlineImage: vi.fn(), fetchPublicImage: vi.fn(), PublicImageDeadlineError: class extends Error {
   constructor(message: string, public readonly nativeWorkMayRemain = true) { super(message); }
 } }));
 const fetchImage = vi.mocked(fetchPublicImage);
@@ -16,6 +16,7 @@ beforeEach(() => {
   vi.stubEnv("VERCEL_ENV", "preview");
   vi.stubEnv("VERCEL_TARGET_ENV", undefined);
   fetchImage.mockReset().mockResolvedValue(Buffer.from("webp"));
+  vi.mocked(fetchInlineImage).mockReset().mockResolvedValue(Buffer.from("inline-webp"));
   vi.spyOn(Date, "now").mockReturnValue(100_000);
 });
 afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
@@ -168,5 +169,130 @@ describe("canvas-image default-off route", () => {
     fetchImage.mockRejectedValue(new Error("invalid"));
     expect((await GET(request(url))).status).toBe(502);
     expect(fetchImage).toHaveBeenCalledWith(url, 64);
+  });
+});
+
+
+describe("inline canvas images", () => {
+  const data = "data:image/png;base64,aGVsbG8=";
+  function post(body: unknown = { data, width: 64 }, headers: Record<string, string> = {}) {
+    return new Request("http://localhost/api/canvas-image", {
+      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
+    });
+  }
+  it("uses inline helper only and reuses a hashed cache entry", async () => {
+    const response = await POST(post());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/webp");
+    expect(await response.text()).toBe("inline-webp");
+    expect((await POST(post())).status).toBe(200);
+    expect(fetchInlineImage).toHaveBeenCalledExactlyOnceWith(data, 64);
+    expect(fetchImage).not.toHaveBeenCalled();
+    const cache = Reflect.get(globalThis, Symbol.for("nlc.canvas-image.state.v1")).cache as Map<string, unknown>;
+    expect([...cache.keys()][0]).toMatch(/^inline:64:[a-f0-9]{64}$/);
+  });
+  it.each(["production", "staging"])("rejects %s before consuming a body", async env => {
+    vi.stubEnv("VERCEL_ENV", env);
+    const request = post();
+    expect((await POST(request)).status).toBe(503);
+    expect(request.bodyUsed).toBe(false);
+    expect(fetchInlineImage).not.toHaveBeenCalled();
+  });
+  it("rejects disabled scope before body reads", async () => {
+    vi.stubEnv("CANVAS_IMAGE_PROXY_SCOPE", undefined);
+    const request = post();
+    expect((await POST(request)).status).toBe(503);
+    expect(request.bodyUsed).toBe(false);
+  });
+  it("rejects explicit cross origin but accepts same origin", async () => {
+    expect((await POST(post(undefined, { origin: "https://evil.example" }))).status).toBe(403);
+    expect((await POST(post(undefined, { origin: "null" }))).status).toBe(403);
+    expect((await POST(post(undefined, { origin: "http://localhost" }))).status).toBe(200);
+  });
+  it("requires JSON content type", async () => {
+    expect((await POST(post(undefined, { "content-type": "text/plain" }))).status).toBe(415);
+    expect(fetchInlineImage).not.toHaveBeenCalled();
+  });
+  it.each([{}, { data }, { data, w: 64 }, { data, width: "64" }, { data, width: 65 },
+    { data, width: 64, extra: true }, { data: "https://example.com/a.png", width: 64 }, null, []])(
+    "rejects invalid fields %j", async body => {
+      expect((await POST(post(body))).status).toBe(400);
+      expect(fetchInlineImage).not.toHaveBeenCalled();
+    },
+  );
+  it("caps declared and streamed bytes before inline decoding", async () => {
+    const declared = post(undefined, { "content-length": String(3 * 1024 * 1024 + 1) });
+    expect((await POST(declared)).status).toBe(413);
+    expect(declared.bodyUsed).toBe(false);
+    expect((await POST(post({ data: "data:" + "A".repeat(3 * 1024 * 1024), width: 64 }))).status).toBe(413);
+    expect(fetchInlineImage).not.toHaveBeenCalled();
+  });
+  it("keeps helper validation errors private and never fetches an invalid data URI", async () => {
+    vi.mocked(fetchInlineImage).mockRejectedValueOnce(new Error("invalid base64 secret"));
+    const response = await POST(post({ data: "data:image/png;base64,!!", width: 64 }));
+    expect(response.status).toBe(502);
+    expect(await response.text()).toBe("Image unavailable (502)");
+    expect(fetchImage).not.toHaveBeenCalled();
+  });
+  it("shares concurrent work budget with GET", async () => {
+    let finish!: (b: Buffer) => void;
+    fetchImage.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const a = GET(request());
+    const b = GET(request("https://images.example/b.png"));
+    const response = await POST(post());
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(fetchInlineImage).not.toHaveBeenCalled();
+    finish(Buffer.from("ok"));
+    await Promise.all([a, b]);
+    expect((await POST(post())).status).toBe(200);
+  });
+  it("deduplicates identical inline work", async () => {
+    let finish!: (b: Buffer) => void;
+    vi.mocked(fetchInlineImage).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const a = POST(post());
+    const b = POST(post());
+    await vi.waitFor(() => expect(fetchInlineImage).toHaveBeenCalledTimes(1));
+    finish(Buffer.from("ok"));
+    expect((await a).status).toBe(200);
+    expect((await b).status).toBe(200);
+  });
+  it("caps concurrent slow bodies and cancels them at the body deadline", async () => {
+    vi.useFakeTimers();
+    const cancel = vi.fn();
+    const slow = () => new Request("http://localhost/api/canvas-image", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: new ReadableStream({ cancel }), duplex: "half",
+    } as RequestInit);
+    try {
+      const a = POST(slow());
+      const b = POST(slow());
+      expect((await POST(post())).status).toBe(429);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect((await a).status).toBe(400);
+      expect((await b).status).toBe(400);
+      expect(cancel).toHaveBeenCalledTimes(2);
+      expect((await POST(post())).status).toBe(200);
+    } finally { vi.useRealTimers(); }
+  });
+  it("limits invalid-body parsing before reading and refills the separate body budget", async () => {
+    for (let i = 0; i < 10; i++) expect((await POST(post({ bad: true }))).status).toBe(400);
+    const rejected = post();
+    const response = await POST(rejected);
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(rejected.bodyUsed).toBe(false);
+    expect(fetchInlineImage).not.toHaveBeenCalled();
+    expect((await GET(request())).status).toBe(200);
+    vi.mocked(Date.now).mockReturnValue(101_000);
+    expect((await POST(post())).status).toBe(200);
+    const next = post();
+    expect((await POST(next)).status).toBe(429);
+    expect(next.bodyUsed).toBe(false);
+  });
+  it("shares token budget with GET", async () => {
+    for (let i = 0; i < 60; i++) await GET(request(`https://images.example/${i}.png`));
+    expect((await POST(post())).status).toBe(429);
+    expect(fetchInlineImage).not.toHaveBeenCalled();
   });
 });

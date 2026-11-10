@@ -29,6 +29,13 @@ describe('V2画像の同一origin配信', () => {
     expect(screen.getByAltText('本文').getAttribute('srcset')).toBeNull();
     expect(screen.getByAltText('絵文字').getAttribute('src')).toBe('blob:canvas-image');
   });
+  it('V2 inline raster is POSTed and rendered only as a returned blob', async () => {
+    const data = 'data:image/png;base64,aGVsbG8=';
+    render(<CanvasImageProvider><MediaImage src={data} alt="inline" imageSize={40} srcSet="data:image/png;base64,aA== 2x" /></CanvasImageProvider>);
+    await waitFor(() => expect(screen.getByAltText('inline').getAttribute('src')).toBe('blob:canvas-image'));
+    expect(screen.getByAltText('inline').getAttribute('srcset')).toBeNull();
+    expect(fetch).toHaveBeenCalledWith('/api/canvas-image', expect.objectContaining({ method: 'POST', body: JSON.stringify({ data, width: 64 }) }));
+  });
   it('query付き/IP/SVGはリクエストを作らず理由付きplaceholderにする', () => {
     const { container } = render(<CanvasImageProvider>
       <MediaImage alt="秘密" src={`${source}?token=secret`} />

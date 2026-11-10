@@ -1,7 +1,11 @@
+import { isAllowedCanvasInlineImage } from './canvasInlineImage';
+import { CANVAS_IMAGE_WIDTHS } from './canvasImagePolicy';
+
+export type CanvasImageRequest = string | { data: string; width: number };
 export type CanvasImageLoad = { status: 'loading' } | { status: 'ready'; url: string } | { status: 'error' | 'disabled' };
 type Listener = (state: CanvasImageLoad) => void;
 type Entry = {
-  source: string; listeners: Set<Listener>; state: CanvasImageLoad;
+  source: string; request: CanvasImageRequest; listeners: Set<Listener>; state: CanvasImageLoad;
   attempts: number; failures: number; due: number; controller?: AbortController;
   bytes: number; expiry?: ReturnType<typeof setTimeout>;
 };
@@ -61,7 +65,9 @@ export function createCanvasImageLoader() {
   const run = async (entry: Entry) => {
     const timeout = setTimeout(() => entry.controller?.abort(), 20_000);
     try {
-      const response = await fetch(entry.source, { credentials: 'same-origin', redirect: 'error', signal: entry.controller!.signal });
+      const response = await fetch(typeof entry.request === 'string' ? entry.request : '/api/canvas-image', {
+        ...(typeof entry.request === 'string' ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry.request) }),
+        credentials: 'same-origin', redirect: 'error', signal: entry.controller!.signal });
       if (!entry.listeners.size) { await response.body?.cancel(); return; }
       if (response.status === 503) { notify(entry, { status: 'disabled' }); return; }
       if (response.status === 429 && entry.attempts++ < 8) {
@@ -76,7 +82,7 @@ export function createCanvasImageLoader() {
       const blob = await response.blob();
       if (!entry.listeners.size) return;
       if (!blob.type.startsWith('image/') || blob.size > 8 * 1024 * 1024) throw new Error('Invalid image');
-      entry.bytes = blob.size;
+      entry.bytes = blob.size + (typeof entry.request === 'string' ? 0 : entry.request.data.length * 4);
       notify(entry, { status: 'ready', url: URL.createObjectURL(blob) });
     } catch {
       if (!entry.listeners.size) return;
@@ -87,14 +93,17 @@ export function createCanvasImageLoader() {
     }
   };
   return {
-    subscribe(source: string, listener: Listener) {
+    subscribe(request: CanvasImageRequest, listener: Listener) {
       // 外部URLや別endpointへ直接アクセスできないよう入口も制限する。
-      if (!source.startsWith('/api/canvas-image?') || source.includes('#')) {
+      if (typeof request === 'string'
+        ? !request.startsWith('/api/canvas-image?') || request.includes('#')
+        : !isAllowedCanvasInlineImage(request.data) || !CANVAS_IMAGE_WIDTHS.some(width => width === request.width)) {
         listener({ status: 'error' }); return () => {};
       }
+      const source = typeof request === 'string' ? request : `inline:${request.width}:${request.data}`;
       let entry = entries.get(source);
       if (!entry) {
-        entry = { source, listeners: new Set(), state: { status: 'loading' }, attempts: 0, failures: 0, due: 0, bytes: 0 };
+        entry = { source, request, listeners: new Set(), state: { status: 'loading' }, attempts: 0, failures: 0, due: 0, bytes: 0 };
         entries.set(source, entry); queue.push(entry);
       }
       clearTimeout(entry.expiry);

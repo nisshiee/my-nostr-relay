@@ -1,4 +1,5 @@
-import { fetchPublicImage, PublicImageDeadlineError, type PublicImageWidth } from "../../lib/publicImageFetch";
+import { createHash } from "node:crypto";
+import { fetchInlineImage, fetchPublicImage, PublicImageDeadlineError, type PublicImageWidth } from "../../lib/publicImageFetch";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,14 +15,17 @@ type State = {
   bytes: number;
   inflight: Map<string, Promise<Buffer>>;
   active: number;
+  bodyReads: number;
+  bodyTokens: number;
+  bodyRefillAt: number;
   tokens: number;
   refillAt: number;
 };
 const processState = globalThis as typeof globalThis & { [STATE_KEY]?: State };
 function state(): State {
   return processState[STATE_KEY] ??= {
-    cache: new Map(), bytes: 0, inflight: new Map(), active: 0,
-    tokens: 60, refillAt: Date.now(),
+    cache: new Map(), bytes: 0, inflight: new Map(), active: 0, bodyReads: 0,
+    tokens: 60, refillAt: Date.now(), bodyTokens: 10, bodyRefillAt: Date.now(),
   };
 }
 
@@ -87,7 +91,67 @@ export async function GET(request: Request): Promise<Response> {
   const width = Number(widthText);
   if (!url || url.length > 2048 || !WIDTHS.has(width) || String(width) !== widthText ||
       (params.has("q") && params.get("q") !== "75")) return failure(400);
-  const key = JSON.stringify([url, width]);
+  return serve(JSON.stringify([url, width]), () => fetchPublicImage(url, width as PublicImageWidth));
+}
+
+export async function POST(request: Request): Promise<Response> {
+  // 無効時は本文すら読み込まず、デコードも開始しない。
+  if (!enabled()) return failure(503);
+  const origin = request.headers.get("origin");
+  if (origin !== null && origin !== new URL(request.url).origin) return failure(403);
+  if (request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") return failure(415);
+  const maxBody = 3 * 1024 * 1024;
+  const length = request.headers.get("content-length");
+  if (length && (!/^\d+$/.test(length) || Number(length) > maxBody)) return failure(413);
+  if (!request.body) return failure(400);
+  const s = state();
+  // JSON読み込みにも同時数・サイズ・時間上限を設ける。
+  const now = Date.now();
+  s.bodyTokens = Math.min(10, s.bodyTokens + Math.max(0, now - s.bodyRefillAt) / 1000);
+  s.bodyRefillAt = now;
+  // 不正JSONでも消費する独立した本文予算: バースト10件、毎秒1件補充。
+  if (s.bodyReads >= 2 || s.bodyTokens < 1) return failure(429);
+  s.bodyTokens -= 1;
+  s.bodyReads += 1;
+  const reader = request.body.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let body: unknown;
+  try {
+    const read = async () => {
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      while (true) {
+        const result = await reader.read();
+        if (result.done) break;
+        size += result.value.byteLength;
+        if (size > maxBody) throw new RangeError();
+        chunks.push(result.value);
+      }
+      return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+    };
+    body = await Promise.race([read(), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("body deadline")), 5000);
+    })]);
+  } catch (error) {
+    return failure(error instanceof RangeError ? 413 : 400);
+  } finally {
+    clearTimeout(timer);
+    void reader.cancel().catch(() => {});
+    s.bodyReads -= 1;
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return failure(400);
+  const record = body as Record<string, unknown>;
+  if (Object.keys(record).length !== 2 || typeof record.data !== "string" ||
+      typeof record.width !== "number" || !WIDTHS.has(record.width) ||
+      !record.data.startsWith("data:")) return failure(400);
+  if (!enabled()) return failure(503);
+  const data = record.data;
+  const width = record.width as PublicImageWidth;
+  const key = `inline:${width}:${createHash("sha256").update(data).digest("hex")}`;
+  return serve(key, () => fetchInlineImage(data, width));
+}
+
+async function serve(key: string, fetchImage: () => Promise<Buffer>): Promise<Response> {
   const s = state();
   const now = Date.now();
   for (const [oldKey, entry] of s.cache) if (entry.expires <= now) remove(s, oldKey);
@@ -109,7 +173,7 @@ export async function GET(request: Request): Promise<Response> {
     }
     s.tokens -= 1;
     s.active += 1;
-    job = Promise.resolve().then(() => fetchPublicImage(url, width as PublicImageWidth)).then((bytes) => {
+    job = Promise.resolve().then(fetchImage).then((bytes) => {
       store(s, key, bytes);
       s.active -= 1;
       return bytes;

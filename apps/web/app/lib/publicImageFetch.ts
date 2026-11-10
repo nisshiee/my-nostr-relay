@@ -254,3 +254,44 @@ export async function fetchPublicImage(rawUrl: string, width: PublicImageWidth):
     controller.abort();
   }
 }
+
+export async function fetchInlineImage(dataUri: string, width: PublicImageWidth): Promise<Buffer> {
+  if (!(PUBLIC_IMAGE_WIDTHS as readonly number[]).includes(width)) reject("width");
+  const maxInlineInput = 2 * 1024 * 1024;
+  // 巨大入力を先に拒否し、デコード後サイズを計算してから Buffer を確保する。
+  if (typeof dataUri !== "string" || dataUri.length > Math.ceil(maxInlineInput / 3) * 4 + 32) reject("inline size");
+  const comma = dataUri.indexOf(",");
+  const header = dataUri.slice(0, comma);
+  const match = /^data:(image\/(?:jpeg|png|webp|avif));base64$/.exec(header);
+  if (!match) reject("inline format");
+  const encoded = dataUri.slice(comma + 1);
+  const padding = encoded.endsWith("==") ? 2 : encoded.endsWith("=") ? 1 : 0;
+  const content = encoded.slice(0, encoded.length - padding);
+  if (!encoded.length || encoded.length % 4 !== 0 || /[^A-Za-z0-9+/]/.test(content)) reject("inline base64");
+  const size = encoded.length / 4 * 3 - padding;
+  if (size > maxInlineInput) reject("inline size");
+  const body = Buffer.from(encoded, "base64");
+  if (body.length !== size || body.toString("base64") !== encoded) reject("inline base64");
+  const controller = new AbortController();
+  const end = Date.now() + DEADLINE_MS;
+  let nativeWorkMayRemain = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const deadline = new Promise<never>((_, rejectPromise) => {
+    timer = setTimeout(() => {
+      controller.abort(new PublicImageDeadlineError("Public image deadline exceeded", nativeWorkMayRemain));
+      rejectPromise(controller.signal.reason);
+    }, DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([
+      decode(body, match[1], width, controller.signal, end, () => { nativeWorkMayRemain = true; }),
+      deadline,
+    ]);
+  } catch (error) {
+    if (controller.signal.reason instanceof PublicImageDeadlineError) throw controller.signal.reason;
+    throw error;
+  } finally {
+    clearTimeout(timer!);
+    controller.abort();
+  }
+}

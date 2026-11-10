@@ -34,6 +34,23 @@ describe('canvas image queue', () => {
     for (let n = 0; n < 20; n++) loader.subscribe(source(n), state => { if (state.status === 'ready') ready++; });
     await vi.runAllTimersAsync(); expect(ready).toBe(20);
   });
+  it('inline data uses the same queue and dedupes POST bodies without exposing data in URLs', async () => {
+    const fetcher = vi.fn(async () => image()); vi.stubGlobal('fetch', fetcher);
+    const request = { data: 'data:image/png;base64,aGVsbG8=', width: 64 };
+    const one = vi.fn(); const two = vi.fn();
+    loader.subscribe(request, one); loader.subscribe({ ...request }, two);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith('/api/canvas-image', expect.objectContaining({
+      method: 'POST', credentials: 'same-origin', redirect: 'error',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request),
+    }));
+    expect(one).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'ready' }));
+    expect(one.mock.calls.at(-1)).toEqual(two.mock.calls.at(-1));
+    loader.subscribe({ ...request, width: 65 }, one);
+    loader.subscribe({ data: 'data:image/svg+xml;base64,PHN2Zz4=', width: 64 }, one);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
   it('recovers from 429 and respects Retry-After without direct-origin fallback', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(new Response('', { status: 429, headers: { 'Retry-After': '3' } })).mockImplementation(async () => image());
     vi.stubGlobal('fetch', fetcher);

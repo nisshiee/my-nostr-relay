@@ -126,3 +126,17 @@ serverは同時2件を維持し、process bucketをburst60・毎秒4補充へ調
 queryはclientとserver共通の狭い許可ルールを使う。実feedで正常表示される0.gravatar.comの /avatar/32桁または64桁hex に限り、唯一のsize=整数1..2048を許可する。公開X metadataで確認したpbs.twimg.com/media/安全なfilenameに限り、format=webpとname=largeの2組だけを許可する。未知key・重複・認証/署名値・別host/pathへは広げない。redirectも同じ検査を通す。
 
 これらは公開サイズ/形式指定でありsecretを含む任意queryは受け付けない。許可された画像URL自体はVercelのリクエスト/キャッシュへ渡るが、アプリはURL全文や上流headerをログしない。Kojiraのv queryは用途未確定で、追加取得403後は調査を止め未許可とした。HTTP画像はTLS制約のため引き続き拒否する。
+
+### 埋込みrasterと追加の公開変換query
+
+実フィードの代替表示6箇所を調査した。1件はHTTPではなくdata:image/png;base64（437x437）、3件は2.gravatar.comのsize/d、1件はXの動画thumbnail、1件はBASEの画像変換queryだった。表示文言だけからHTTPや取得失敗と断定しない。
+
+埋込み画像はclientで厳密なbase64とJPEG/PNG/WebP/AVIFラベルを検査し、decoded 2MiB以内だけを同一origin POST /api/canvas-imageへ送る。URIをURL queryへ入れず、JSON本文はstream 3MiB・5秒・同時読取2件に制限する。serverはbase64/実体/animation/pixel/deadlineを独立検査し既存Sharp変換を共有する。GETとPOSTは同じgate、同時decode枠、token予算を使う。cache keyはdigestであり、raw dataをログしない。SVG/GIFや任意data MIMEは許可しない。client入力構文チェックだけをdecoder安全性とは扱わない。
+
+Gravatarは実際に観測した0.gravatar.comと2.gravatar.comのavatar hex pathに限り、size整数1..2048と任意のd=initialsだけを許可する。Gravatar公式はdに外部URLも認めるため、その一般仕様を丸ごと許可しない。Xは同じ固定format=webp/name=largeに対して、観測したamplify_video_thumb/数字/img/安全なfilenameパスを追加する。Xのこのパスを公式保証としては扱わない。
+
+BASEはbaseec-img-mng.akamaized.netの/images/item/origin/32hex画像だけ、観測済みimformat=generic、q=90、im=Resize,width=1200,type=normalの3組を許可する。Akamaiのimは一般には複雑な変換DSLなので、任意構文・Composite・外部URL・未知の数値指定は許可しない。qの一般仕様を検証済みとはせず観測値だけに固定する。初回公開page読取と既受信metadataのDOM確認を根拠とし、追加取得のHTTP拒否後に別取得経路で回避はしていない。
+
+資料: https://docs.gravatar.com/sdk/images/ 、 https://techdocs.akamai.com/ivm/docs/imquery 。新しいdata/追加queryの実フィードE2Eは公開後に別途実施する。従来ded8413aでは認証済み実フィードの225画像、AVIF/Gravatar/X画像のnative表示、pan/zoom/profile/新着を確認済みだが、新経路の成功とは区別する。保護されたbranch Previewはユーザーの継続確認用に有効のまま維持し、設定削除・本番有効化は行わない。
+
+POSTにはJSON読取前のprocess token bucket（burst10・毎秒1補充）も追加する。無効なJSONも予算を消費し、枯渇時は本文を読む前に429を返す。これもinstance内の補助制限であり、分散課金上限・強制CPU停止の保証ではない。

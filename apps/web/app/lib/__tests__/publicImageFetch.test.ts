@@ -10,7 +10,7 @@ vi.mock("node:dns/promises", () => ({ Resolver: class {
   cancel = mocks.cancel;
 } }));
 vi.mock("node:https", () => ({ request: mocks.request }));
-import { fetchPublicImage, isPublicImageAddress, validatePublicImageUrl, PublicImageDeadlineError } from "../publicImageFetch";
+import { fetchInlineImage, fetchPublicImage, isPublicImageAddress, validatePublicImageUrl, PublicImageDeadlineError } from "../publicImageFetch";
 
 function response(body: Buffer, headers: Record<string, string> = {}, status = 200) {
   mocks.request.mockImplementationOnce((_url, _options, callback) => {
@@ -247,5 +247,56 @@ describe("public image fetch", () => {
   it("rejects arbitrary widths before DNS", async () => {
     await expect(fetchPublicImage("https://cdn.example.com/a", 100 as 32)).rejects.toThrow("width");
     expect(mocks.resolve4).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("inline image conversion", () => {
+  it.each(["jpeg", "png", "webp", "avif"] as const)("converts inline %s without network", async format => {
+    const body = await sharp({ create: { width: 20, height: 10, channels: 3, background: "red" } }).toFormat(format).toBuffer();
+    const result = await fetchInlineImage(`data:image/${format};base64,${body.toString("base64")}`, 32);
+    expect(await sharp(result).metadata()).toMatchObject({ format: "webp", width: 20, height: 10 });
+    expect(mocks.request).not.toHaveBeenCalled();
+    expect(mocks.resolve4).not.toHaveBeenCalled();
+    expect(mocks.resolve6).not.toHaveBeenCalled();
+  });
+  it.each([
+    "https://cdn.example.com/a.png",
+    "data:image/svg+xml;base64,PHN2Zz4=",
+    "data:image/gif;base64,R0lGODlh",
+    "data:text/html;base64,PGh0bWw+",
+    "data:image/png,raw",
+    "data:image/png;charset=utf-8;base64,AAAA",
+    "data:image/png;base64,",
+    "data:image/png;base64,AA A",
+    "data:image/png;base64,AA_A",
+    "data:image/png;base64,AA%3D%3D",
+    "data:image/png;base64,AB==",
+    "data:image/png;base64,A===",
+    "data:image/png;base64,AAA",
+    "data:image/png;base64,AAAA=",
+    "data:image/png;base64,AAAA",
+  ])("rejects unsafe inline input %s", async uri => {
+    await expect(fetchInlineImage(uri, 32)).rejects.toThrow();
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+  it("rejects input above decoded limit before native decode", async () => {
+    const metadata = vi.spyOn(sharp.prototype, "metadata");
+    const uri = `data:image/png;base64,${Buffer.alloc(2 * 1024 * 1024 + 1).toString("base64")}`;
+    await expect(fetchInlineImage(uri, 32)).rejects.toThrow("inline size");
+    expect(metadata).not.toHaveBeenCalled();
+  });
+  it("rejects inline MIME mismatch", async () => {
+    const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: "red" } }).png().toBuffer();
+    await expect(fetchInlineImage(`data:image/jpeg;base64,${png.toString("base64")}`, 32)).rejects.toThrow("magic bytes");
+  });
+  it("retains native-work flag on inline decode deadline", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(sharp.prototype, "metadata").mockImplementation(() => new Promise(() => {}));
+    const outcome = fetchInlineImage("data:image/png;base64,iVBORw0KGgo=", 32).catch(error => error);
+    await vi.advanceTimersByTimeAsync(10_000);
+    const error = await outcome;
+    expect(error).toBeInstanceOf(PublicImageDeadlineError);
+    expect(error.nativeWorkMayRemain).toBe(true);
   });
 });

@@ -16,13 +16,15 @@ type MediaImageProps = ImgHTMLAttributes<HTMLImageElement> & { imageSize?: numbe
 function OptimizedCanvasImage({ src, imageSize = 640, ...props }: MediaImageProps) {
   const [failed, setFailed] = useState(false);
   const checked = validateCanvasImageSource(typeof src === 'string' ? src : '');
-  const url = checked.allowed ? checked.local ? checked.url : `/api/canvas-image?url=${encodeURIComponent(checked.url)}&w=${canvasImageWidth(imageSize)}&q=${CANVAS_IMAGE_QUALITY}` : '';
+  const url = checked.allowed ? checked.local || checked.inline ? checked.url : `/api/canvas-image?url=${encodeURIComponent(checked.url)}&w=${canvasImageWidth(imageSize)}&q=${CANVAS_IMAGE_QUALITY}` : '';
+  const width = canvasImageWidth(imageSize);
+  const identity = `${width}:${url}`;
   const [loaded, setLoaded] = useState<{ source: string; state: CanvasImageLoad }>();
   useEffect(() => {
     if (!url || url === '/icon.svg') return;
-    return canvasImageLoader.subscribe(url, state => setLoaded({ source: url, state }));
-  }, [url]);
-  const state = loaded?.source === url ? loaded.state : { status: 'loading' as const };
+    return canvasImageLoader.subscribe(url.startsWith('data:') ? { data: url, width } : url, state => setLoaded({ source: identity, state }));
+  }, [url, width, identity]);
+  const state = loaded?.source === identity ? loaded.state : { status: 'loading' as const };
   const ready = url === '/icon.svg' ? url : state.status === 'ready' ? state.url : undefined;
   if (!checked.allowed || failed || !ready) return <span
     role="img" aria-label={props.alt || '画像'}
