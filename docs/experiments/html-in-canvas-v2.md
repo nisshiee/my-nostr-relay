@@ -83,7 +83,11 @@ V2の画像wrapperは `/api/canvas-image` へ統一し、配信元hostの固定a
 
 ### 有効化ゲート
 
-routeは既定で503を返し、DNS解決も外部取得もしない。`CANVAS_IMAGE_PROXY_ENABLED=1` と非production環境を両方必要とする。`VERCEL_ENV` がある場合はpreview/developmentのみ、ない場合は `NODE_ENV` development/testのみ許可し、productionはフラグがあっても拒否する。今回、永続環境変数・権限・AWS資源・production設定を追加しない。一般公開や本番有効化は別の判断であり、この実装だけで完了としない。既定ではV2の外部画像はplaceholderとなる。前段の成功版immutable Previewは比較用に残る。
+routeは既定で503を返し、DNS解決も外部取得もしない。有効化には `CANVAS_IMAGE_PROXY_ENABLED=1` と `CANVAS_IMAGE_PROXY_SCOPE=protected-preview` の両方が必要。`VERCEL_ENV` / `VERCEL_TARGET_ENV` のどちらかがproductionまたは未知の値なら拒否する。platform環境変数がない場合、Preview専用scope設定を信頼境界とする。この場合はコードだけでdeploymentのproduction判定を証明できないため、2変数をproductionへ設定しないことが必須であり、「常にproductionを独立検出して拒否」とは主張しない。
+
+E2E中に限定許可を受け、上記2つの非secret設定をVercel target=preview、gitBranch=experiment/html-in-canvas-v2だけへ追加した。projectのSSO保護（全Preview）は維持し、予約system変数の上書き・全project設定変更・新credentialsは行わない。request query/header/cookieはgateの根拠に使わない。QA後はフラグとscopeを無効値へ戻す。既存immutable deploymentには環境snapshotが残るため、復旧後の設定変更だけで既存URLを停止したことにはならない。
+
+一般公開や本番有効化は別の判断であり、この実装だけで完了としない。既定ではV2の外部画像はplaceholderとなる。前段の成功版immutable Previewは比較用に残る。
 
 ### 取得・画像境界
 

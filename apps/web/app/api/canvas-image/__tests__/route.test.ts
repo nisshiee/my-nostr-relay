@@ -10,7 +10,9 @@ function request(url = "https://images.example/a.png", width = "64", extra = "")
 beforeEach(() => {
   Reflect.deleteProperty(globalThis, Symbol.for("nlc.canvas-image.state.v1"));
   vi.stubEnv("CANVAS_IMAGE_PROXY_ENABLED", "1");
+  vi.stubEnv("CANVAS_IMAGE_PROXY_SCOPE", "protected-preview");
   vi.stubEnv("VERCEL_ENV", "preview");
+  vi.stubEnv("VERCEL_TARGET_ENV", undefined);
   fetchImage.mockReset().mockResolvedValue(Buffer.from("webp"));
   vi.spyOn(Date, "now").mockReturnValue(100_000);
 });
@@ -27,14 +29,38 @@ describe("canvas-image default-off route", () => {
     vi.stubEnv("VERCEL_ENV", "production");
     expect((await GET(request())).status).toBe(503);
     vi.stubEnv("VERCEL_ENV", undefined);
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("VERCEL_TARGET_ENV", "production");
     expect((await GET(request())).status).toBe(503);
     expect(fetchImage).toHaveBeenCalledTimes(1);
   });
-  it("allows explicit local development", async () => {
+  it.each([undefined, "", "preview", "protected-production"])("requires exact scope %s", async scope => {
+    vi.stubEnv("CANVAS_IMAGE_PROXY_SCOPE", scope);
+    expect((await GET(request())).status).toBe(503);
+    expect(fetchImage).not.toHaveBeenCalled();
+  });
+  it.each(["development", "test", "production"])("accepts scoped missing platform env with NODE_ENV %s", async nodeEnv => {
     vi.stubEnv("VERCEL_ENV", undefined);
-    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("NODE_ENV", nodeEnv);
     expect((await GET(request())).status).toBe(200);
+  });
+  const platforms = [undefined, "", "preview", "development", "production", "staging"];
+  it.each(platforms.flatMap(env => platforms.map(target => [env, target] as const)))(
+    "validates both platform values: %s / %s", async (env, target) => {
+      vi.stubEnv("VERCEL_ENV", env);
+      vi.stubEnv("VERCEL_TARGET_ENV", target);
+      const allowed = [env, target].every(v => !v || v === "preview" || v === "development");
+      expect((await GET(request())).status).toBe(allowed ? 200 : 503);
+      expect(fetchImage).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    },
+  );
+  it("does not accept request headers as deployment scope", async () => {
+    vi.stubEnv("CANVAS_IMAGE_PROXY_SCOPE", undefined);
+    const spoofed = new Request(request(), { headers: {
+      "CANVAS_IMAGE_PROXY_SCOPE": "protected-preview", "VERCEL_ENV": "preview",
+      "x-vercel-env": "preview", "x-vercel-target-env": "preview",
+    } });
+    expect((await GET(spoofed)).status).toBe(503);
+    expect(fetchImage).not.toHaveBeenCalled();
   });
   it.each(["0", "65", "064", "640.0", "Infinity"])("rejects width %s", async w => {
     expect((await GET(request(undefined, w))).status).toBe(400);

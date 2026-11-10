@@ -26,12 +26,13 @@ function state(): State {
 }
 
 function enabled(): boolean {
-  if (process.env.CANVAS_IMAGE_PROXY_ENABLED !== "1") return false;
-  // 本番は必ず無効。明示したプレビューと開発・テスト環境だけを許可する。
-  if (process.env.VERCEL_ENV) {
-    return process.env.VERCEL_ENV === "preview" || process.env.VERCEL_ENV === "development";
-  }
-  return process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test";
+  if (process.env.CANVAS_IMAGE_PROXY_ENABLED !== "1" ||
+      process.env.CANVAS_IMAGE_PROXY_SCOPE !== "protected-preview") return false;
+  // システム環境変数がある場合は本番・未知の環境を拒否する。
+  // 未提供の場合は、保護されたプレビュー限定の環境設定を信頼境界とする。
+  return [process.env.VERCEL_ENV, process.env.VERCEL_TARGET_ENV].every(
+    value => !value || value === "preview" || value === "development",
+  );
 }
 
 const headers = {
@@ -72,7 +73,7 @@ let reportedDisabled = false;
 export async function GET(request: Request): Promise<Response> {
   // キャッシュ参照より先に判定し、無効時はDNS・外部通信を一切開始しない。
   if (!enabled()) {
-    if (!reportedDisabled) console.warn("canvas-image: disabled", { flag: process.env.CANVAS_IMAGE_PROXY_ENABLED === "1", preview: process.env.VERCEL_ENV === "preview" });
+    if (!reportedDisabled) console.warn("canvas-image: disabled", { flag: process.env.CANVAS_IMAGE_PROXY_ENABLED === "1", scope: process.env.CANVAS_IMAGE_PROXY_SCOPE === "protected-preview", platformPresent: Boolean(process.env.VERCEL_ENV || process.env.VERCEL_TARGET_ENV) });
     reportedDisabled = true;
     return failure(503);
   }
