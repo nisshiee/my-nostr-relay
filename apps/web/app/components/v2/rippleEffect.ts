@@ -15,7 +15,13 @@ export const RIPPLE_EFFECT_MAX_DELAY_MS = 600;
 export const RIPPLE_EFFECT_DURATION_MS = 1300;
 export const RIPPLE_EFFECT_MAX_TRACES = 4;
 export const RIPPLE_EFFECT_MAX_EDGES = 96;
-export const RIPPLE_EFFECT_MAX_DISPLACEMENT_PX = 1.5;
+export const RIPPLE_EFFECT_MAX_DISPLACEMENT_PX = 6;
+/** 波がカードを通る間は強度を保ち、開始・終了の各15%だけ滑らかに消す。 */
+export function rippleEffectAmount(progress: number): number {
+  if (!Number.isFinite(progress) || progress <= 0 || progress >= 1) return 0;
+  const edge = Math.min(1, progress / .15, (1 - progress) / .15);
+  return edge * edge * (3 - 2 * edge);
+}
 function valid(box: SceneBox | undefined): box is SceneBox {
   return !!box && [box.x, box.y, box.width, box.height, box.x + box.width, box.y + box.height].every(Number.isFinite) && box.width > 0 && box.height > 0;
 }
@@ -49,7 +55,7 @@ export function createRippleEffects(traces: readonly SceneInsertionTrace[], boxe
         const progress = (ageMs - delayMs) / RIPPLE_EFFECT_SWEEP_MS;
         if (!options.heldIds?.has(step.id) && progress > 0 && progress < 1) result.set(step.id, {
           sourceId: trace.sourceId, depth: step.depth, delayMs, progress,
-          amount: Math.sin(Math.PI * progress), directionX: step.direction[0], directionY: step.direction[1],
+          amount: rippleEffectAmount(progress), directionX: step.direction[0], directionY: step.direction[1],
         });
       }
       for (const id of children.get(step.id) ?? []) {

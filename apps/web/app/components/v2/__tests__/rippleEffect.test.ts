@@ -1,9 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import { createRippleEffects } from '../rippleEffect';
+import { createRippleEffects, rippleEffectAmount, RIPPLE_EFFECT_MAX_DISPLACEMENT_PX } from '../rippleEffect';
 import type { SceneBox, SceneInsertionTrace } from '../scene';
 const boxes = new Map<string, SceneBox>([['r',{x:0,y:0,width:100,height:100}],['a',{x:0,y:200,width:100,height:100}],['b',{x:200,y:200,width:100,height:100}],['other',{x:400,y:400,width:100,height:100}]]);
 const traces: SceneInsertionTrace[] = [{sourceId:'r',edges:[{fromId:'a',toId:'b'},{fromId:'r',toId:'a'}]}];
 describe('波紋の実因果順・方向・有限寿命',()=>{
+ it('強度は中央70%で保持し両端だけ消え、実効変位は6px以内',()=>{
+  for(const progress of [NaN,-1,0,1,2])expect(rippleEffectAmount(progress)).toBe(0);
+  for(const progress of [.15,.25,.5,.75,.85])expect(rippleEffectAmount(progress)).toBeCloseTo(1);
+  expect(rippleEffectAmount(.075)).toBeCloseTo(.5);expect(rippleEffectAmount(.925)).toBeCloseTo(.5);
+  let maximum=0;
+  // shaderと同じ帯・正弦波を密に走査。外周envelopeは常に0..1なので増幅しない。
+  for(let i=0;i<=200000;i++){
+    const d=-1+i/100000;
+    const displacement=Math.abs(Math.sin(d*32)*Math.exp(-d*d/.025)*RIPPLE_EFFECT_MAX_DISPLACEMENT_PX);
+    maximum=Math.max(maximum,displacement);
+  }
+  expect(maximum).toBeGreaterThan(5.4);expect(maximum).toBeLessThan(5.6);expect(maximum).toBeLessThanOrEqual(6);
+ });
  it('辺の順番ではなくBFS深さで下から横へ向きを変える',()=>{
   const result=createRippleEffects(traces,boxes,350);
   expect(result.get('r')).toMatchObject({depth:0,delayMs:0,progress:.5,directionX:0,directionY:1});

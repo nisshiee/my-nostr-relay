@@ -86,7 +86,9 @@ describe('feed WebGLの同一射影・有界texture・前面粒子',()=>{
     expect(gl.uniform2f).toHaveBeenCalledWith('rippleDirection',1,0);
     expect(surface.updateElementGeometry).toHaveBeenCalledWith(a.node,{canvasTransform:expect.objectContaining({values:sceneCardMatrix(a.box,camera)})});
     const fragment=vi.mocked(gl.shaderSource).mock.calls[1][1];
-    expect(fragment).toContain('smoothstep(0.,.08,uv.x)');expect(fragment).toContain('wave*1.5/max(cardSize');
+    expect(fragment).toContain('smoothstep(0.,.08,uv.x)');expect(fragment).toContain('wave*6.0/max(cardSize');
+    expect(fragment).toContain('distanceToWave*distanceToWave/0.025');expect(fragment).toContain('rippleAmount*.32');expect(fragment).toContain('rippleAmount*.15');expect(fragment).toContain('vec3(.25,.85,1.)*c.a');
+    expect(fragment.match(/texture\(image,/g)).toHaveLength(1);
   });
   it('context lossでも既存geometryを消して停止',()=>{
     const {renderer,gl,surface}=setup(),a=card('a');renderer.render(frame([a]));vi.mocked(gl.isContextLost).mockReturnValue(true);
