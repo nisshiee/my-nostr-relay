@@ -89,7 +89,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
   it("押下由来focusでは非変形座標による自動scrollを起こさない", () => {
     localStorage.setItem('nlc-v2-effect','domino');
-    vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){return this.dataset.sceneCard==='a'?1000:120;});
+    vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){return this.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard==='a'?1000:120;});
     const original={id:'a',content:<InteractiveCard/>};
     const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
     rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(300);
@@ -122,7 +122,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     if(reason==='removed') rerender(<CanvasScene items={[incoming]}/>);
     flushFrame(500);
     if(reason==='removed') expect(document.querySelector('[data-scene-card="a"]')).toBeNull();
-    else expect(node.dataset.sceneTip).toBe('0');
+    else { expect(node.dataset.sceneTip).toBe('0'); expect(node.style.padding).toBe('0px'); }
     unmount(); frames.clear(); act(()=>vi.runOnlyPendingTimers()); expect(frames.size).toBe(0);
   });
   it("unmountはclick待ちtimerとpointer listenerを解除する", () => {
@@ -141,8 +141,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   it("native押下は未paintの計算値でなく最後に描いた内側CSS姿勢を保持する", () => {
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     let matrix:number[]=[];
-    const draws:{id:string|null,matrix:number[],x:number,y:number,pose:string}[]=[];
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:(...values:number[])=>{matrix=values;},drawElementImage:(node:Element,x:number,y:number)=>{draws.push({id:node.getAttribute('data-scene-card'),matrix:[...matrix],x,y,pose:node.querySelector<HTMLElement>('[data-scene-face]')!.style.transform});}} as unknown as CanvasRenderingContext2D);
+    const draws:{id:string|null,matrix:number[],x:number,y:number,width:number,height:number,padding:string,pose:string}[]=[];
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:(...values:number[])=>{matrix=values;},drawElementImage:(node:Element,x:number,y:number,width:number,height:number)=>{draws.push({id:node.getAttribute('data-scene-card'),matrix:[...matrix],x,y,width,height,padding:(node as HTMLElement).style.padding,pose:node.querySelector<HTMLElement>('[data-scene-face]')!.style.transform});}} as unknown as CanvasRenderingContext2D);
     const descriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value:vi.fn()});
     const contentDescriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'content');
@@ -156,6 +156,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       fireEvent(surface,new Event('paint'));
       const painted=draws.filter(draw=>draw.id==='a').at(-1)!;
       expect(painted.pose).toContain('perspective(');
+      expect(painted.padding).toBe('66px');
+      expect(painted.width).toBe(492); expect(painted.height).toBe(252);
       flushFrame(350);
       expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).not.toBe(painted.pose);
       const button=screen.getByRole('button',{name:'クリック 0'});
@@ -165,6 +167,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(500);
       fireEvent(surface,new Event('paint'));
       expect(draws.filter(draw=>draw.id==='a').at(-1)!.pose).toBe('');
+      expect(draws.filter(draw=>draw.id==='a').at(-1)!.padding).toBe('0px');
+      expect(draws.filter(draw=>draw.id==='a').at(-1)!.width).toBe(360);
       expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
     } finally {
       if(contentDescriptor)Object.defineProperty(HTMLCanvasElement.prototype,'content',contentDescriptor);
@@ -200,6 +204,13 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       expect(node.style.transform).toBe('');
       expect(face.hasAttribute('drawable')).toBe(false);
       const nativeDraw=draw.mock.calls.findLast(call=>call[0]===node)!;
+      expect(node.style.padding).toBe('66px');
+      expect(node.style.boxSizing).toBe('content-box');
+      expect(node.style.pointerEvents).toBe('none');
+      expect(face.style.pointerEvents).toBe('auto');
+      expect(nativeDraw.slice(3)).toEqual([492,252]);
+      expect(nativeDraw[1]).toBeCloseTo(Number(node.dataset.sceneX)-66,2);
+      expect(nativeDraw[2]).toBeCloseTo(Number(node.dataset.sceneY)-66,2);
       fireEvent.click(screen.getByRole('button',{name:'DOMに切替'})); flushFrame(250);
       expect(face.style.transform).toBe(nativePose);
       expect(node.style.transform).toBe(`translate(${nativeDraw[1]}px,${nativeDraw[2]-90}px) scale(1)`);
@@ -207,6 +218,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       draw.mockClear(); flushFrame(2000);
       expect(draw.mock.calls.every(call=>call[1]!==0 || call[2]!==0)).toBe(true);
       expect(face.style.transform).toBe('');
+      expect(node.style.padding).toBe('0px');
       expect(screen.getByRole('status').textContent).toContain('native');
     } finally {
       if(contentDescriptor)Object.defineProperty(HTMLCanvasElement.prototype,'content',contentDescriptor);
@@ -237,6 +249,65 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
     }
   });
+  it("keyboard focusの縦revealでは捕捉paddingを座標へ二重加算しない", () => {
+    localStorage.setItem('nlc-v2-effect','domino');
+    const original={id:'a',content:<InteractiveCard/>};
+    const {rerender}=render(<CanvasScene items={[original]}/>); flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
+    const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
+    const button=screen.getByRole('button',{name:'クリック 0'});
+    const host=screen.getByLabelText('カード領域。縦スクロールで移動');
+    expect(node.style.padding).toBe('66px');
+    Object.defineProperties(button,{
+      offsetTop:{configurable:true,value:570-Number(node.dataset.sceneY)},
+      offsetHeight:{configurable:true,value:20},
+      offsetParent:{configurable:true,value:face},
+    });
+    Object.defineProperties(face,{
+      offsetTop:{configurable:true,value:66},
+      offsetParent:{configurable:true,value:node},
+    });
+    act(()=>button.focus()); flushFrame(300);
+    expect(document.activeElement).toBe(button);
+    expect(host.scrollTop).toBe(0);
+    expect(node.style.padding).toBe('0px');
+  });
+
+  it("捕捉paddingを配置高さに加えず内側の面だけを監視する", () => {
+    localStorage.setItem('nlc-v2-effect','domino');
+    const observed = new Set<Element>();
+    let refresh: (() => void) | undefined;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: () => void) { refresh = callback; }
+      observe(node: Element) { observed.add(node); }
+      unobserve(node: Element) { observed.delete(node); }
+      disconnect() {}
+    });
+    let height = 180;
+    vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){
+      if(this.hasAttribute('data-scene-face')) return height;
+      if(this.hasAttribute('data-scene-card')) return height+132;
+      return 20;
+    });
+    const original = {id:'a',content:<InteractiveCard/>};
+    const {rerender} = render(<CanvasScene items={[original]}/>); flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
+    const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const face = node.querySelector<HTMLElement>('[data-scene-face]')!;
+    expect(observed.has(face)).toBe(true); expect(observed.has(node)).toBe(false);
+    expect(node.style.padding).toBe('66px');
+    const expectedY = Number(node.dataset.sceneTargetY);
+    act(()=>refresh?.()); flushFrame(300);
+    expect(Number(node.dataset.sceneTargetY)).toBe(expectedY);
+    height=220; act(()=>refresh?.()); flushFrame(350);
+    expect(Number(node.dataset.sceneTargetY)).toBe(expectedY+40);
+    fireEvent.change(screen.getByRole('combobox'),{target:{value:'off'}}); flushFrame(400);
+    expect(node.style.padding).toBe('0px'); expect(face.style.width).toBe('360px');
+    expect(Number(node.dataset.sceneTargetY)).toBe(expectedY+40);
+    expect(node.querySelector<HTMLElement>('[data-scene-footprint]')!.style.inset).toBe('0px');
+  });
+
   it("保存済みドミノもreduced-motionでは変形せず、解除しても旧新着を再生しない", () => {
     localStorage.setItem('nlc-v2-effect','domino');
     let changed: (()=>void) | undefined;
@@ -390,7 +461,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     localStorage.setItem('nlc-v2-effect', 'off');
     vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ x:0,y:0,top:0,left:0,right:400,bottom:600,width:400,height:600,toJSON() {} });
     const heights: Record<string, number> = { a:200, b:120, new:40 };
-    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return heights[this.dataset.sceneCard ?? ''] ?? 120; });
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return heights[this.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard ?? ''] ?? 120; });
     const card = (id:string, score:number): Card => ({ type:'compose', slotId:id, pubkey:id, score, created_at:0 });
     const a = card('a',2), b = card('b',1), added = card('new',3);
     const items = (cards:Card[]) => cards.map(card => ({id:card.slotId, card, content:<span>{card.slotId}</span>}));

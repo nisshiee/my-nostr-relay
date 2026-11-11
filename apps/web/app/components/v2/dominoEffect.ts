@@ -50,6 +50,8 @@ export interface DominoPerspective {
   readonly pivotY: number;
   /** カード内座標で左上・右上・右下・左下の順。 */
   readonly corners: readonly [DominoProjectedPoint, DominoProjectedPoint, DominoProjectedPoint, DominoProjectedPoint];
+  /** 元のカード矩形から出る投影面の量。描画側は別途AA用余白を足せる。 */
+  readonly outsets: Readonly<{ top: number; right: number; bottom: number; left: number }>;
   readonly shade: DominoShade;
 }
 
@@ -68,7 +70,8 @@ export const DOMINO_EFFECT_MAX_TRACES = 4;
 export const DOMINO_EFFECT_MAX_EDGES = 96;
 export const DOMINO_EFFECT_MAX_CARDS = DOMINO_EFFECT_MAX_EDGES + DOMINO_EFFECT_MAX_TRACES;
 export const DOMINO_PERSPECTIVE_MAX_ANGLE_DEG = 52;
-export const DOMINO_PERSPECTIVE_DISTANCE_RATIO = 1.5;
+export const DOMINO_PERSPECTIVE_DISTANCE_RATIO = 5;
+export const DOMINO_PERSPECTIVE_MAX_OUTSET = 64;
 
 interface Direction { x: number; y: number }
 interface DominoStep {
@@ -129,22 +132,27 @@ function matrixFor(box: SceneBox, direction: Direction, amount: number): DominoM
 }
 
 function perspectiveFor(box: SceneBox, direction: Direction, amount: number): DominoPerspective {
-  // 支点は押される方向の辺。反対の辺を奥へ倒すことで、投影は元の矩形内に収まる。
+  // 押される側と反対の辺を固定し、進行方向の辺を手前へ倒して広げる。
   const horizontal = Math.abs(direction.x) > Math.abs(direction.y);
   const axis = horizontal ? 'y' : 'x';
-  const edge: DominoPivotEdge = horizontal ? direction.x > 0 ? 'right' : 'left' : direction.y < 0 ? 'top' : 'bottom';
+  const edge: DominoPivotEdge = horizontal ? direction.x > 0 ? 'left' : 'right' : direction.y < 0 ? 'bottom' : 'top';
   const pivotX = edge === 'left' ? 0 : edge === 'right' ? box.width : box.width / 2;
   const pivotY = edge === 'top' ? 0 : edge === 'bottom' ? box.height : box.height / 2;
-  const sign = edge === 'top' || edge === 'right' ? -1 : 1;
-  const angleDeg = sign * DOMINO_PERSPECTIVE_MAX_ANGLE_DEG * amount;
+  const sign = edge === 'bottom' || edge === 'left' ? -1 : 1;
+  // 倍率と画面外への張出しを制限し、長い本文カードでも大きな描画面を作らない。
+  const dimension = horizontal ? box.width : box.height;
+  const transverse = horizontal ? box.height : box.width;
+  const ratio = Math.max(DOMINO_PERSPECTIVE_DISTANCE_RATIO,
+    Math.sin(DOMINO_PERSPECTIVE_MAX_ANGLE_DEG * Math.PI / 180) * (1 + transverse / (2 * DOMINO_PERSPECTIVE_MAX_OUTSET)),
+    Math.sqrt(dimension / DOMINO_PERSPECTIVE_MAX_OUTSET) + 1);
+  const distance = Math.max(1, dimension) * ratio;
+  // 浮動小数の誤差が描画余白を超える表示不能な寸法では拡大を止め、有限な平面を返す。
+  const safe = Number.isFinite(distance) && Math.max(box.width, box.height) <= 1e12;
+  const perspectivePx = safe ? distance : Number.MAX_VALUE;
+  const angleDeg = safe ? sign * DOMINO_PERSPECTIVE_MAX_ANGLE_DEG * amount : 0;
   const radians = angleDeg * Math.PI / 180;
   const sine = Math.sin(radians);
   const cosine = Math.cos(radians);
-  // 回転する軸に直交する辺の長さを基準にし、カード寸法による見え方の差を抑える。
-  const dimension = horizontal ? box.width : box.height;
-  const distance = Math.max(1, dimension) * DOMINO_PERSPECTIVE_DISTANCE_RATIO;
-  // 最大値を割ってから掛ける方式も丸め誤差でoverflowするため、積を検査する。
-  const perspectivePx = Number.isFinite(distance) ? distance : Number.MAX_VALUE;
   const project = (x: number, y: number): DominoProjectedPoint => {
     const localX = x - pivotX;
     const localY = y - pivotY;
@@ -157,6 +165,13 @@ function perspectiveFor(box: SceneBox, direction: Direction, amount: number): Do
       w,
     };
   };
+  const corners: DominoPerspective['corners'] = [project(0, 0), project(box.width, 0), project(box.width, box.height), project(0, box.height)];
+  const outsets = {
+    left: Math.max(0, -Math.min(...corners.map(point => point.x))),
+    right: Math.max(0, Math.max(...corners.map(point => point.x)) - box.width),
+    top: Math.max(0, -Math.min(...corners.map(point => point.y))),
+    bottom: Math.max(0, Math.max(...corners.map(point => point.y)) - box.height),
+  };
   const dark = (0.26 * amount).toFixed(6);
   const light = (0.2 * amount).toFixed(6);
   const edgeOffsets = {
@@ -167,7 +182,7 @@ function perspectiveFor(box: SceneBox, direction: Direction, amount: number): Do
     cssTransform: `perspective(${perspectivePx}px) rotate${horizontal ? 'Y' : 'X'}(${angleDeg}deg)`,
     transformOrigin: `${pivotX}px ${pivotY}px`,
     axis, edge, angleDeg, perspectivePx, pivotX, pivotY,
-    corners: [project(0, 0), project(box.width, 0), project(box.width, box.height), project(0, box.height)],
+    corners, outsets,
     shade: {
       faceGradient: `linear-gradient(to ${edge}, rgba(15,23,42,0.48), rgba(15,23,42,0.06))`,
       faceOpacity: amount * 0.3,

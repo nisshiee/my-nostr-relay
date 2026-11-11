@@ -4,7 +4,7 @@ import {
   createDominoTransforms, dominoEffectAmount, dominoIdentity,
   DOMINO_EFFECT_DURATION_MS, DOMINO_EFFECT_MAX_CARDS, DOMINO_EFFECT_MAX_DELAY_MS,
   DOMINO_EFFECT_MAX_EDGES, DOMINO_EFFECT_MAX_TRACES, DOMINO_EFFECT_PULSE_MS, DOMINO_EFFECT_STEP_MS,
-  DOMINO_PERSPECTIVE_DISTANCE_RATIO, DOMINO_PERSPECTIVE_MAX_ANGLE_DEG,
+  DOMINO_PERSPECTIVE_DISTANCE_RATIO, DOMINO_PERSPECTIVE_MAX_ANGLE_DEG, DOMINO_PERSPECTIVE_MAX_OUTSET,
   type DominoMatrix, type DominoPivotEdge,
 } from '../dominoEffect';
 
@@ -219,13 +219,13 @@ describe('V2の因果的なカード傾斜', () => {
   });
 });
 
-describe('V2の未採用の透視投影データ', () => {
+describe('V2の手前へ倒れる透視投影データ', () => {
   const target = box(16, 16);
   const directions = [
-    { source: box(16, -300), edge: 'bottom', axis: 'x', sign: 1, hinge: [2, 3] },
-    { source: box(16, 300), edge: 'top', axis: 'x', sign: -1, hinge: [0, 1] },
-    { source: box(-400, 16), edge: 'right', axis: 'y', sign: -1, hinge: [1, 2] },
-    { source: box(400, 16), edge: 'left', axis: 'y', sign: 1, hinge: [0, 3] },
+    { source: box(16, -300), edge: 'top', axis: 'x', sign: 1, hinge: [0, 1] },
+    { source: box(16, 300), edge: 'bottom', axis: 'x', sign: -1, hinge: [2, 3] },
+    { source: box(-400, 16), edge: 'left', axis: 'y', sign: -1, hinge: [0, 3] },
+    { source: box(400, 16), edge: 'right', axis: 'y', sign: 1, hinge: [1, 2] },
   ] as const;
   const corners = [
     { x: 0, y: 0 }, { x: target.width, y: 0 },
@@ -235,7 +235,7 @@ describe('V2の未採用の透視投影データ', () => {
     [trace('source', [['source', 'target']])], new Map([['source', source], ['target', current]]), age,
   ).get('target')!.perspective;
 
-  it.each(directions)('$edgeの辺を支点にし、反対辺が奥へ倒れる実際の台形を作る', ({ source, edge, axis, sign, hinge }) => {
+  it.each(directions)('$edgeの辺を固定し、反対辺が手前へ広がる台形を作る', ({ source, edge, axis, sign, hinge }) => {
     const projection = perspective(source);
     expect(projection.edge).toBe(edge);
     expect(projection.axis).toBe(axis);
@@ -246,36 +246,38 @@ describe('V2の未採用の透視投影データ', () => {
     expect(projection.transformOrigin).toBe(`${projection.pivotX}px ${projection.pivotY}px`);
     for (const [index, point] of projection.corners.entries()) {
       expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
-      expect(point.x).toBeGreaterThanOrEqual(0);
-      expect(point.x).toBeLessThanOrEqual(target.width);
-      expect(point.y).toBeGreaterThanOrEqual(0);
-      expect(point.y).toBeLessThanOrEqual(target.height);
+      expect(point.x).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+      expect(point.x).toBeLessThanOrEqual(target.width + DOMINO_PERSPECTIVE_MAX_OUTSET);
+      expect(point.y).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+      expect(point.y).toBeLessThanOrEqual(target.height + DOMINO_PERSPECTIVE_MAX_OUTSET);
       if ((hinge as readonly number[]).includes(index)) {
         expect(point).toEqual({ ...corners[index], z: 0, w: 1 });
       } else {
-        expect(point.z).toBeLessThan(0);
-        expect(point.w).toBeGreaterThan(1);
+        expect(point.z).toBeGreaterThan(0);
+        expect(point.w).toBeLessThan(1);
       }
     }
     const far = projection.corners.filter((_, index) => !(hinge as readonly number[]).includes(index));
     const farLength = Math.hypot(far[1].x - far[0].x, far[1].y - far[0].y);
     const hingeLength = axis === 'x' ? target.width : target.height;
-    expect(farLength).toBeLessThan(hingeLength * 0.7);
+    expect(farLength).toBeGreaterThan(hingeLength * 1.1);
+    expect(farLength).toBeLessThan(hingeLength * 1.2);
     expect(farLength).toBeCloseTo(hingeLength / far[0].w, 10);
   });
 
-  it('全時刻・全方向の投影を元の矩形内に保ち、正のwで遠近除算する', () => {
+  it('全時刻・全方向の張出しを64px以内に保ち、正のwで遠近除算する', () => {
     for (const { source } of directions) {
       for (let age = 101; age < 800; age += 7) {
         const projection = perspective(source, age);
         expect(Math.abs(projection.angleDeg)).toBeLessThanOrEqual(DOMINO_PERSPECTIVE_MAX_ANGLE_DEG);
         for (const point of projection.corners) {
-          expect(point.x).toBeGreaterThanOrEqual(0);
-          expect(point.x).toBeLessThanOrEqual(target.width);
-          expect(point.y).toBeGreaterThanOrEqual(0);
-          expect(point.y).toBeLessThanOrEqual(target.height);
-          expect(point.z).toBeLessThanOrEqual(0);
-          expect(point.w).toBeGreaterThanOrEqual(1);
+          expect(point.x).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.x).toBeLessThanOrEqual(target.width + DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeLessThanOrEqual(target.height + DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.z).toBeGreaterThanOrEqual(0);
+          expect(point.w).toBeGreaterThan(0.8);
+          expect(point.w).toBeLessThanOrEqual(1);
         }
       }
     }
@@ -316,7 +318,7 @@ describe('V2の未採用の透視投影データ', () => {
 
   it('有限だが極端な寸法でも透視距離・CSS・投影点に無限大を作らない', () => {
     for (const { source, axis } of directions) {
-      for (const dimension of [Number.MAX_VALUE, Number.MIN_VALUE]) {
+      for (const dimension of [Number.MAX_VALUE, 1e100, 1e14, Number.MIN_VALUE]) {
         const current = {
           x: 0, y: 0,
           width: axis === 'y' ? dimension : target.width,
@@ -333,11 +335,12 @@ describe('V2の未採用の透視投影データ', () => {
         expect(projection.transformOrigin).not.toMatch(/Infinity|NaN/);
         for (const point of projection.corners) {
           expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
-          expect(point.w).toBeGreaterThanOrEqual(1);
-          expect(point.x).toBeGreaterThanOrEqual(0);
-          expect(point.x).toBeLessThanOrEqual(current.width);
-          expect(point.y).toBeGreaterThanOrEqual(0);
-          expect(point.y).toBeLessThanOrEqual(current.height);
+          expect(point.w).toBeGreaterThan(0.8);
+          expect(point.w).toBeLessThanOrEqual(1);
+          expect(point.x).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.x).toBeLessThanOrEqual(current.width + DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeLessThanOrEqual(current.height + DOMINO_PERSPECTIVE_MAX_OUTSET);
         }
       }
     }
@@ -345,14 +348,14 @@ describe('V2の未採用の透視投影データ', () => {
 
   it('斜めの押出は支配的な方向の辺へ倒し、移動中の座標には引きずられない', () => {
     const cases: readonly [SceneBox, DominoPivotEdge][] = [
-      [box(-400, -100), 'right'], [box(400, 100), 'left'],
-      [box(-40, -400), 'bottom'], [box(40, 400), 'top'],
+      [box(-400, -100), 'left'], [box(400, 100), 'right'],
+      [box(-40, -400), 'top'], [box(40, 400), 'bottom'],
     ];
     for (const [source, edge] of cases) expect(perspective(source).edge).toBe(edge);
     const current = new Map([['source', box(-400, 16)], ['target', box(-900, 16)]]);
     const directionBoxes = new Map([['source', box(-400, 16)], ['target', target]]);
     const result = createDominoTransforms([trace('source', [['source', 'target']])], current, 296, { directionBoxes });
-    expect(result.get('target')!.perspective.edge).toBe('right');
+    expect(result.get('target')!.perspective.edge).toBe('left');
   });
 
   it('パルスの端では台形と影が連続的に消え、同じ終了時刻でデータもなくなる', () => {
@@ -368,6 +371,32 @@ describe('V2の未採用の透視投影データ', () => {
       }
     }
     expect(createDominoTransforms(chain, boxes, DOMINO_EFFECT_DURATION_MS).size).toBe(0);
+  });
+
+  it('巨大な本文の全pulseでも進行方向を含む全辺の張出しを64px以内に抑える', () => {
+    for (const width of [1, 320, 1000, 100000, 1e12]) {
+      for (const height of [1, 180, 4000, 100000, 1e12]) {
+        for (const { source } of directions) {
+          const current = { x: 0, y: 0, width, height };
+          for (let age = 101; age < 800; age += 11) {
+            const projection = createDominoTransforms([trace('source', [['source', 'target']])],
+              new Map([['source', source], ['target', current]]), age,
+              { directionBoxes: new Map([['source', source], ['target', target]]) }).get('target')!.perspective;
+            for (const value of Object.values(projection.outsets)) {
+              expect(Number.isFinite(value)).toBe(true);
+              expect(value).toBeGreaterThanOrEqual(0);
+              expect(value).toBeLessThanOrEqual(DOMINO_PERSPECTIVE_MAX_OUTSET + 0.001);
+            }
+            for (const point of projection.corners) {
+              expect(point.x).toBeGreaterThanOrEqual(-projection.outsets.left);
+              expect(point.x).toBeLessThanOrEqual(width + projection.outsets.right);
+              expect(point.y).toBeGreaterThanOrEqual(-projection.outsets.top);
+              expect(point.y).toBeLessThanOrEqual(height + projection.outsets.bottom);
+            }
+          }
+        }
+      }
+    }
   });
 
   it('面と接地影は別レイヤー用で、エッジの影は全方向でinsetだけになる', () => {

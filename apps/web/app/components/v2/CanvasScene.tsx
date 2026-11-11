@@ -9,12 +9,14 @@ import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotion
 import type { Card } from "../../lib/types";
 import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
-import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, type DominoTransform } from "./dominoEffect";
+import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, DOMINO_PERSPECTIVE_MAX_OUTSET, type DominoTransform } from "./dominoEffect";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
 const EMPTY = new Set<string>();
+// 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
+const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
 
 interface CardRootProps { item: CanvasSceneItem; register: (id: string, node: HTMLDivElement | null) => void }
 const subscribeHydration = () => () => {};
@@ -32,13 +34,13 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   const [node] = useState(() => document.createElement('div'));
   useLayoutEffect(() => {
     node.setAttribute('data-scene-card', item.id);
-    node.setAttribute('style', 'position:absolute;left:0;top:0;transform-origin:0 0');
+    node.setAttribute('style', 'position:absolute;left:0;top:0;transform-origin:0 0;box-sizing:content-box;pointer-events:none');
     register(item.id, node);
     return () => register(item.id, null);
   }, [item.id, node, register]);
   return createPortal(<>
     <div data-scene-footprint aria-hidden="true" style={{ position: 'absolute', inset: 0, borderRadius: 12, pointerEvents: 'none', opacity: 0 }} />
-    <div data-scene-face style={{ position: 'relative', transformOrigin: '50% 100%' }}>
+    <div data-scene-face style={{ position: 'relative', transformOrigin: '50% 100%', pointerEvents: 'auto' }}>
       {item.content}
       <div data-scene-shade aria-hidden="true" style={{ position: 'absolute', inset: 0, borderRadius: 12, pointerEvents: 'none', opacity: 0 }} />
     </div>
@@ -116,11 +118,18 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       return [...current.current.items].reverse().sort((a, b) => Number(held.has(a.id)) - Number(held.has(b.id)));
     };
     // drawable自身は変形せず、その内側だけを遠近変形する。装飾は矩形内に収める。
-    const applyPose = (node: HTMLDivElement, tip?: DominoTransform) => {
+    const applyPose = (node: HTMLDivElement, box: SceneBox, tip?: DominoTransform) => {
       const face = node.querySelector<HTMLElement>(':scope > [data-scene-face]');
       const footprint = node.querySelector<HTMLElement>(':scope > [data-scene-footprint]');
       const shade = face?.querySelector<HTMLElement>(':scope > [data-scene-shade]');
       if (!face || !footprint || !shade) return;
+      const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
+      node.style.padding = `${padding}px`;
+      node.dataset.sceneCapturePadding = String(padding);
+      face.style.width = `${box.width}px`;
+      face.style.height = pressed?.id === node.dataset.sceneCard ? `${box.height}px` : '';
+      face.style.overflow = pressed?.id === node.dataset.sceneCard ? 'clip' : '';
+      footprint.style.inset = `${padding}px`;
       face.style.transform = tip?.perspective.cssTransform ?? '';
       face.style.transformOrigin = tip?.perspective.transformOrigin ?? '50% 100%';
       footprint.style.background = tip?.perspective.shade.footprintGradient ?? '';
@@ -146,9 +155,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         node.dataset.sceneDelay = String(Math.round(card?.delayMs ?? 0));
         const tip = dominoTransforms.get(id);
         node.dataset.sceneTip = String(tip?.amount ?? 0);
-        applyPose(node, tip);
+        applyPose(node, box, tip);
         if (mode === 'dom') {
-          node.style.transform = `translate(${camera.x + box.x}px,${camera.y + box.y}px) scale(1)`;
+          const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
+          node.style.transform = `translate(${camera.x + box.x - padding}px,${camera.y + box.y - padding}px) scale(1)`;
           displayed.set(id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
         }
       }
@@ -201,11 +211,15 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
               parent.appendChild(node);
             }
             const measuredWidth = held.has(id) ? boxes.get(id)?.width : undefined;
-            node.style.width = `${measuredWidth ?? Math.max(160, Math.min(360, viewportWidth - 32))}px`;
-            heights.set(id, node.offsetHeight || 120);
-            if (!observed.has(node)) { observer.observe(node); observed.add(node); }
+            const face = node.querySelector<HTMLElement>(':scope > [data-scene-face]');
+            const width = measuredWidth ?? Math.max(160, Math.min(360, viewportWidth - 32));
+            node.style.width = `${width}px`;
+            if (face) face.style.width = `${width}px`;
+            // 捕捉用paddingは配置の高さに含めず、変形前の面だけを測定・監視する。
+            heights.set(id, face?.offsetHeight || 120);
+            if (face && !observed.has(face)) { observer.observe(face); observed.add(face); }
           }
-          for (const node of observed) if (!Array.from(nodes.current.values()).includes(node as HTMLDivElement)) { observer.unobserve(node); observed.delete(node); }
+          for (const node of observed) if (!Array.from(nodes.current.values()).some(root => root.contains(node))) { observer.unobserve(node); observed.delete(node); }
           const plan = updateSceneLayout(layout, current.current.items, heights, viewportWidth, held, boxes);
           layout = plan;
           targets = plan.boxes;
@@ -298,7 +312,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
           if (!node || !box) continue;
           const tip = dominoTransforms.get(item.id);
           // 内側CSSの遠近と影はsnapshotに含まれるため、CTMで二重変形しない。
-          const transform = ctx.drawElementImage(node, box.x, box.y, box.width, box.height);
+          const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
+          const transform = ctx.drawElementImage(node, box.x - padding, box.y - padding, box.width + padding * 2, box.height + padding * 2);
           displayed.set(item.id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
           if (mode === 'legacy' && transform) node.style.transform = transform.toString();
           painted = true;
@@ -321,7 +336,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       let cursor = target instanceof HTMLElement ? target : null;
       const controlHeight = cursor?.offsetHeight ?? box.height;
       while (cursor && cursor !== node && node?.contains(cursor)) { offsetY += cursor.offsetTop; cursor = cursor.offsetParent as HTMLElement | null; }
-      const top = box.y + offsetY;
+      // offsetTopには捕捉paddingが入るが、boxは元のカード面の座標。
+      const padding = Number(node?.dataset.sceneCapturePadding) || 0;
+      const top = box.y + offsetY - padding;
       if (top < host.scrollTop || top + controlHeight > host.scrollTop + r.height) {
         host.scrollTop = Math.max(0, top < host.scrollTop || controlHeight >= r.height ? top - 16 : top + controlHeight - r.height + 16);
         camera = { x: 0, y: -host.scrollTop, zoom: 1 };
