@@ -1,9 +1,9 @@
-export type SceneEffectChoice = 'off' | 'sparkle' | 'domino';
+export type SceneEffectChoice = 'off' | 'sparkle' | 'domino' | 'ripple';
 export const EFFECT_STORAGE_KEY = 'nlc-v2-effect';
 const EVENT = 'nlc-v2-effect-change';
 let memoryChoice: SceneEffectChoice = 'sparkle';
 let memoryOnly = false;
-const valid = (value: unknown): value is SceneEffectChoice => value === 'off' || value === 'sparkle' || value === 'domino';
+const valid = (value: unknown): value is SceneEffectChoice => value === 'off' || value === 'sparkle' || value === 'domino' || value === 'ripple';
 
 /** 保存不可の環境でも同じタブ内では選択を維持する。SSRは固定値でhydrationを揃える。 */
 export function getEffectPreference(): SceneEffectChoice {

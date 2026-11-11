@@ -11,6 +11,12 @@ describe('V2エフェクト選択', () => {
     expect(serverEffectPreference()).toBe('sparkle');
     expect(getEffectPreference()).toBe('domino');
   });
+  it('波紋を保存しSSRの既定値は変えない', () => {
+    setEffectPreference('ripple');
+    expect(localStorage.getItem(EFFECT_STORAGE_KEY)).toBe('ripple');
+    expect(getEffectPreference()).toBe('ripple');
+    expect(serverEffectPreference()).toBe('sparkle');
+  });
   it('同タブの変更と別タブのstorage変更を購読しcleanupする', () => {
     const notify = vi.fn();
     const cleanup = subscribeEffectPreference(notify);

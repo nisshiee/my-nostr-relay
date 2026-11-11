@@ -77,6 +77,17 @@ describe('feed WebGLの同一射影・有界texture・前面粒子',()=>{
     expect(vi.mocked(gl.uniform1i).mock.calls.filter(c=>c[0]==='footprint').map(c=>c[1])).toEqual([1,0]);
     expect(gl.uniform1f).toHaveBeenCalledWith('amount',1);renderer.render(frame([a]));expect(gl.getParameter).toHaveBeenCalledTimes(1);
   });
+  it('波紋はuniformだけ更新しgeometry・texture再取得を変えず次cardで解除する',()=>{
+    const {renderer,gl,surface}=setup(),a=card('a'),b=card('b',200);
+    renderer.render(frame([a,b]));vi.mocked(gl.uniform1f).mockClear();vi.mocked(gl.texElementSubImage2D).mockClear();
+    a.ripple={sourceId:'a',depth:0,delayMs:0,progress:.5,amount:1,directionX:1,directionY:0};
+    const result=renderer.render(frame([a,b]));expect(result.uploads).toBe(0);expect(gl.texElementSubImage2D).not.toHaveBeenCalled();
+    expect(vi.mocked(gl.uniform1f).mock.calls.filter(c=>c[0]==='rippleAmount').map(c=>c[1])).toEqual([1,0]);
+    expect(gl.uniform2f).toHaveBeenCalledWith('rippleDirection',1,0);
+    expect(surface.updateElementGeometry).toHaveBeenCalledWith(a.node,{canvasTransform:expect.objectContaining({values:sceneCardMatrix(a.box,camera)})});
+    const fragment=vi.mocked(gl.shaderSource).mock.calls[1][1];
+    expect(fragment).toContain('smoothstep(0.,.08,uv.x)');expect(fragment).toContain('wave*1.5/max(cardSize');
+  });
   it('context lossでも既存geometryを消して停止',()=>{
     const {renderer,gl,surface}=setup(),a=card('a');renderer.render(frame([a]));vi.mocked(gl.isContextLost).mockReturnValue(true);
     expect(()=>renderer.render(frame([a]))).toThrow('unavailable');expect(surface.clearElementGeometry).toHaveBeenCalledWith(a.node);renderer.dispose();

@@ -487,7 +487,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
     }
   });
-  it.each(['sparkle','domino'])("DOMでは保存済み%sも効果なしで入力とクリックを維持する", choice => {
+  it.each(['sparkle','domino','ripple'])("DOMでは保存済み%sも効果なしで入力とクリックを維持する", choice => {
     localStorage.setItem('nlc-v2-effect',choice);
     const original={id:'a',content:<InteractiveCard/>};
     const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
@@ -831,6 +831,47 @@ describe('CanvasScene WebGL feed接続', () => {
   const card = (id:string) => document.querySelector<HTMLElement>(`[data-scene-card="${id}"]`)!;
   const original = {id:'a',content:<InteractiveCard/>};
   const incoming = {id:'new',content:<span>new</span>};
+
+  it('波紋はGLでだけ屈折しhold・focus・非focus押下を抑制する', () => {
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
+    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
+    const latest=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!;
+    expect(latest().ripple!.amount).toBeGreaterThan(0);expect(latest().tip).toBeUndefined();
+    expect(card('a').querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
+    expect(card('a').style.padding).toBe('0px');
+    pointer(card('a'),'pointerdown');flushFrame(370);expect(latest().ripple).toBeUndefined();
+    pointer(window,'pointerup');flushFrame(380);expect(latest().ripple).toBeDefined();
+    pointer(card('a'),'pointerdown');flushFrame(385);expect(latest().ripple).toBeUndefined();
+    fireEvent(window,new Event('blur'));flushFrame(390);expect(latest().ripple).toBeDefined();
+    const input=screen.getByLabelText('下書き');fireEvent.focus(input);flushFrame(410);expect(latest().ripple).toBeUndefined();
+    fireEvent.blur(input);flushFrame(430);expect(latest().ripple).toBeDefined();
+    rerender(<CanvasScene items={[incoming,original]} heldIds={new Set(['a'])}/>);flushFrame(450);expect(latest().ripple).toBeUndefined();
+    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(470);expect(latest().ripple).toBeDefined();
+    fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});flushFrame(490);
+    expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
+  });
+  it('波紋はCSS比較とDOMで停止しGL復帰で旧batchを再生しない', () => {
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
+    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(30);
+    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
+    expect(host().dataset.scenePushEffect).toBe('idle');expect(host().dataset.sceneRippleCards).toBe('0');
+    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'webgl'}});flushFrame(400);
+    expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
+    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(450);
+    expect(host().dataset.scenePushEffect).toBe('idle');
+  });
+  it('波紋reduced-motionは即停止し解除後も旧batchを再生しない', () => {
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
+    let changed:(()=>void)|undefined;const media={matches:false,addEventListener(_t:string,fn:()=>void){changed=fn;},removeEventListener(){}};
+    vi.stubGlobal('matchMedia',()=>media);
+    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
+    expect(seen.at(-1)!.cards.some(c=>c.ripple)).toBe(true);
+    act(()=>{media.matches=true;changed!();});flushFrame(400);expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
+    act(()=>{media.matches=false;changed!();});flushFrame(450);expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
+  });
 
   it('default GLはCSSを平面に保ちtipとDPR/scrollをbackendへ渡す', () => {
     const {seen}=gpuBackend(); vi.stubGlobal('devicePixelRatio',2);
