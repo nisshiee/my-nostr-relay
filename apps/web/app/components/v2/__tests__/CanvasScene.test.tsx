@@ -158,13 +158,13 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       expect(painted.pose).toContain('perspective(');
       expect(painted.padding).toBe('66px');
       expect(painted.width).toBe(492); expect(painted.height).toBe(252);
-      flushFrame(350);
+      flushFrame(450);
       expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).not.toBe(painted.pose);
       const button=screen.getByRole('button',{name:'クリック 0'});
-      pointer(button,'pointerdown');fireEvent.focus(button);flushFrame(450);
+      pointer(button,'pointerdown');fireEvent.focus(button);flushFrame(550);
       fireEvent(surface,new Event('paint'));
       expect(draws.filter(draw=>draw.id==='a').at(-1)).toEqual(painted);
-      pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(500);
+      pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(600);
       fireEvent(surface,new Event('paint'));
       expect(draws.filter(draw=>draw.id==='a').at(-1)!.pose).toBe('');
       expect(draws.filter(draw=>draw.id==='a').at(-1)!.padding).toBe('0px');

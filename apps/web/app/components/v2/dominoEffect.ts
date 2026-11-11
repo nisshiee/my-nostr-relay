@@ -64,7 +64,10 @@ export interface DominoEffectOptions {
 
 export const DOMINO_EFFECT_STEP_MS = 100;
 export const DOMINO_EFFECT_MAX_DELAY_MS = 600;
-export const DOMINO_EFFECT_PULSE_MS = 700;
+export const DOMINO_EFFECT_RISE_MS = 200;
+export const DOMINO_EFFECT_HOLD_MS = 80;
+export const DOMINO_EFFECT_FALL_MS = 420;
+export const DOMINO_EFFECT_PULSE_MS = DOMINO_EFFECT_RISE_MS + DOMINO_EFFECT_HOLD_MS + DOMINO_EFFECT_FALL_MS;
 export const DOMINO_EFFECT_DURATION_MS = DOMINO_EFFECT_MAX_DELAY_MS + DOMINO_EFFECT_PULSE_MS;
 export const DOMINO_EFFECT_MAX_TRACES = 4;
 export const DOMINO_EFFECT_MAX_EDGES = 96;
@@ -103,12 +106,15 @@ function smoothstep(value: number): number {
   return value * value * (3 - 2 * value);
 }
 
-/** 速く倒れ、ゆっくり起き上がる一回限りのパルス。裏返りや負の反動を作らない。 */
-export function dominoEffectAmount(ageMs: number): number {
-  if (!Number.isFinite(ageMs) || ageMs <= 0 || ageMs >= DOMINO_EFFECT_PULSE_MS) return 0;
-  const progress = ageMs / DOMINO_EFFECT_PULSE_MS;
-  const impact = 0.28;
-  return progress <= impact ? smoothstep(progress / impact) : 1 - smoothstep((progress - impact) / (1 - impact));
+/** 全員で起立して姿勢を保ち、倒伏開始だけを因果深さに応じて遅らせる。 */
+export function dominoEffectAmount(ageMs: number, delayMs = 0): number {
+  if (!Number.isFinite(ageMs) || !Number.isFinite(delayMs) || ageMs <= 0) return 0;
+  const delay = Math.max(0, Math.min(DOMINO_EFFECT_MAX_DELAY_MS, delayMs));
+  if (ageMs < DOMINO_EFFECT_RISE_MS) return smoothstep(ageMs / DOMINO_EFFECT_RISE_MS);
+  const fallStart = DOMINO_EFFECT_RISE_MS + DOMINO_EFFECT_HOLD_MS + delay;
+  if (ageMs <= fallStart) return 1;
+  if (ageMs >= fallStart + DOMINO_EFFECT_FALL_MS) return 0;
+  return 1 - smoothstep((ageMs - fallStart) / DOMINO_EFFECT_FALL_MS);
 }
 
 function matrixFor(box: SceneBox, direction: Direction, amount: number): DominoMatrix | null {
@@ -254,7 +260,7 @@ export function createDominoTransforms(
     const box = boxes.get(id);
     if (!validBox(box)) continue;
     const delayMs = Math.min(DOMINO_EFFECT_MAX_DELAY_MS, step.depth * DOMINO_EFFECT_STEP_MS);
-    const amount = dominoEffectAmount(ageMs - delayMs);
+    const amount = dominoEffectAmount(ageMs, delayMs);
     if (amount === 0) continue;
     const matrix = matrixFor(box, step.direction, amount);
     if (matrix) transforms.set(id, {

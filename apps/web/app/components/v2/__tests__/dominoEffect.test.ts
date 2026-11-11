@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SceneBox, SceneInsertionTrace } from '../scene';
 import {
   createDominoTransforms, dominoEffectAmount, dominoIdentity,
+  DOMINO_EFFECT_RISE_MS, DOMINO_EFFECT_HOLD_MS, DOMINO_EFFECT_FALL_MS,
   DOMINO_EFFECT_DURATION_MS, DOMINO_EFFECT_MAX_CARDS, DOMINO_EFFECT_MAX_DELAY_MS,
   DOMINO_EFFECT_MAX_EDGES, DOMINO_EFFECT_MAX_TRACES, DOMINO_EFFECT_PULSE_MS, DOMINO_EFFECT_STEP_MS,
   DOMINO_PERSPECTIVE_DISTANCE_RATIO, DOMINO_PERSPECTIVE_MAX_ANGLE_DEG, DOMINO_PERSPECTIVE_MAX_OUTSET,
@@ -24,20 +25,24 @@ const point = (matrix: DominoMatrix, x: number, y: number) => ({
 const visual = (id: string, age: number) => createDominoTransforms(chain, boxes, age).get(id) ?? dominoIdentity(boxes.get(id)!);
 
 describe('V2の因果的なカード傾斜', () => {
-  it('辺の配列順ではなく根からの深さに100msずつ遅延する', () => {
-    const first = createDominoTransforms(chain, boxes, 50);
-    expect([...first.keys()]).toEqual(['root']);
-    expect(first.get('root')!.depth).toBe(0);
-    const second = createDominoTransforms(chain, boxes, 150);
-    expect(second.get('a')!.depth).toBe(1);
-    expect(second.get('a')!.delayMs).toBe(DOMINO_EFFECT_STEP_MS);
-    expect(second.has('b')).toBe(false);
-    const third = createDominoTransforms(chain, boxes, 250);
-    expect(third.get('b')!.depth).toBe(2);
-    expect(third.get('b')!.delayMs).toBe(200);
-    expect(third.has('unrelated')).toBe(false);
-    expect(visual('root', 50).d).toBeCloseTo(visual('a', 150).d, 12);
-    expect(visual('a', 150).d).toBeCloseTo(visual('b', 250).d, 12);
+  it('全員が同時に起立し、倒伏だけ根からの深さに100msずつ遅延する', () => {
+    for (const age of [1, 50, 100, 199, 200, 250, 280]) {
+      const result = createDominoTransforms(chain, boxes, age);
+      expect([...result.keys()]).toEqual(['root', 'a', 'b']);
+      expect(new Set([...result.values()].map(value => value.amount)).size).toBe(1);
+      expect(result.has('unrelated')).toBe(false);
+    }
+    const falling = createDominoTransforms(chain, boxes, 350);
+    expect(falling.get('root')!.amount).toBeLessThan(1);
+    expect(falling.get('a')!.amount).toBe(1);
+    expect(falling.get('b')!.amount).toBe(1);
+    expect(falling.get('a')!.delayMs).toBe(DOMINO_EFFECT_STEP_MS);
+    expect(falling.get('b')!.delayMs).toBe(200);
+    const later = createDominoTransforms(chain, boxes, 450);
+    expect(later.get('root')!.amount).toBeLessThan(later.get('a')!.amount);
+    expect(later.get('a')!.amount).toBeLessThan(later.get('b')!.amount);
+    expect(visual('root', 350).d).toBeCloseTo(visual('a', 450).d, 12);
+    expect(visual('a', 450).d).toBeCloseTo(visual('b', 550).d, 12);
   });
 
   it('同じ親の分岐は同時に始まり、循環・重複・切れた辺を連鎖に足さない', () => {
@@ -101,18 +106,50 @@ describe('V2の因果的なカード傾斜', () => {
     expect(result.get('b')!.delayMs).toBe(200);
   });
 
+  it('hold解除は共通時計の現在姿勢へ参加し、起立を最初から再生しない', () => {
+    const held = createDominoTransforms(chain, boxes, 450, { heldIds: new Set(['a']) });
+    expect(held.has('a')).toBe(false);
+    const released = createDominoTransforms(chain, boxes, 450);
+    expect(released.get('a')!.amount).toBe(dominoEffectAmount(450, 100));
+    expect(released.get('a')!.amount).toBeLessThan(1);
+    expect(released.get('b')!.amount).toBe(1);
+  });
+
+  it('寸法や位置を変えても起立と倒伏の時計は変えない', () => {
+    const changed = new Map([...boxes].map(([id, value]) => [id, { ...value, x: value.x + 20, width: 240, height: value.height + 120 }]));
+    for (const age of [100, 250, 450, 600]) {
+      const before = createDominoTransforms(chain, boxes, age);
+      const after = createDominoTransforms(chain, changed, age, { directionBoxes: boxes });
+      for (const [id, value] of before) {
+        expect(after.get(id)!.amount).toBe(value.amount);
+        expect(after.get(id)!.delayMs).toBe(value.delayMs);
+      }
+    }
+  });
+
+  it('最大深さの最後まで保持してから倒し、1300ms以内で全員終了する', () => {
+    expect(dominoEffectAmount(200, 600)).toBe(1);
+    expect(dominoEffectAmount(879, 600)).toBe(1);
+    expect(dominoEffectAmount(1090, 600)).toBeCloseTo(0.5);
+    expect(dominoEffectAmount(1300, 600)).toBe(0);
+    expect(DOMINO_EFFECT_DURATION_MS).toBe(1300);
+    for (const delay of [NaN, Infinity, -Infinity]) expect(dominoEffectAmount(100, delay)).toBe(0);
+  });
+
   it('reduced-motionと開始前・終了後・無効な時刻は全て通常のBoxになる', () => {
     expect(createDominoTransforms(chain, boxes, 250, { reducedMotion: true }).size).toBe(0);
     for (const age of [-100, 0, DOMINO_EFFECT_DURATION_MS, 1e9, NaN, Infinity, -Infinity]) {
       expect(createDominoTransforms(chain, boxes, age).size).toBe(0);
     }
-    expect(visual('a', 100)).toEqual(dominoIdentity(boxes.get('a')!));
+    expect(visual('a', 0)).toEqual(dominoIdentity(boxes.get('a')!));
     expect(visual('a', 100 + DOMINO_EFFECT_PULSE_MS)).toEqual(dominoIdentity(boxes.get('a')!));
     expect(dominoIdentity(boxes.get('a')!)).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 16, f: 208 });
   });
 
-  it('一回だけ滑らかに倒れて起き、有限な正の行列式で文字を裏返さない', () => {
-    expect(dominoEffectAmount(196)).toBe(1);
+  it('一回だけ共通起立して順次倒れ、有限な正の行列式で文字を裏返さない', () => {
+    expect(dominoEffectAmount(DOMINO_EFFECT_RISE_MS)).toBe(1);
+    expect(dominoEffectAmount(DOMINO_EFFECT_RISE_MS + DOMINO_EFFECT_HOLD_MS)).toBe(1);
+    expect(DOMINO_EFFECT_FALL_MS).toBe(420);
     expect(dominoEffectAmount(50)).toBeLessThan(dominoEffectAmount(150));
     expect(dominoEffectAmount(250)).toBeGreaterThan(dominoEffectAmount(550));
     expect(dominoEffectAmount(0.001)).toBeLessThan(1e-8);
@@ -144,11 +181,13 @@ describe('V2の因果的なカード傾斜', () => {
     expect(overlapping.get('b')!.sourceId).toBe('right');
   });
 
-  it('新しい根の待機時間を古い根の活動中パルスで上書きしない', () => {
+  it('新しい根の倒伏待機を古い根の深さで上書きしない', () => {
     const result = createDominoTransforms([
       trace('root', [['root', 'b']]), trace('right', [['right', 'a'], ['a', 'b']]),
     ], boxes, 150);
-    expect(result.has('b')).toBe(false);
+    expect(result.get('b')!.sourceId).toBe('right');
+    expect(result.get('b')!.delayMs).toBe(200);
+    expect(result.get('b')!.amount).toBe(result.get('a')!.amount);
     expect(result.get('a')!.sourceId).toBe('right');
   });
 
@@ -161,6 +200,10 @@ describe('V2の因果的なカード傾斜', () => {
     expect(result.size).toBeLessThanOrEqual(DOMINO_EFFECT_MAX_CARDS);
     expect(Math.max(...[...result.values()].map(value => value.delayMs))).toBe(DOMINO_EFFECT_MAX_DELAY_MS);
     expect(result.get('card96')!.depth).toBe(96);
+    const tail = createDominoTransforms(traces, many, 1299);
+    expect(tail.get('card6')!.amount).toBeGreaterThan(0);
+    expect(tail.get('card96')!.amount).toBeGreaterThan(0);
+    expect(tail.has('card5')).toBe(false);
     expect(result.has('card97')).toBe(false);
     expect(DOMINO_EFFECT_DURATION_MS).toBeLessThanOrEqual(1600);
     expect(createDominoTransforms(traces, many, DOMINO_EFFECT_DURATION_MS).size).toBe(0);
@@ -359,7 +402,7 @@ describe('V2の手前へ倒れる透視投影データ', () => {
   });
 
   it('パルスの端では台形と影が連続的に消え、同じ終了時刻でデータもなくなる', () => {
-    for (const age of [100.001, 799.999]) {
+    for (const age of [0.001, 799.999]) {
       const projection = perspective(directions[0].source, age);
       expect(Math.abs(projection.angleDeg)).toBeLessThan(1e-6);
       expect(projection.shade.faceOpacity).toBeLessThan(1e-8);
