@@ -13,6 +13,21 @@ export interface WebGLSceneFrame {
 export interface WebGLSceneStats { draws: number; uploads: number; textureBytes: number; textureCount: number; geometryUpdates: number; drawnIds: string[] }
 export const WEBGL_TEXTURE_BUDGET = 128 * 1024 * 1024;
 export const WEBGL_SINGLE_TEXTURE_LIMIT = 32 * 1024 * 1024;
+/** 外部のGLログや任意例外文をDOM診断へ露出させない固定分類。 */
+export function classifyWebGLSceneError(error: unknown): string {
+  if (!(error instanceof Error)) return 'unknown';
+  const codes: Record<string, string> = {
+    'HTML texture API unavailable': 'api-unavailable',
+    'Program unavailable': 'program-allocation', 'Shader unavailable': 'shader-allocation',
+    'Vertex shader failed': 'vertex-compile', 'Fragment shader failed': 'fragment-compile',
+    'Program failed': 'program-link', 'Buffer unavailable': 'buffer-allocation',
+    'Renderer unavailable': 'renderer-unavailable', 'Invalid frame': 'invalid-frame',
+    'Texture size limit': 'texture-size', 'Texture budget limit': 'texture-budget',
+    'Texture unavailable': 'texture-allocation', 'Texture upload failed': 'texture-upload',
+    'Scene draw failed': 'scene-draw',
+  };
+  return Object.hasOwn(codes, error.message) ? codes[error.message] : 'unknown';
+}
 const identity = () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const translate = (x: number, y: number) => { const m = identity(); m[12] = x; m[13] = y; return m; };
 /** CSS pxの同じ射影をGPUとDOM hit geometryへ渡す。DPRはここへ混ぜない。 */
@@ -75,23 +90,25 @@ export function createWebGLSceneRenderer(gl: HtmlTextureGL, surface: GeometryCan
       const p = gl.createProgram(); if (!p) throw new Error('Program unavailable'); programs.push(p);
       for (const [kind, source] of [[gl.VERTEX_SHADER, vertex], [gl.FRAGMENT_SHADER, fragment]] as const) {
         const s = gl.createShader(kind); if (!s) throw new Error('Shader unavailable'); shaders.push(s); gl.shaderSource(s, source); gl.compileShader(s);
-        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error('Shader failed'); gl.attachShader(p, s);
+        if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(kind === gl.VERTEX_SHADER ? 'Vertex shader failed' : 'Fragment shader failed'); gl.attachShader(p, s);
       }
       gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('Program failed'); return p;
     };
     const cardProgram = program(`#version 300 es
+      precision highp float; precision highp int;
       in vec2 position; uniform mat4 model; uniform vec2 viewSize; uniform vec2 cardSize; out vec2 uv;
       void main(){uv=position;vec4 p=model*vec4(position*cardSize,0.,1.);gl_Position=vec4(2.*p.x/viewSize.x-p.w,p.w-2.*p.y/viewSize.y,0.,p.w);}`,
     `#version 300 es
-      precision mediump float;in vec2 uv;uniform sampler2D image;uniform float amount;uniform int edge;uniform bool footprint;uniform vec2 cardSize;out vec4 color;
+      precision highp float; precision highp int;in vec2 uv;uniform sampler2D image;uniform float amount;uniform int edge;uniform bool footprint;uniform vec2 cardSize;out vec4 color;
       void main(){float t=edge==0?1.-uv.y:edge==1?uv.x:edge==2?uv.y:1.-uv.x;
       if(footprint){float r=min(12.,min(cardSize.x,cardSize.y)*.5);vec2 q=abs(uv*cardSize-cardSize*.5)-(cardSize*.5-vec2(r));float d=length(max(q,0.))+min(max(q.x,q.y),0.)-r;float a=mix(.08,.7,t)*amount*.22*(1.-smoothstep(-1.,1.,d));color=vec4(vec3(15.,23.,42.)/255.*a,a);}
       else{vec4 c=texture(image,uv);float a=mix(.48,.06,t)*amount*.3;color=vec4(c.rgb*(1.-a)+vec3(15.,23.,42.)/255.*a*c.a,c.a);}}`);
     const particleProgram = program(`#version 300 es
+      precision highp float; precision highp int;
       in vec2 position;in vec4 tint;uniform vec2 viewSize;out vec4 color;
       void main(){gl_Position=vec4(2.*position.x/viewSize.x-1.,1.-2.*position.y/viewSize.y,0.,1.);color=tint;}`,
     `#version 300 es
-      precision mediump float;in vec4 color;out vec4 result;void main(){result=color;}`);
+      precision highp float; precision highp int;in vec4 color;out vec4 result;void main(){result=color;}`);
     const quad = gl.createBuffer(); if (!quad) throw new Error('Buffer unavailable'); buffers.push(quad);
     const particleBuffer = gl.createBuffer(); if (!particleBuffer) throw new Error('Buffer unavailable'); buffers.push(particleBuffer);
     gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);

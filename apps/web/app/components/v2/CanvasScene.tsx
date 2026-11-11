@@ -10,7 +10,7 @@ import type { Card } from "../../lib/types";
 import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
 import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, DOMINO_PERSPECTIVE_MAX_OUTSET, type DominoTransform } from "./dominoEffect";
-import { createWebGLSceneRenderer } from "./webglSceneRenderer";
+import { createWebGLSceneRenderer, classifyWebGLSceneError } from "./webglSceneRenderer";
 import { summarizeFrames, type GeometryCanvas, type HtmlTextureGL } from "./webglDomino";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
@@ -20,6 +20,7 @@ const EMPTY = new Set<string>();
 // 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
 const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
 
+type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'legacy-effect';
 interface CardRootProps { item: CanvasSceneItem; register: (id: string, node: HTMLDivElement | null) => void }
 const subscribeHydration = () => () => {};
 const clientSnapshot = () => true;
@@ -90,13 +91,17 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     let ctx: DrawableContext | null = null;
     let gpu: ReturnType<typeof createWebGLSceneRenderer> | null = null;
     let supported: CanvasMode = 'dom';
+    let fallbackStage: FallbackStage = forcedDOM ? 'manual' : 'init';
+    let fallbackReason = forcedDOM ? 'requested' : 'api-unavailable';
     if (!forcedDOM) try {
       if (renderer === 'webgl') {
         const gl = gpuSurface.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true }) as HtmlTextureGL | null;
         if (gl && gpuSurface.requestPaint && 'content' in gpuSurface) { gpu = createWebGLSceneRenderer(gl, gpuSurface); supported = 'modern'; }
       } else { ctx = cssSurface.getContext('2d') as DrawableContext | null; supported = detectCanvasMode(cssSurface, ctx); }
-    } catch { supported = 'dom'; }
+    } catch (error) { supported = 'dom'; fallbackReason = classifyWebGLSceneError(error); }
     let mode: CanvasMode = forcedDOM || supported === 'legacy' && chosenEffect.current === 'domino' ? 'dom' : supported;
+    if (mode !== 'dom') { fallbackStage = 'none'; fallbackReason = 'none'; }
+    else if (!forcedDOM && supported === 'legacy') { fallbackStage = 'legacy-effect'; fallbackReason = 'unsupported'; }
     let boxes = savedBoxes.current;
     let targets = savedTargets.current;
     let layout = savedLayout.current;
@@ -237,7 +242,11 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         }
       }
     };
-    const changeMode = (next: CanvasMode) => {
+    const changeMode = (next: CanvasMode, stage?: FallbackStage, reason?: string) => {
+      if (stage) { fallbackStage = stage; fallbackReason = reason ?? 'unknown'; }
+      if (next !== 'dom') { fallbackStage = 'none'; fallbackReason = 'none'; }
+      host.dataset.sceneFallbackStage = fallbackStage;
+      host.dataset.sceneFallbackReason = fallbackReason;
       const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const selection = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
       mode = next; displayed.clear();
@@ -259,7 +268,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         if (next === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
         (next === 'dom' ? dom : surface).appendChild(node);
       }
-      setStatus(next === 'dom' ? (forcedDOM ? 'DOM fallback · 手動' : 'DOM fallback · このブラウザではnative未検証/利用不可') : 'HTML-in-Canvas · 最初の描画を確認中');
+      setStatus(next === 'dom' ? (forcedDOM ? 'DOM fallback · 手動' : `DOM fallback · ${fallbackStage}/${fallbackReason}`) : 'HTML-in-Canvas · 最初の描画を確認中');
       geometry();
       if (active && surface.contains(active) || active && dom.contains(active)) {
         active!.focus({ preventScroll: true });
@@ -355,7 +364,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         if (mode !== 'dom') {
           surface.requestPaint?.();
           if (!painted && current.current.items.length && watchdog.timer === undefined) watchdog.timer = setTimeout(() => {
-            if (!painted && !disposed) { changeMode('dom'); refresh(); }
+            if (!painted && !disposed) { changeMode('dom', 'watchdog', 'paint-timeout'); refresh(); }
           }, 2500);
         }
         if (motion.active || effect.active || measurement) requestFrame();
@@ -403,7 +412,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         paintSeq = nextSerial(paintSeq); host.dataset.scenePaintSerial = String(paintSeq);
         host.dataset.sceneUploads = String(totalUploads); host.dataset.sceneDraws = String(totalDraws); host.dataset.sceneTextureBytes = String(textureBytes);
         if (painted) { clearTimeout(watchdog.timer); setStatus(`HTML-in-Canvas · native ${renderer === 'webgl' ? 'WebGL' : mode + ' CSS比較'}`); }
-      } catch { changeMode('dom'); refresh(); }
+      } catch (error) { changeMode('dom', 'render', classifyWebGLSceneError(error)); refresh(); }
     };
     // ホイール・touch・キーボードはブラウザの縦スクロールへ任せる。
     const scroll = () => { host.scrollLeft = 0; requestFrame(); };
@@ -463,7 +472,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       if (mode === 'dom') { setMetrics('DOMではnative比較計測を開始しません'); return; }
       measurement = { start: null, previous: null, samples: [], draws: totalDraws, uploads: totalUploads };
       setMetrics('5秒計測中…（自然な新着条件は同一ではありません）'); requestFrame();
-    }, chooseEffect: () => { releasePress(); if (mode === 'legacy' && chosenEffect.current === 'domino') changeMode('dom'); effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
+    }, chooseEffect: () => { releasePress(); if (mode === 'legacy' && chosenEffect.current === 'domino') changeMode('dom', 'legacy-effect', 'unsupported'); effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
       const id = node.dataset.sceneCard; if (id) dirtyIds.add(id);
@@ -487,7 +496,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       if (changed && mode !== 'dom') requestFrame();
     });
     for (const node of nodes.current.values()) mutation.observe(node, { subtree: true, childList: true, characterData: true, attributes: true });
-    const lost = (event: Event) => { event.preventDefault(); changeMode('dom'); refresh(); };
+    const lost = (event: Event) => { event.preventDefault(); changeMode('dom', 'context-loss', 'context-lost'); refresh(); };
     surface.addEventListener('paint', paint); gpuSurface.addEventListener('webglcontextlost', lost);
     for (const type of ['input', 'change', 'focusin', 'focusout', 'pointerover', 'pointerout', 'load', 'canvas-image-ready']) host.addEventListener(type, invalidate, true);
     document.fonts?.addEventListener('loadingdone', invalidate);

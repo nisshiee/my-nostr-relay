@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createWebGLSceneRenderer, particleVertices, sceneCardMatrix, sceneCardVisible, type WebGLSceneCard, type WebGLSceneFrame } from '../webglSceneRenderer';
+import { classifyWebGLSceneError, createWebGLSceneRenderer, particleVertices, sceneCardMatrix, sceneCardVisible, type WebGLSceneCard, type WebGLSceneFrame } from '../webglSceneRenderer';
 import { createDominoTransforms } from '../dominoEffect';
 import { projectPoint, type GeometryCanvas, type HtmlTextureGL } from '../webglDomino';
 import { createPushParticles, createPushPaths } from '../pushEffect';
@@ -14,6 +14,27 @@ function setup(limits?:{totalBytes?:number;singleBytes?:number}) {
 function frame(cards:WebGLSceneCard[],extra:Partial<WebGLSceneFrame>={}):WebGLSceneFrame{return{cards,camera,viewportWidth:600,viewportHeight:400,changedElements:[],...extra};}
 beforeEach(()=>vi.stubGlobal('DOMMatrix',class{constructor(public values:number[]) {}}));afterEach(()=>vi.unstubAllGlobals());
 describe('feed WebGLの同一射影・有界texture・前面粒子',()=>{
+  it('全shaderでfloat/int精度を明示一致し共有uniformのlink差を防ぐ',()=>{
+    const {gl,renderer}=setup();
+    const sources=vi.mocked(gl.shaderSource).mock.calls.map(call=>call[1]);
+    expect(sources).toHaveLength(4);
+    for(const source of sources) {
+      expect(source).toContain('precision highp float;');
+      expect(source).toContain('precision highp int;');
+      expect(source).not.toContain('precision mediump');
+    }
+    renderer.dispose();
+  });
+  it('失敗を固定分類しGLログや任意文字列を漏らさず初期化資源を解放',()=>{
+    const gl=fakeGL([]),surface={updateElementGeometry:vi.fn(),clearElementGeometry:vi.fn(),getElementImageDefaultSize:vi.fn()} as unknown as GeometryCanvas;
+    vi.mocked(gl.getProgramParameter).mockReturnValue(false);
+    let error:unknown;try{createWebGLSceneRenderer(gl,surface);}catch(e){error=e;}
+    expect(classifyWebGLSceneError(error)).toBe('program-link');
+    expect(gl.deleteProgram).toHaveBeenCalledTimes(1);expect(gl.deleteShader).toHaveBeenCalledTimes(2);
+    expect(classifyWebGLSceneError(new Error('secret arbitrary log'))).toBe('unknown');
+    expect(classifyWebGLSceneError(new Error('constructor'))).toBe('unknown');
+    expect(classifyWebGLSceneError('Program failed')).toBe('unknown');
+  });
   it('四方向のDOM/CSS投影と同じ点をcamera変換し、DPRを含めない',()=>{
     for(const [x,y] of [[400,0],[-400,0],[0,400],[0,-400]]) {
       const root={x:500,y:500,width:320,height:180},target={...root,x:500+x,y:500+y};

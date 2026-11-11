@@ -10,7 +10,7 @@ import { buildInitialLayout, insertCard, reflow } from "../../../lib/layoutEngin
 import type { Card } from "../../../lib/types";
 
 const backendMock = vi.hoisted(() => ({ create: vi.fn() }));
-vi.mock('../webglSceneRenderer', () => ({ createWebGLSceneRenderer: backendMock.create }));
+vi.mock('../webglSceneRenderer', async importOriginal => ({ ...await importOriginal<typeof import('../webglSceneRenderer')>(), createWebGLSceneRenderer: backendMock.create }));
 function render(ui: React.ReactElement, options?: Parameters<typeof renderUI>[1]) {
   const result = renderUI(ui, options);
   const choice = screen.queryByRole('combobox', { name: 'QA描画方式' });
@@ -874,6 +874,7 @@ describe('CanvasScene WebGL feed接続', () => {
     fireEvent.change(screen.getByLabelText('下書き'),{target:{value:'keep'}});
     const event=new Event('webglcontextlost',{cancelable:true});fireEvent(screen.getByLabelText('WebGLライブカード'),event);flushFrame(50);
     expect(event.defaultPrevented).toBe(true);expect(dispose).toHaveBeenCalled();
+    expect(host().dataset.sceneFallbackStage).toBe('context-loss');expect(host().dataset.sceneFallbackReason).toBe('context-lost');
     expect(host().dataset.sceneRenderer).toBe('dom');expect(card('a').dataset.sceneTip).toBe('0');
     expect((screen.getByLabelText('下書き') as HTMLInputElement).value).toBe('keep');
     fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
@@ -935,6 +936,28 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(seen.at(-1)!.cards.every(c=>!c.tip)).toBe(true);expect(seen.at(-1)!.particles).toEqual([]);
     act(()=>{media.matches=false;changed!();});flushFrame(350);
     expect(seen.at(-1)!.cards.every(c=>!c.tip)).toBe(true);expect(host().dataset.scenePushEffect).toBe('idle');
+  });
+
+  it.each([['Program failed','program-link'],['Fragment shader failed','fragment-compile'],['https://private.example/?token=secret','unknown']])('init分類は固定値のみ: %s', (message,code) => {
+    mockModernNative();backendMock.create.mockImplementation(()=>{throw new Error(message);});
+    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    expect(host().dataset.sceneFallbackStage).toBe('init');expect(host().dataset.sceneFallbackReason).toBe(code);
+    expect(document.querySelector('[data-renderer-status]')!.textContent).toContain(`init/${code}`);
+    expect(host().outerHTML).not.toContain(message);
+  });
+  it('render分類とmanual切替は旧診断を引き継がない', () => {
+    const {draw}=gpuBackend();draw.mockImplementation(()=>{throw new Error('Texture budget limit');});
+    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    expect(host().dataset.sceneFallbackStage).toBe('render');expect(host().dataset.sceneFallbackReason).toBe('texture-budget');
+    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(20);
+    expect(host().dataset.sceneFallbackStage).toBe('manual');expect(host().dataset.sceneFallbackReason).toBe('requested');
+  });
+  it('paint未発火をwatchdog分類しcontext lossと分ける', () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});gpuBackend();
+    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value:vi.fn()});
+    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    act(()=>vi.advanceTimersByTime(2500));flushFrame(2600);
+    expect(host().dataset.sceneFallbackStage).toBe('watchdog');expect(host().dataset.sceneFallbackReason).toBe('paint-timeout');
   });
 
 });
