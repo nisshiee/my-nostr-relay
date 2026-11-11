@@ -7,13 +7,15 @@ import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, ty
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
 import type { Card } from "../../lib/types";
-import { createPushPaths, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
+import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
 import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, DOMINO_PERSPECTIVE_MAX_OUTSET, type DominoTransform } from "./dominoEffect";
+import { createWebGLSceneRenderer } from "./webglSceneRenderer";
+import { summarizeFrames, type GeometryCanvas, type HtmlTextureGL } from "./webglDomino";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
-interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
+interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number }
 const EMPTY = new Set<string>();
 // 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
 const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
@@ -47,11 +49,12 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0 }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
   const viewport = useRef<HTMLDivElement>(null);
   const canvas = useRef<DrawableCanvas>(null);
+  const gpuCanvas = useRef<GeometryCanvas>(null);
   const extent = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const fallback = useRef<HTMLDivElement>(null);
@@ -61,10 +64,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const savedMotion = useRef<SceneMotionState | null>(null);
   const savedTargets = useRef(new Map<string, SceneBox>());
   const savedLayout = useRef(createSceneLayout());
-  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; chooseEffect: () => void; camera: Camera } | null>(null);
+  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; chooseEffect: () => void; measure: () => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
   const [forcedDOM, setForcedDOM] = useState(false);
+  const [renderer, setRenderer] = useState<'webgl' | 'css'>('webgl');
+  const [metrics, setMetrics] = useState('未計測。rAF間隔でありCPU/GPU時間ではありません。');
   const [register] = useState(() => (id: string, node: HTMLDivElement | null) => {
     const old = nodes.current.get(id);
     if (node) { nodes.current.set(id, node); runtime.current?.attach(node); }
@@ -78,16 +83,29 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   // カードのpassive effectによるautofocusより先にportalの行先を接続する。
   useLayoutEffect(() => {
     const host = viewport.current!;
-    const surface = canvas.current!;
+    const cssSurface = canvas.current!;
+    const gpuSurface = gpuCanvas.current!;
+    const surface = renderer === 'webgl' ? gpuSurface : cssSurface;
     const dom = fallback.current!;
-    const ctx = surface.getContext('2d') as DrawableContext | null;
-    const supported = detectCanvasMode(surface, ctx);
+    let ctx: DrawableContext | null = null;
+    let gpu: ReturnType<typeof createWebGLSceneRenderer> | null = null;
+    let supported: CanvasMode = 'dom';
+    if (!forcedDOM) try {
+      if (renderer === 'webgl') {
+        const gl = gpuSurface.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true }) as HtmlTextureGL | null;
+        if (gl && gpuSurface.requestPaint && 'content' in gpuSurface) { gpu = createWebGLSceneRenderer(gl, gpuSurface); supported = 'modern'; }
+      } else { ctx = cssSurface.getContext('2d') as DrawableContext | null; supported = detectCanvasMode(cssSurface, ctx); }
+    } catch { supported = 'dom'; }
     let mode: CanvasMode = forcedDOM || supported === 'legacy' && chosenEffect.current === 'domino' ? 'dom' : supported;
     let boxes = savedBoxes.current;
     let targets = savedTargets.current;
     let layout = savedLayout.current;
     let motion = savedMotion.current ?? createSceneMotion();
     let layoutDirty = true;
+    let viewWidth = 1, viewHeight = 1;
+    const dirtyIds = new Set(current.current.items.map(item => item.id));
+    let totalUploads = 0, totalDraws = 0, textureBytes = 0;
+    let measurement: { start: number | null; previous: number | null; samples: number[]; draws: number; uploads: number } | null = null;
     const effect = savedEffect.current;
     let effectPaths: readonly PushEffectPath[] = [];
     let effectViewport: PushEffectBox | undefined;
@@ -167,26 +185,30 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       const held = heldNow();
       return [...current.current.items].reverse().sort((a, b) => Number(held.has(a.id)) - Number(held.has(b.id)));
     };
+    const setStyle = (node: HTMLElement, key: keyof CSSStyleDeclaration, value: string) => {
+      if (node.style[key] !== value) (node.style as unknown as Record<string, string>)[key as string] = value;
+    };
     // drawable自身は変形せず、その内側だけを遠近変形する。装飾は矩形内に収める。
     const applyPose = (node: HTMLDivElement, box: SceneBox, tip?: DominoTransform) => {
       const face = node.querySelector<HTMLElement>(':scope > [data-scene-face]');
       const footprint = node.querySelector<HTMLElement>(':scope > [data-scene-footprint]');
       const shade = face?.querySelector<HTMLElement>(':scope > [data-scene-shade]');
       if (!face || !footprint || !shade) return;
-      const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
-      node.style.padding = `${padding}px`;
+      const visualTip = renderer === 'css' && mode !== 'dom' ? tip : undefined;
+      const padding = visualTip ? DOMINO_CAPTURE_PADDING : 0;
+      setStyle(node, 'padding', `${padding}px`);
       node.dataset.sceneCapturePadding = String(padding);
-      face.style.width = `${box.width}px`;
-      face.style.height = pressed?.id === node.dataset.sceneCard ? `${box.height}px` : '';
-      face.style.overflow = pressed?.id === node.dataset.sceneCard ? 'clip' : '';
-      footprint.style.inset = `${padding}px`;
-      face.style.transform = tip?.perspective.cssTransform ?? '';
-      face.style.transformOrigin = tip?.perspective.transformOrigin ?? '50% 100%';
-      footprint.style.background = tip?.perspective.shade.footprintGradient ?? '';
-      footprint.style.opacity = String(tip?.perspective.shade.footprintOpacity ?? 0);
-      shade.style.background = tip?.perspective.shade.faceGradient ?? '';
-      shade.style.opacity = String(tip?.perspective.shade.faceOpacity ?? 0);
-      shade.style.boxShadow = tip?.perspective.shade.edgeShadow ?? '';
+      setStyle(face, 'width', `${box.width}px`);
+      setStyle(face, 'height', pressed?.id === node.dataset.sceneCard ? `${box.height}px` : '');
+      setStyle(face, 'overflow', pressed?.id === node.dataset.sceneCard ? 'clip' : '');
+      setStyle(footprint, 'inset', `${padding}px`);
+      setStyle(face, 'transform', visualTip?.perspective.cssTransform ?? '');
+      setStyle(face, 'transformOrigin', visualTip?.perspective.transformOrigin ?? '50% 100%');
+      setStyle(footprint, 'background', visualTip?.perspective.shade.footprintGradient ?? '');
+      setStyle(footprint, 'opacity', String(visualTip?.perspective.shade.footprintOpacity ?? 0));
+      setStyle(shade, 'background', visualTip?.perspective.shade.faceGradient ?? '');
+      setStyle(shade, 'opacity', String(visualTip?.perspective.shade.faceOpacity ?? 0));
+      setStyle(shade, 'boxShadow', visualTip?.perspective.shade.edgeShadow ?? '');
     };
     const geometry = () => {
       geometrySeq = nextSerial(geometrySeq); host.dataset.sceneGeometrySerial = String(geometrySeq);
@@ -194,10 +216,11 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       for (const [id, node] of nodes.current) {
         const box = boxes.get(id);
         if (!box) continue;
-        node.style.width = `${box.width}px`;
-        node.style.height = pressed?.id === id ? `${pressed.box.height}px` : '';
-        node.style.overflow = pressed?.id === id ? 'clip' : '';
-        node.style.zIndex = String(order.get(id) ?? 0);
+        setStyle(node, 'width', `${box.width}px`);
+        // GPUのsource border boxと論理quadを一致させる。面の自然高は別途測る。
+        setStyle(node, 'height', renderer === 'webgl' && mode !== 'dom' ? `${box.height}px` : pressed?.id === id ? `${pressed.box.height}px` : '');
+        setStyle(node, 'overflow', pressed?.id === id ? 'clip' : '');
+        setStyle(node, 'zIndex', String(order.get(id) ?? 0));
         const card = motion.cards.get(id);
         const target = targets.get(id) ?? box;
         node.dataset.sceneX = box.x.toFixed(2); node.dataset.sceneY = box.y.toFixed(2);
@@ -209,7 +232,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         applyPose(node, box, tip);
         if (mode === 'dom') {
           const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
-          node.style.transform = `translate(${camera.x + box.x - padding}px,${camera.y + box.y - padding}px) scale(1)`;
+          setStyle(node, 'transform', `translate(${camera.x + box.x - padding}px,${camera.y + box.y - padding}px) scale(1)`);
           displayed.set(id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
         }
       }
@@ -218,19 +241,21 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const selection = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
       mode = next; displayed.clear();
+      host.dataset.sceneRenderer = next === 'dom' ? 'dom' : renderer;
       // DOMでは追加効果を止め、nativeへ戻っても過去のbatchを再生しない。
       if (next === 'dom') {
         effect.active = false; dominoTransforms = new Map(); effectPaths = []; effectOpacity = 0;
         clearTimeout(pressTimer); pressTimer = undefined; pressed = null;
+        gpu?.dispose(); gpu = null; measurement = null;
       }
-      surface.hidden = next === 'dom';
+      cssSurface.hidden = next === 'dom' || renderer !== 'css';
+      gpuSurface.hidden = next === 'dom' || renderer !== 'webgl';
       dom.hidden = next !== 'dom';
-      surface.removeAttribute('content');
-      surface.removeAttribute('layoutsubtree');
+      for (const candidate of [cssSurface, gpuSurface]) { candidate.removeAttribute('content'); candidate.removeAttribute('layoutsubtree'); }
       if (next === 'modern') surface.setAttribute('content', 'drawable');
       if (next === 'legacy') surface.setAttribute('layoutsubtree', '');
       for (const node of nodes.current.values()) {
-        node.style.transform = '';
+        setStyle(node, 'transform', '');
         if (next === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
         (next === 'dom' ? dom : surface).appendChild(node);
       }
@@ -250,26 +275,39 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         const rect = host.getBoundingClientRect();
         const viewportWidth = host.clientWidth || rect.width;
         const viewportHeight = host.clientHeight || rect.height;
+        viewWidth = viewportWidth; viewHeight = viewportHeight;
+        if (measurement) {
+          measurement.start ??= time;
+          if (measurement.previous !== null && measurement.samples.length < 1200) measurement.samples.push(time - measurement.previous);
+          measurement.previous = time;
+          if (time - measurement.start >= 5000) {
+            const result = summarizeFrames(measurement.samples);
+            setMetrics(`${renderer} / ${result.count} rAF intervals / p50 ${result.p50.toFixed(1)}ms / p95 ${result.p95.toFixed(1)}ms / >33.4ms ${result.over33} / draw ${totalDraws - measurement.draws} / upload ${totalUploads - measurement.uploads} / cache ${(textureBytes / 1048576).toFixed(1)}MiB`);
+            measurement = null;
+          }
+        }
         layer.current!.style.height = `${viewportHeight}px`;
         const dpr = window.devicePixelRatio || 1;
         const w = Math.max(1, Math.round(viewportWidth * dpr));
         const h = Math.max(1, Math.round(viewportHeight * dpr));
-        if (surface.width !== w) surface.width = w;
-        if (surface.height !== h) surface.height = h;
+        if (surface.width !== w || surface.height !== h) {
+          surface.width = w; surface.height = h;
+          for (const item of current.current.items) dirtyIds.add(item.id);
+        }
         if (layoutDirty) {
           const held = heldNow();
           for (const [id, node] of nodes.current) {
             const parent = mode === 'dom' ? dom : surface;
             if (node.parentNode !== parent) {
-              node.style.transform = '';
+              setStyle(node, 'transform', '');
               if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
               parent.appendChild(node);
             }
             const measuredWidth = held.has(id) ? boxes.get(id)?.width : undefined;
             const face = node.querySelector<HTMLElement>(':scope > [data-scene-face]');
             const width = measuredWidth ?? Math.max(160, Math.min(360, viewportWidth - 32));
-            node.style.width = `${width}px`;
-            if (face) face.style.width = `${width}px`;
+            setStyle(node, 'width', `${width}px`);
+            if (face) setStyle(face, 'width', `${width}px`);
             // 捕捉用paddingは配置の高さに含めず、変形前の面だけを測定・監視する。
             heights.set(id, face?.offsetHeight || 120);
             if (face && !observed.has(face)) { observer.observe(face); observed.add(face); }
@@ -320,7 +358,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
             if (!painted && !disposed) { changeMode('dom'); refresh(); }
           }, 2500);
         }
-        if (motion.active || effect.active) requestFrame();
+        if (motion.active || effect.active || measurement) requestFrame();
         else lastFrameTime = null;
       });
     };
@@ -329,33 +367,43 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     media?.addEventListener('change', preference);
     const observer = new ResizeObserver(refresh);
     observer.observe(host);
-    const paint = () => {
-      if (!ctx || mode === 'dom' || disposed) return;
+    const paint = (event: Event) => {
+      if (mode === 'dom' || disposed) return;
       try {
-        ctx.resetTransform();
-        ctx.clearRect(0, 0, surface.width, surface.height);
-        const dpr = window.devicePixelRatio || 1;
-        ctx.setTransform(dpr * camera.zoom, 0, 0, dpr * camera.zoom, dpr * camera.x, dpr * camera.y);
-        // 省略描画をしないため、古いヒット領域を画面外に残さない。
-        for (const item of drawOrder()) {
-          const node = nodes.current.get(item.id);
-          const box = boxes.get(item.id);
-          if (!node || !box) continue;
-          const tip = dominoTransforms.get(item.id);
-          // 内側CSSの遠近と影はsnapshotに含まれるため、CTMで二重変形しない。
-          const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
-          const transform = ctx.drawElementImage(node, box.x - padding, box.y - padding, box.width + padding * 2, box.height + padding * 2);
-          displayed.set(item.id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
-          if (mode === 'legacy' && transform) node.style.transform = transform.toString();
+        if (renderer === 'webgl' && gpu) {
+          const cards = drawOrder().flatMap(item => {
+            const node = nodes.current.get(item.id), box = boxes.get(item.id);
+            return node && box ? [{ id: item.id, node, box, tip: dominoTransforms.get(item.id) }] : [];
+          });
+          const stats = gpu.render({ cards, camera, viewportWidth: viewWidth, viewportHeight: viewHeight,
+            changedElements: (event as Event & { changedElements?: readonly Element[] }).changedElements,
+            dirtyIds, pinnedIds: heldNow(), particles: createPushParticles(effectPaths, effectAge, effectViewport), particleOpacity: effectOpacity });
+          dirtyIds.clear(); totalDraws += stats.draws; totalUploads += stats.uploads; textureBytes = stats.textureBytes;
+          const drawn = new Set(stats.drawnIds);
+          for (const card of cards) {
+            if (drawn.has(card.id)) displayed.set(card.id, { box: { ...card.box }, transform: card.tip ? { ...card.tip } : undefined });
+            else displayed.delete(card.id);
+          }
           painted = true;
+        } else if (ctx) {
+          ctx.resetTransform(); ctx.clearRect(0, 0, surface.width, surface.height);
+          const dpr = window.devicePixelRatio || 1;
+          ctx.setTransform(dpr, 0, 0, dpr, dpr * camera.x, dpr * camera.y);
+          for (const item of drawOrder()) {
+            const node = nodes.current.get(item.id), box = boxes.get(item.id);
+            if (!node || !box) continue;
+            const tip = dominoTransforms.get(item.id), padding = tip ? DOMINO_CAPTURE_PADDING : 0;
+            const transform = ctx.drawElementImage(node, box.x - padding, box.y - padding, box.width + padding * 2, box.height + padding * 2);
+            displayed.set(item.id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
+            if (mode === 'legacy' && transform) setStyle(node, 'transform', transform.toString());
+            totalDraws++; totalUploads++; painted = true;
+          }
+          drawPushPaths(ctx, effectPaths, effectOpacity, effectAge, effectViewport);
         }
-        drawPushPaths(ctx, effectPaths, effectOpacity, effectAge, effectViewport);
         paintSeq = nextSerial(paintSeq); host.dataset.scenePaintSerial = String(paintSeq);
-        if (painted) { clearTimeout(watchdog.timer); setStatus(`HTML-in-Canvas · native ${mode}`); }
-      } catch {
-        changeMode('dom');
-        refresh();
-      }
+        host.dataset.sceneUploads = String(totalUploads); host.dataset.sceneDraws = String(totalDraws); host.dataset.sceneTextureBytes = String(textureBytes);
+        if (painted) { clearTimeout(watchdog.timer); setStatus(`HTML-in-Canvas · native ${renderer === 'webgl' ? 'WebGL' : mode + ' CSS比較'}`); }
+      } catch { changeMode('dom'); refresh(); }
     };
     // ホイール・touch・キーボードはブラウザの縦スクロールへ任せる。
     const scroll = () => { host.scrollLeft = 0; requestFrame(); };
@@ -411,11 +459,39 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       revealFocus = !(pressed && pressed.id === id); refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, chooseEffect: () => { releasePress(); if (mode === 'legacy' && chosenEffect.current === 'domino') changeMode('dom'); effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
+    runtime.current = { refresh, camera, measure: () => {
+      if (mode === 'dom') { setMetrics('DOMではnative比較計測を開始しません'); return; }
+      measurement = { start: null, previous: null, samples: [], draws: totalDraws, uploads: totalUploads };
+      setMetrics('5秒計測中…（自然な新着条件は同一ではありません）'); requestFrame();
+    }, chooseEffect: () => { releasePress(); if (mode === 'legacy' && chosenEffect.current === 'domino') changeMode('dom'); effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
+      const id = node.dataset.sceneCard; if (id) dirtyIds.add(id);
+      mutation.observe(node, { subtree: true, childList: true, characterData: true, attributes: true });
     } };
-    surface.addEventListener('paint', paint);
+    const invalidate = (event?: Event) => {
+      const target = event?.target instanceof Element ? event.target.closest<HTMLElement>('[data-scene-card]') : null;
+      const id = target?.dataset.sceneCard;
+      if (id) dirtyIds.add(id); else for (const item of current.current.items) dirtyIds.add(item.id);
+      requestFrame();
+    };
+    const mutation = new MutationObserver(records => {
+      let changed = false;
+      for (const record of records) {
+        const target = record.target instanceof Element ? record.target : record.target.parentElement;
+        if (!target) continue;
+        if (record.type === 'attributes' && (target.hasAttribute('data-scene-card') || target.hasAttribute('data-scene-face') || target.hasAttribute('data-scene-shade') || target.hasAttribute('data-scene-footprint'))) continue;
+        const id = target.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard;
+        if (id) { dirtyIds.add(id); changed = true; }
+      }
+      if (changed && mode !== 'dom') requestFrame();
+    });
+    for (const node of nodes.current.values()) mutation.observe(node, { subtree: true, childList: true, characterData: true, attributes: true });
+    const lost = (event: Event) => { event.preventDefault(); changeMode('dom'); refresh(); };
+    surface.addEventListener('paint', paint); gpuSurface.addEventListener('webglcontextlost', lost);
+    for (const type of ['input', 'change', 'focusin', 'focusout', 'pointerover', 'pointerout', 'load', 'canvas-image-ready']) host.addEventListener(type, invalidate, true);
+    document.fonts?.addEventListener('loadingdone', invalidate);
+
     // 固定サイズ画像の読込完了でもnative再描画を要求する。
     host.addEventListener('canvas-image-ready', refresh);
     host.addEventListener('scroll', scroll, { passive: true });
@@ -431,8 +507,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     changeMode(mode); refresh();
     return () => {
       media?.removeEventListener('change', preference);
-      disposed = true; clearTimeout(pressTimer); pressed = null; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect();
-      surface.removeEventListener('paint', paint); host.removeEventListener('scroll', scroll);
+      disposed = true; clearTimeout(pressTimer); pressed = null; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect(); mutation.disconnect(); gpu?.dispose();
+      surface.removeEventListener('paint', paint); gpuSurface.removeEventListener('webglcontextlost', lost); host.removeEventListener('scroll', scroll);
+      for (const type of ['input', 'change', 'focusin', 'focusout', 'pointerover', 'pointerout', 'load', 'canvas-image-ready']) host.removeEventListener(type, invalidate, true);
+      document.fonts?.removeEventListener('loadingdone', invalidate);
       host.removeEventListener('canvas-image-ready', refresh);
       window.removeEventListener('pointerdown', diagnosticDown, true); window.removeEventListener('pointerup', diagnosticUp, true);
       window.removeEventListener('click', diagnosticClick, true); window.removeEventListener('pointercancel', clearDiagnosticGesture, true);
@@ -442,7 +520,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       window.removeEventListener('click', clicked, true); window.removeEventListener('blur', releasePress);
       host.removeEventListener('focusin', focus); host.removeEventListener('focusout', blur); window.removeEventListener('resize', refresh);
     };
-  }, [forcedDOM]);
+  }, [forcedDOM, renderer]);
+
+  useLayoutEffect(() => { if (qaMeasurementToken > 0) runtime.current?.measure(); }, [qaMeasurementToken]);
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="V2 canvas">
     <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
@@ -456,10 +536,18 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       </label>
       <span>縦スクロールで移動 · エフェクトはnative専用（DOMでは停止）</span>
     </div>
+    <details className="border-b px-4 py-1 text-xs">
+      <summary>描画比較（QA）</summary>
+      <label>比較方式 <select aria-label="QA描画方式" value={renderer} onChange={event => setRenderer(event.target.value as 'webgl' | 'css')}><option value="webgl">WebGL texture</option><option value="css">Canvas2D + CSS 比較</option></select></label>
+      <button type="button" onClick={() => runtime.current?.measure()}>5秒frame比較</button>
+      <output aria-label="実フィードframe比較結果">{metrics}</output>
+      <p>rAF間隔と固定33.4ms超過数です。CPU/GPU時間ではなく、自然な新着条件も同一ではありません。</p>
+    </details>
     <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
       <div ref={extent} className="relative w-full" style={{ overflowAnchor: 'none' }}>
         <div ref={layer} className="sticky top-0 w-full overflow-clip">
           <canvas ref={canvas} className="absolute inset-0 z-0 h-full w-full" aria-label="ライブカード" />
+          <canvas ref={gpuCanvas} className="absolute inset-0 z-0 h-full w-full" aria-label="WebGLライブカード" />
           <div ref={fallback} className="absolute inset-0 z-0 isolate" />
         </div>
       </div>

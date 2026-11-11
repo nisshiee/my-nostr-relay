@@ -276,3 +276,17 @@ CSS3Dを毎frame snapshotへ反映する方式と、平面HTML textureをWebGL�
 比較はUIから開始する短時間のframe間隔・描画回数・texture更新回数で行う。CPUやタスクマネージャは測定しない。1枚のprobeでの改善は、数百枚の実フィード性能の証明ではない。textureの更新漏れ、入力・画像・font・hover/focus、容量・context lossなどを別途検証する必要がある。
 
 frame診断はrequestAnimationFrame callbackの間隔であり、GPUの実行時間や正確な落ちframe数ではない。33.4ms超の回数は固定しきい値の参考値として表示し、画面のrefresh rateやバックグラウンド化の影響を含む。同じ端末・viewport・fixture・測定時間で比較する。
+
+## WebGLを実フィードへ接続する段階
+
+71a8ab89のChrome実機probeでは、DPR2で上下・alpha・台形、四隅クリック、入力更新、Tab、scroll後クリックが成立した。5秒の1枚比較はWebGLが300 intervals/p95 17.5ms/upload1、CSS版が301 intervals/p95 17.2ms/upload301で、frame間隔の改善は確認できない一方、角度変更だけのtexture再取得が減ることを確認した。これを多数カードの速度改善の証明とはしない。
+
+実フィードでは平面HTML textureを再利用し、角度・位置・陰影をGPU側で描画する。キラキラも同じWebGL canvasのカード前面に粒として描き、HTMLのhit geometryはカードだけに設定する。旧CSS＋Canvas2D版は通常のエフェクト選択とは別のQA比較に残す。DOM fallbackではどちらの追加効果も描かない。
+
+textureは可視領域を優先し、削除・失効・容量制限に応じて解放する。管理するtexture bytesの上限は、ブラウザdriverやframebufferを含むGPUメモリ全体の上限ではない。画像・入力・font・focus/hover等の変更は再取得し、changedElementsが利用できなければ正しさを優先して可視textureを更新する。対応できないサイズやcontext lossは無言の画像欠落にせず、状態を保つ平面DOMへ退避する。
+
+比較用の固定40枚fixtureと有限の追加・高さ変更sequenceを用意し、同じ入力でQA計測を繰り返せるようにする。実フィードの自然新着は異なるイベントになるため、数値を同条件のA/B実験とは扱わない。実フィードの画素・操作と、再現fixtureの比較結果を分けて報告する。
+
+現在のtexture制限は単体32MiB・追跡合計128MiBで、MAX_TEXTURE_SIZEも確認する。可視領域と64px余裕内を優先し、画面外の非操作カードからLRUで解放する。focus/押下中は既存textureをpinする。削除時と失敗時はmanual geometryを解除する。画面外のカードは正しい画面外geometryを保ち、Tabによるfocus→scroll reveal→再取得を可能にする。
+
+QAの固定入力は初期40枚から、1秒で1枚追加、2秒でcard1の高さを160px増加、3秒で2枚追加、4秒で高さ復元と末尾削除、5秒で終了。初期化後に同じrenderer/effect/viewportを選んで実行する。再生ボタンと計測tokenは同じ更新で開始し、計測起点は次のrAFのため約1frameの差がある。単発結果を性能保証にせず複数回の比較と実フィードの操作確認を行う。
