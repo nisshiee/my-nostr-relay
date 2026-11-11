@@ -232,3 +232,13 @@ focus/hold中のカードは変形させず、reduced-motionでは追加効果�
 ## 台形の透視変形を内側のDOMで確認
 
 2D CTMだけでは台形の透視投影は作れない。外側のdrawableは通常の平行移動描画のまま、非drawableの内側へCSS perspective/rotateXと影を適用する静止probeをlabに用意する。外側自身のCSS transformはsnapshotの外にあるため使わない。静止した台形の上・中・下のボタン、入力、DOM/native切替で画素とhitの対応を確認してから実フィードのドミノへ採用を判断する。これは部品検証であり実フィードE2Eではない。現時点で従来のアフィン型ドミノを置き換えたことを意味しない。
+
+## 内側の面の透視投影を実フィードへ適用
+
+ceeeaca5の静止probeをChrome157のnative modernで確認し、明瞭な台形・厚み・影、上/中/下の実座標クリック、入力とTab、DOM/native往復時の値保持が成立したため、ドミノの面をCSS透視投影へ切り替える。静止probeの結果を動的な実フィードの操作保証とは扱わない。
+
+外側のdrawableは通常の平行移動と元の幅・高さを維持し、非drawableの内側だけをperspectiveとrotateX/rotateYで倒す。因果関係の押される方向に応じて上下左右の辺を支点とし、反対側を奥へ倒す。最大52度。影は元の矩形内に置く下敷きと面内の明暗に限定し、外側へはみ出す影のために描画領域やカード間隔を変更しない。キラキラ/OFF、配置・ばね・待機・縦スクロールは変更しない。
+
+押下中は最後に描いた面の姿勢と矩形を保持し、focusによるidentity化や自動scrollでclick対象が逃げるのを防ぐ。効果終了・OFF・reduced-motionでは面と装飾を戻す。DOM fallbackでも同じ内側のCSSを使用する。動的な変形中のクリック、scroll、DPR変更、画像による高さ変更の見え方は公開後に実フィードで確認する。
+
+旧layoutsubtree APIでの内側透視とhitの対応は今回未検証のため、ドミノ選択時はDOM fallbackへ切り替える。modern nativeを無理に擬装しない。装飾はaria-hidden/pointer-events:noneで、カードの入力状態は同じportal内に維持する。

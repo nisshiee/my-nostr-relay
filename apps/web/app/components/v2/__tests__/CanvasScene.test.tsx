@@ -73,14 +73,15 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const {rerender} = render(<CanvasScene items={[original]} />); flushFrame(0);
     rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]} />); flushFrame(16); flushFrame(250);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
-    const snapshot = [node.style.transform,node.dataset.sceneX,node.dataset.sceneY];
+    const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
+    const snapshot = [face.style.transform,node.dataset.sceneX,node.dataset.sceneY];
     const button = screen.getByRole('button',{name:'クリック 0'});
     pointer(button,'pointerdown'); fireEvent.focus(button); flushFrame(450);
-    expect([node.style.transform,node.dataset.sceneX,node.dataset.sceneY]).toEqual(snapshot);
+    expect([face.style.transform,node.dataset.sceneX,node.dataset.sceneY]).toEqual(snapshot);
     pointer(window,'pointerup',99); flushFrame(600);
-    expect(node.style.transform).toBe(snapshot[0]);
+    expect(face.style.transform).toBe(snapshot[0]);
     pointer(window,'pointerup'); act(()=>vi.advanceTimersByTime(300)); flushFrame(800);
-    expect(node.style.transform).toBe(snapshot[0]);
+    expect(face.style.transform).toBe(snapshot[0]);
     fireEvent.click(button);
     expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
     act(()=>vi.advanceTimersByTime(0)); flushFrame(850);
@@ -137,13 +138,15 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     unmount(); expect(cancel).toHaveBeenCalledWith(timer);
     schedule.mockClear();pointer(window,'pointerup');expect(schedule).not.toHaveBeenCalled();
   });
-  it("native押下は未paintの計算値でなく最後に描いた行列を保持する", () => {
+  it("native押下は未paintの計算値でなく最後に描いた内側CSS姿勢を保持する", () => {
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     let matrix:number[]=[];
-    const draws:{id:string|null,matrix:number[],x:number,y:number}[]=[];
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:(...values:number[])=>{matrix=values;},drawElementImage:(node:Element,x:number,y:number)=>{draws.push({id:node.getAttribute('data-scene-card'),matrix:[...matrix],x,y});}} as unknown as CanvasRenderingContext2D);
+    const draws:{id:string|null,matrix:number[],x:number,y:number,pose:string}[]=[];
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:(...values:number[])=>{matrix=values;},drawElementImage:(node:Element,x:number,y:number)=>{draws.push({id:node.getAttribute('data-scene-card'),matrix:[...matrix],x,y,pose:node.querySelector<HTMLElement>('[data-scene-face]')!.style.transform});}} as unknown as CanvasRenderingContext2D);
     const descriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value:vi.fn()});
+    const contentDescriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'content');
+    Object.defineProperty(HTMLCanvasElement.prototype,'content',{configurable:true,value:'drawable'});
     try {
       const original={id:'a',content:<InteractiveCard/>};
       const {rerender}=render(<CanvasScene items={[original]}/>); flushFrame(0);
@@ -152,26 +155,32 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
       fireEvent(surface,new Event('paint'));
       const painted=draws.filter(draw=>draw.id==='a').at(-1)!;
+      expect(painted.pose).toContain('perspective(');
       flushFrame(350);
+      expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).not.toBe(painted.pose);
       const button=screen.getByRole('button',{name:'クリック 0'});
       pointer(button,'pointerdown');fireEvent.focus(button);flushFrame(450);
       fireEvent(surface,new Event('paint'));
       expect(draws.filter(draw=>draw.id==='a').at(-1)).toEqual(painted);
       pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(500);
       fireEvent(surface,new Event('paint'));
-      expect(draws.filter(draw=>draw.id==='a').at(-1)!.x).not.toBe(0);
+      expect(draws.filter(draw=>draw.id==='a').at(-1)!.pose).toBe('');
       expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
     } finally {
+      if(contentDescriptor)Object.defineProperty(HTMLCanvasElement.prototype,'content',contentDescriptor);
+      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'content');
       if(descriptor)Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',descriptor);
       else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
     }
   });
-  it("nativeドミノはDPR付きアフィン行列と原点描画を使い、終了時に通常座標へ戻す", () => {
+  it("nativeドミノは内側CSSだけを遠近変形しDPRとscrollを二重適用しない", () => {
     vi.stubGlobal("devicePixelRatio", 2);
     const draw = vi.fn(), matrix = vi.fn();
     vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:matrix,drawElementImage:draw} as unknown as CanvasRenderingContext2D);
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
+    const contentDescriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'content');
+    Object.defineProperty(HTMLCanvasElement.prototype,'content',{configurable:true,value:'drawable'});
     try {
       const item = (id:string) => ({id,content:<span>{id}</span>});
       const {rerender} = render(<CanvasScene items={[item('a')]} />);
@@ -182,21 +191,49 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       const host = screen.getByLabelText('カード領域。縦スクロールで移動');
       host.scrollTop = 90; fireEvent.scroll(host);
       draw.mockClear(); matrix.mockClear(); flushFrame(250);
-      expect(matrix.mock.calls.some(call=>call[1]!==0 || call[2]!==0 || call[3]<2)).toBe(true);
-      expect(matrix.mock.calls.some(call=>call[0]===2 && call[3]===2)).toBe(true);
-      expect(draw.mock.calls.some(call=>call[1]===0 && call[2]===0)).toBe(true);
-      const nativeMatrix = matrix.mock.calls.filter(call=>call[3]<2).at(-1)!;
-      fireEvent.click(screen.getByRole('button',{name:'DOMに切替'})); flushFrame(250);
+      expect(matrix.mock.calls.every(call=>call[0]===2 && call[1]===0 && call[2]===0 && call[3]===2 && call[4]===0 && call[5]===-180)).toBe(true);
+      expect(draw.mock.calls.every(call=>call[1]!==0 || call[2]!==0)).toBe(true);
       const node = document.querySelector<HTMLElement>('[data-scene-card="new"]')!;
-      const cssMatrix = node.style.transform.slice(7,-1).split(',').map(Number);
-      expect(cssMatrix).toHaveLength(6);
-      cssMatrix.forEach((value,index)=>expect(nativeMatrix[index]).toBeCloseTo(value*2,5));
+      const face = node.querySelector<HTMLElement>('[data-scene-face]')!;
+      const nativePose = face.style.transform;
+      expect(nativePose).toContain('perspective(');
+      expect(node.style.transform).toBe('');
+      expect(face.hasAttribute('drawable')).toBe(false);
+      const nativeDraw=draw.mock.calls.findLast(call=>call[0]===node)!;
+      fireEvent.click(screen.getByRole('button',{name:'DOMに切替'})); flushFrame(250);
+      expect(face.style.transform).toBe(nativePose);
+      expect(node.style.transform).toBe(`translate(${nativeDraw[1]}px,${nativeDraw[2]-90}px) scale(1)`);
       fireEvent.click(screen.getByRole('button',{name:'Nativeを試す'})); flushFrame(250);
       draw.mockClear(); flushFrame(2000);
       expect(draw.mock.calls.every(call=>call[1]!==0 || call[2]!==0)).toBe(true);
+      expect(face.style.transform).toBe('');
       expect(screen.getByRole('status').textContent).toContain('native');
     } finally {
+      if(contentDescriptor)Object.defineProperty(HTMLCanvasElement.prototype,'content',contentDescriptor);
+      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'content');
       if(original) Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',original);
+      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
+    }
+  });
+  it.each([true,false])("旧APIは保存済みまたは選択後のドミノをDOMへ切替える (保存=%s)", saved => {
+    if(saved)localStorage.setItem('nlc-v2-effect','domino');
+    const draw=vi.fn();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
+    const descriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
+    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
+    try {
+      const original={id:'a',content:<InteractiveCard/>};
+      const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
+      if(!saved)fireEvent.change(screen.getByRole('combobox'),{target:{value:'domino'}});
+      draw.mockClear();
+      rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
+      expect(document.querySelector('canvas')!.hidden).toBe(true);
+      expect(draw).not.toHaveBeenCalled();
+      expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).toContain('perspective(');
+      fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
+      expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
+    } finally {
+      if(descriptor)Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',descriptor);
       else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
     }
   });
@@ -234,11 +271,20 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     flushFrame(16); flushFrame(250);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     expect(Number(node.dataset.sceneTip)).toBeGreaterThan(0);
-    expect(node.style.transform).toContain('matrix(');
+    expect(node.style.transform).toContain('translate(');
+    const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
+    expect(face.style.transform).toContain('perspective(');
+    for(const decoration of node.querySelectorAll<HTMLElement>('[data-scene-shade], [data-scene-footprint]')){
+      expect(decoration.style.pointerEvents).toBe('none');
+      expect(decoration.getAttribute('aria-hidden')).toBe('true');
+      expect(Number(decoration.style.opacity)).toBeGreaterThan(0);
+    }
     expect(document.querySelectorAll('svg path').length).toBe(0);
     fireEvent.focus(screen.getByRole('textbox'));
     flushFrame(300);
     expect(node.dataset.sceneTip).toBe('0');
+    expect(face.style.transform).toBe('');
+    expect(node.querySelector<HTMLElement>('[data-scene-shade]')!.style.opacity).toBe('0');
     fireEvent.change(screen.getByRole('combobox'),{target:{value:'sparkle'}});
     flushFrame(350);
     expect(document.querySelectorAll('svg path').length).toBe(0);

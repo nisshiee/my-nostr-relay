@@ -36,7 +36,13 @@ function MountedCardRoot({ item, register }: CardRootProps) {
     register(item.id, node);
     return () => register(item.id, null);
   }, [item.id, node, register]);
-  return createPortal(item.content, node);
+  return createPortal(<>
+    <div data-scene-footprint aria-hidden="true" style={{ position: 'absolute', inset: 0, borderRadius: 12, pointerEvents: 'none', opacity: 0 }} />
+    <div data-scene-face style={{ position: 'relative', transformOrigin: '50% 100%' }}>
+      {item.content}
+      <div data-scene-shade aria-hidden="true" style={{ position: 'absolute', inset: 0, borderRadius: 12, pointerEvents: 'none', opacity: 0 }} />
+    </div>
+  </>, node);
 }
 
 export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
@@ -77,7 +83,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     const dom = fallback.current!;
     const ctx = surface.getContext('2d') as DrawableContext | null;
     const supported = detectCanvasMode(surface, ctx);
-    let mode: CanvasMode = forcedDOM ? 'dom' : supported;
+    let mode: CanvasMode = forcedDOM || supported === 'legacy' && chosenEffect.current === 'domino' ? 'dom' : supported;
     let boxes = savedBoxes.current;
     let targets = savedTargets.current;
     let layout = savedLayout.current;
@@ -109,6 +115,20 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       const held = heldNow();
       return [...current.current.items].reverse().sort((a, b) => Number(held.has(a.id)) - Number(held.has(b.id)));
     };
+    // drawable自身は変形せず、その内側だけを遠近変形する。装飾は矩形内に収める。
+    const applyPose = (node: HTMLDivElement, tip?: DominoTransform) => {
+      const face = node.querySelector<HTMLElement>(':scope > [data-scene-face]');
+      const footprint = node.querySelector<HTMLElement>(':scope > [data-scene-footprint]');
+      const shade = face?.querySelector<HTMLElement>(':scope > [data-scene-shade]');
+      if (!face || !footprint || !shade) return;
+      face.style.transform = tip?.perspective.cssTransform ?? '';
+      face.style.transformOrigin = tip?.perspective.transformOrigin ?? '50% 100%';
+      footprint.style.background = tip?.perspective.shade.footprintGradient ?? '';
+      footprint.style.opacity = String(tip?.perspective.shade.footprintOpacity ?? 0);
+      shade.style.background = tip?.perspective.shade.faceGradient ?? '';
+      shade.style.opacity = String(tip?.perspective.shade.faceOpacity ?? 0);
+      shade.style.boxShadow = tip?.perspective.shade.edgeShadow ?? '';
+    };
     const geometry = () => {
       const order = new Map(drawOrder().map((item, index) => [item.id, index]));
       for (const [id, node] of nodes.current) {
@@ -126,10 +146,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         node.dataset.sceneDelay = String(Math.round(card?.delayMs ?? 0));
         const tip = dominoTransforms.get(id);
         node.dataset.sceneTip = String(tip?.amount ?? 0);
+        applyPose(node, tip);
         if (mode === 'dom') {
-          node.style.transform = tip
-          ? `matrix(${tip.a},${tip.b},${tip.c},${tip.d},${tip.e + camera.x},${tip.f + camera.y})`
-          : `translate(${camera.x + box.x}px,${camera.y + box.y}px) scale(1)`;
+          node.style.transform = `translate(${camera.x + box.x}px,${camera.y + box.y}px) scale(1)`;
           displayed.set(id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
         }
       }
@@ -278,12 +297,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
           const box = boxes.get(item.id);
           if (!node || !box) continue;
           const tip = dominoTransforms.get(item.id);
-          let transform: DOMMatrix | undefined;
-          if (tip) {
-            ctx.setTransform(dpr * tip.a, dpr * tip.b, dpr * tip.c, dpr * tip.d, dpr * (camera.x + tip.e), dpr * (camera.y + tip.f));
-            transform = ctx.drawElementImage(node, 0, 0, box.width, box.height);
-            ctx.setTransform(dpr, 0, 0, dpr, dpr * camera.x, dpr * camera.y);
-          } else transform = ctx.drawElementImage(node, box.x, box.y, box.width, box.height);
+          // 内側CSSの遠近と影はsnapshotに含まれるため、CTMで二重変形しない。
+          const transform = ctx.drawElementImage(node, box.x, box.y, box.width, box.height);
           displayed.set(item.id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
           if (mode === 'legacy' && transform) node.style.transform = transform.toString();
           painted = true;
@@ -347,7 +362,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       revealFocus = !(pressed && pressed.id === id); refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, chooseEffect: () => { releasePress(); effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
+    runtime.current = { refresh, camera, chooseEffect: () => { releasePress(); if (mode === 'legacy' && chosenEffect.current === 'domino') changeMode('dom'); effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
     } };
