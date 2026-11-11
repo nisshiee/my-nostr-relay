@@ -109,6 +109,59 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     const localHeld = new Set<string>();
     let pressed: { pointerId: number; id: string; box: SceneBox; transform: DominoTransform; released: boolean } | null = null;
     const displayed = new Map<string, { box: SceneBox; transform?: DominoTransform }>();
+    // 直近の各イベントだけをDOMに残す。本文・URL・属性値を収集せず、操作へ介入しない。
+    let diagnosticSeq = 0;
+    let paintSeq = 0;
+    let geometrySeq = 0;
+    let diagnosticGesture: { pointerId: number | null; released: boolean } | null = null;
+    const nextSerial = (value: number) => value >= Number.MAX_SAFE_INTEGER ? 1 : value + 1;
+    const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
+    const shortId = (value: string | undefined) => value?.slice(0, 128) ?? null;
+    const diagnosticTags = new Set(['BUTTON', 'IMG', 'INPUT', 'TEXTAREA', 'A', 'DIV', 'SPAN', 'CANVAS', 'SVG', 'PATH']);
+    const recordPointer = (kind: 'Down' | 'Up' | 'Click', event: MouseEvent | PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      const within = target !== null && host.contains(target);
+      const card = within ? target.closest<HTMLElement>('[data-scene-card]') : null;
+      const id = card?.dataset.sceneCard;
+      const button = within ? target.closest('button') : null;
+      const buttons = card?.querySelectorAll('button');
+      let buttonIndex: number | null = null;
+      if (button && buttons) for (let index = 0; index < Math.min(buttons.length, 1024); index++) {
+        if (buttons[index] === button) { buttonIndex = index; break; }
+      }
+      const drawn = id ? displayed.get(id) : undefined;
+      const pending = id ? boxes.get(id) : undefined;
+      diagnosticSeq = nextSerial(diagnosticSeq);
+      host.dataset[`sceneLastPointer${kind}`] = JSON.stringify({
+        seq: diagnosticSeq, at: finite(event.timeStamp), mode, paint: paintSeq, geometry: geometrySeq,
+        within, targetTag: target ? diagnosticTags.has(target.tagName.toUpperCase()) ? target.tagName.toUpperCase() : 'OTHER' : 'NONE',
+        card: shortId(id), button: button !== null, buttonIndex,
+        pointerId: 'pointerId' in event ? finite(event.pointerId) : null,
+        x: finite(event.clientX), y: finite(event.clientY), pressed: shortId(pressed?.id),
+        drawn: drawn ? { x: drawn.box.x, y: drawn.box.y, tip: drawn.transform?.amount ?? 0 } : null,
+        pending: pending ? { x: pending.x, y: pending.y, tip: dominoTransforms.get(id!)?.amount ?? 0 } : null,
+      });
+    };
+    const diagnosticDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !host.contains(event.target)) { diagnosticGesture = null; return; }
+      diagnosticGesture = { pointerId: finite(event.pointerId), released: false };
+      recordPointer('Down', event);
+    };
+    const diagnosticUp = (event: PointerEvent) => {
+      const within = event.target instanceof Node && host.contains(event.target);
+      const same = diagnosticGesture !== null && diagnosticGesture.pointerId === finite(event.pointerId);
+      if (within || same) recordPointer('Up', event);
+      if (same) diagnosticGesture!.released = true;
+    };
+    const diagnosticClick = (event: MouseEvent) => {
+      const within = event.target instanceof Node && host.contains(event.target);
+      const pointerId = 'pointerId' in event ? finite(event.pointerId) : null;
+      const same = diagnosticGesture?.released && pointerId !== null && diagnosticGesture.pointerId === pointerId;
+      if (within || same) recordPointer('Click', event);
+      diagnosticGesture = null;
+    };
+    const clearDiagnosticGesture = () => { diagnosticGesture = null; };
+    for (const key of ['sceneLastPointerDown', 'sceneLastPointerUp', 'sceneLastPointerClick', 'scenePaintSerial', 'sceneGeometrySerial']) delete host.dataset[key];
     let pressTimer: ReturnType<typeof setTimeout> | undefined;
     const heldNow = () => new Set([...current.current.heldIds, ...localHeld, ...(pressed ? [pressed.id] : [])]);
     let revealFocus = false;
@@ -139,6 +192,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       shade.style.boxShadow = tip?.perspective.shade.edgeShadow ?? '';
     };
     const geometry = () => {
+      geometrySeq = nextSerial(geometrySeq); host.dataset.sceneGeometrySerial = String(geometrySeq);
       const order = new Map(drawOrder().map((item, index) => [item.id, index]));
       for (const [id, node] of nodes.current) {
         const box = boxes.get(id);
@@ -319,6 +373,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
           painted = true;
         }
         drawPushPaths(ctx, effectPaths, effectOpacity, effectAge, effectViewport);
+        paintSeq = nextSerial(paintSeq); host.dataset.scenePaintSerial = String(paintSeq);
         if (painted) { clearTimeout(watchdog.timer); setStatus(`HTML-in-Canvas · native ${mode}`); }
       } catch {
         changeMode('dom');
@@ -387,6 +442,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     // 固定サイズ画像の読込完了でもnative再描画を要求する。
     host.addEventListener('canvas-image-ready', refresh);
     host.addEventListener('scroll', scroll, { passive: true });
+    window.addEventListener('pointerdown', diagnosticDown, { capture: true, passive: true });
+    window.addEventListener('pointerup', diagnosticUp, { capture: true, passive: true });
+    window.addEventListener('click', diagnosticClick, { capture: true, passive: true });
+    window.addEventListener('pointercancel', clearDiagnosticGesture, true); window.addEventListener('blur', clearDiagnosticGesture);
     host.addEventListener('pointerdown', press, true);
     window.addEventListener('pointerup', pointerUp, true); window.addEventListener('pointercancel', pointerCancel, true);
     window.addEventListener('click', clicked, true); window.addEventListener('blur', releasePress);
@@ -398,6 +457,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       disposed = true; clearTimeout(pressTimer); pressed = null; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect();
       surface.removeEventListener('paint', paint); host.removeEventListener('scroll', scroll);
       host.removeEventListener('canvas-image-ready', refresh);
+      window.removeEventListener('pointerdown', diagnosticDown, true); window.removeEventListener('pointerup', diagnosticUp, true);
+      window.removeEventListener('click', diagnosticClick, true); window.removeEventListener('pointercancel', clearDiagnosticGesture, true);
+      window.removeEventListener('blur', clearDiagnosticGesture); diagnosticGesture = null;
       host.removeEventListener('pointerdown', press, true);
       window.removeEventListener('pointerup', pointerUp, true); window.removeEventListener('pointercancel', pointerCancel, true);
       window.removeEventListener('click', clicked, true); window.removeEventListener('blur', releasePress);

@@ -67,6 +67,42 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("受動診断は直近down/up/clickの実対象だけを記録する", () => {
+    localStorage.setItem('nlc-v2-effect', 'off');
+    render(<CanvasScene items={[{id:'a',content:<button aria-label="secret label">{React.createElement('img', {src:'https://example.com/secret?token=private',alt:'secret text'})}safe</button>},{id:'b',content:<span>private content</span>}]} />); flushFrame(0);
+    const host = screen.getByLabelText('カード領域。縦スクロールで移動');
+    const image = screen.getByAltText('secret text'); const other = screen.getByText('private content');
+    const rectSpy = vi.spyOn(image, 'getBoundingClientRect'); rectSpy.mockClear();
+    const down = new Event('pointerdown', {bubbles:true,cancelable:true});
+    Object.assign(down,{pointerId:4,button:0,isPrimary:true,clientX:25,clientY:45});fireEvent(image,down);
+    expect(down.defaultPrevented).toBe(false);
+    const read = (kind:string) => JSON.parse(host.getAttribute(`data-scene-last-pointer-${kind}`)!);
+    expect(read('down')).toMatchObject({seq:1,mode:'dom',paint:0,within:true,targetTag:'IMG',card:'a',button:true,buttonIndex:0,pointerId:4,x:25,y:45,pressed:null,drawn:{tip:0},pending:{tip:0}});
+    pointer(other,'pointerup',4);fireEvent.click(other);
+    expect(read('up')).toMatchObject({seq:2,card:'b',button:false,targetTag:'SPAN'});
+    expect(read('click')).toMatchObject({seq:3,card:'b',button:false});expect(rectSpy).not.toHaveBeenCalled();
+    const serialized = ['down','up','click'].map(kind=>host.getAttribute(`data-scene-last-pointer-${kind}`)).join('');
+    for(const secret of ['secret','private','example.com','token','safe']) expect(serialized).not.toContain(secret);
+    for(let i=0;i<100;i++) pointer(image,'pointerdown',4);
+    expect(read('down').seq).toBe(103);expect(host.getAttribute('data-scene-last-pointer-down')!.length).toBeLessThan(700);
+    expect([...host.attributes].filter(attr=>attr.name.startsWith('data-scene-last-pointer-'))).toHaveLength(3);
+  });
+
+  it("診断は場外gestureを収集せず終了時にlistenerを解除する", () => {
+    const {unmount} = render(<CanvasScene items={[{id:'a',content:<button>対象</button>}]} />); flushFrame(0);
+    const host=screen.getByLabelText('カード領域。縦スクロールで移動');const button=screen.getByText('対象');
+    const outside=document.createElement('button');document.body.appendChild(outside);
+    pointer(button,'pointerdown',7);pointer(window,'pointerup',7);pointer(outside,'click',7);
+    expect(JSON.parse(host.getAttribute('data-scene-last-pointer-click')!)).toMatchObject({seq:3,within:false,card:null,button:false});
+    const before=host.getAttribute('data-scene-last-pointer-click');
+    pointer(button,'pointerdown',7);pointer(window,'pointerup',7);fireEvent.click(outside);
+    expect(host.getAttribute('data-scene-last-pointer-click')).toBe(before);
+    pointer(outside,'pointerdown',8);pointer(outside,'pointerup',8);fireEvent.click(outside);
+    expect(host.getAttribute('data-scene-last-pointer-click')).toBe(before);
+    unmount();pointer(button,'pointerdown',7);fireEvent.click(button);
+    expect(host.getAttribute('data-scene-last-pointer-click')).toBe(before);outside.remove();
+  });
+
   it("DOM押下はfocusと遅れたclickの間も実表示の矩形と変形を固定する", () => {
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     const original = {id:'a',content:<InteractiveCard />};
@@ -161,7 +197,13 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       flushFrame(450);
       expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).not.toBe(painted.pose);
       const button=screen.getByRole('button',{name:'クリック 0'});
-      pointer(button,'pointerdown');fireEvent.focus(button);flushFrame(550);
+      pointer(button,'pointerdown');
+      const host=screen.getByLabelText('カード領域。縦スクロールで移動');
+      const diagnostic=JSON.parse(host.getAttribute('data-scene-last-pointer-down')!);
+      expect(diagnostic).toMatchObject({mode:'modern',paint:2,card:'a',button:true,buttonIndex:0,pressed:null});
+      expect(diagnostic.geometry).toBeGreaterThan(diagnostic.paint);
+      expect(diagnostic.drawn.tip).not.toBe(diagnostic.pending.tip);
+      fireEvent.focus(button);flushFrame(550);
       fireEvent(surface,new Event('paint'));
       expect(draws.filter(draw=>draw.id==='a').at(-1)).toEqual(painted);
       pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(600);
