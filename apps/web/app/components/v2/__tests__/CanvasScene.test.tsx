@@ -14,6 +14,7 @@ let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
 
 beforeEach(() => {
+  localStorage.clear();
   frames = new Map();
   nextFrame = 0;
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -59,6 +60,84 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("nativeドミノはDPR付きアフィン行列と原点描画を使い、終了時に通常座標へ戻す", () => {
+    vi.stubGlobal("devicePixelRatio", 2);
+    const draw = vi.fn(), matrix = vi.fn();
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:matrix,drawElementImage:draw} as unknown as CanvasRenderingContext2D);
+    const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
+    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
+    try {
+      const item = (id:string) => ({id,content:<span>{id}</span>});
+      const {rerender} = render(<CanvasScene items={[item('a')]} />);
+      flushFrame(0);
+      fireEvent.change(screen.getByRole('combobox'),{target:{value:'domino'}});
+      rerender(<CanvasScene items={[item('new'),item('a')]} />);
+      flushFrame(16);
+      const host = screen.getByLabelText('カード領域。縦スクロールで移動');
+      host.scrollTop = 90; fireEvent.scroll(host);
+      draw.mockClear(); matrix.mockClear(); flushFrame(250);
+      expect(matrix.mock.calls.some(call=>call[1]!==0 || call[2]!==0 || call[3]<2)).toBe(true);
+      expect(matrix.mock.calls.some(call=>call[0]===2 && call[3]===2)).toBe(true);
+      expect(draw.mock.calls.some(call=>call[1]===0 && call[2]===0)).toBe(true);
+      const nativeMatrix = matrix.mock.calls.filter(call=>call[3]<2).at(-1)!;
+      fireEvent.click(screen.getByRole('button',{name:'DOMに切替'})); flushFrame(250);
+      const node = document.querySelector<HTMLElement>('[data-scene-card="new"]')!;
+      const cssMatrix = node.style.transform.slice(7,-1).split(',').map(Number);
+      expect(cssMatrix).toHaveLength(6);
+      cssMatrix.forEach((value,index)=>expect(nativeMatrix[index]).toBeCloseTo(value*2,5));
+      fireEvent.click(screen.getByRole('button',{name:'Nativeを試す'})); flushFrame(250);
+      draw.mockClear(); flushFrame(2000);
+      expect(draw.mock.calls.every(call=>call[1]!==0 || call[2]!==0)).toBe(true);
+      expect(screen.getByRole('status').textContent).toContain('native');
+    } finally {
+      if(original) Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',original);
+      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
+    }
+  });
+  it("保存済みドミノもreduced-motionでは変形せず、解除しても旧新着を再生しない", () => {
+    localStorage.setItem('nlc-v2-effect','domino');
+    let changed: (()=>void) | undefined;
+    const media = {matches:true,addEventListener(_type:string,cb:()=>void){changed=cb;},removeEventListener(){}};
+    vi.stubGlobal('matchMedia',()=>media);
+    const item = (id:string) => ({id,content:<span>{id}</span>});
+    const {rerender} = render(<CanvasScene items={[item('a')]} />); flushFrame(0);
+    rerender(<CanvasScene items={[item('new'),item('a')]} />); flushFrame(16); flushFrame(250);
+    expect([...document.querySelectorAll<HTMLElement>('[data-scene-card]')].every(node=>node.dataset.sceneTip==='0')).toBe(true);
+    act(()=>{media.matches=false;changed?.();}); flushFrame(300);
+    expect([...document.querySelectorAll<HTMLElement>('[data-scene-card]')].every(node=>node.dataset.sceneTip==='0')).toBe(true);
+  });
+  it("エフェクトを保存し、OFFでは新着の粒も傾きも表示しない", () => {
+    const item = (id:string) => ({id,content:<span>{id}</span>});
+    const {rerender,unmount} = render(<CanvasScene items={[item('a')]} />);
+    flushFrame(0);
+    fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});
+    rerender(<CanvasScene items={[item('new'),item('a')]} />);
+    flushFrame(16); flushFrame(300);
+    expect(screen.getByLabelText('カード領域。縦スクロールで移動').dataset.scenePushEffect).toBe('idle');
+    expect(document.querySelectorAll('svg path').length).toBe(0);
+    expect([...document.querySelectorAll<HTMLElement>('[data-scene-card]')].every(node=>node.dataset.sceneTip==='0')).toBe(true);
+    unmount(); render(<CanvasScene items={[item('a')]} />);
+    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('off');
+  });
+  it("ドミノはDOMカードを変形し、focusと選択切替で解除して旧効果を再開しない", () => {
+    const original = {id:'a',content:<InteractiveCard />};
+    const {rerender} = render(<CanvasScene items={[original]} />);
+    flushFrame(0);
+    fireEvent.change(screen.getByRole('combobox'),{target:{value:'domino'}});
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]} />);
+    flushFrame(16); flushFrame(250);
+    const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    expect(Number(node.dataset.sceneTip)).toBeGreaterThan(0);
+    expect(node.style.transform).toContain('matrix(');
+    expect(document.querySelectorAll('svg path').length).toBe(0);
+    fireEvent.focus(screen.getByRole('textbox'));
+    flushFrame(300);
+    expect(node.dataset.sceneTip).toBe('0');
+    fireEvent.change(screen.getByRole('combobox'),{target:{value:'sparkle'}});
+    flushFrame(350);
+    expect(document.querySelectorAll('svg path').length).toBe(0);
+  });
+
   it("実新着の因果に沿う星屑だけ短時間表示し、mode切替で再開始せず終了後frameを止める", () => {
     const item = (id:string) => ({id, content:<span>{id}</span>});
     const {rerender} = render(<CanvasScene items={[item('a'),item('b')]} />);

@@ -9,6 +9,9 @@ import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotion
 import type { Card } from "../../lib/types";
 import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
+import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, type DominoTransform } from "./dominoEffect";
+import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
+
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string }
 const EMPTY = new Set<string>();
@@ -37,6 +40,8 @@ function MountedCardRoot({ item, register }: CardRootProps) {
 }
 
 export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
+  const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
+  const chosenEffect = useRef(effectChoice);
   const viewport = useRef<HTMLDivElement>(null);
   const canvas = useRef<DrawableCanvas>(null);
   const extent = useRef<HTMLDivElement>(null);
@@ -51,7 +56,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const savedMotion = useRef<SceneMotionState | null>(null);
   const savedTargets = useRef(new Map<string, SceneBox>());
   const savedLayout = useRef(createSceneLayout());
-  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; camera: Camera } | null>(null);
+  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; chooseEffect: () => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
   const [forcedDOM, setForcedDOM] = useState(false);
@@ -62,6 +67,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     runtime.current?.refresh();
   });
   useLayoutEffect(() => { current.current = { items, heldIds }; runtime.current?.refresh(); }, [items, heldIds]);
+
+  useLayoutEffect(() => { chosenEffect.current = effectChoice; runtime.current?.chooseEffect(); }, [effectChoice]);
 
   // カードのpassive effectによるautofocusより先にportalの行先を接続する。
   useLayoutEffect(() => {
@@ -81,6 +88,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     let effectViewport: PushEffectBox | undefined;
     let effectOpacity = 0;
     let effectAge = 0;
+    let dominoTransforms: ReadonlyMap<string, DominoTransform> = new Map();
     let lastFrameTime: number | null = null;
     const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
     let reducedMotion = media?.matches ?? false;
@@ -110,7 +118,11 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         node.dataset.sceneTargetX = target.x.toFixed(2); node.dataset.sceneTargetY = target.y.toFixed(2);
         node.dataset.scenePhase = card?.phase ?? 'settled';
         node.dataset.sceneDelay = String(Math.round(card?.delayMs ?? 0));
-        if (mode === 'dom') node.style.transform = `translate(${camera.x + box.x * camera.zoom}px,${camera.y + box.y * camera.zoom}px) scale(${camera.zoom})`;
+        const tip = dominoTransforms.get(id);
+        node.dataset.sceneTip = String(tip?.amount ?? 0);
+        if (mode === 'dom') node.style.transform = tip
+          ? `matrix(${tip.a},${tip.b},${tip.c},${tip.d},${tip.e + camera.x},${tip.f + camera.y})`
+          : `translate(${camera.x + box.x}px,${camera.y + box.y}px) scale(1)`;
       }
     };
     const changeMode = (next: CanvasMode) => {
@@ -181,13 +193,17 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         if (effect.revision !== layout.insertion.revision) {
           effect.revision = layout.insertion.revision;
           effect.startedAt = time;
-          effect.active = !reducedMotion && layout.insertion.traces.some(trace => trace.edges.length > 0);
+          effect.active = chosenEffect.current !== 'off' && !reducedMotion && layout.insertion.traces.some(trace => trace.edges.length > 0);
         }
-        if (reducedMotion || !layout.insertion.traces.length || time - effect.startedAt >= PUSH_EFFECT_DURATION_MS) effect.active = false;
+        if (reducedMotion || !layout.insertion.traces.length || time - effect.startedAt >= (chosenEffect.current === 'domino' ? DOMINO_EFFECT_DURATION_MS : PUSH_EFFECT_DURATION_MS)) effect.active = false;
         effectAge = time - effect.startedAt;
-        effectOpacity = effect.active ? pushEffectOpacity(effectAge) : 0;
+        effectOpacity = effect.active && chosenEffect.current === 'sparkle' ? pushEffectOpacity(effectAge) : 0;
+        dominoTransforms = effect.active && chosenEffect.current === 'domino'
+          ? createDominoTransforms(layout.insertion.traces, boxes, effectAge, { heldIds: new Set([...current.current.heldIds, ...localHeld]), reducedMotion, directionBoxes: targets })
+          : new Map();
         effectViewport = { x: 0, y: host.scrollTop, width: viewportWidth, height: viewportHeight };
-        effectPaths = effect.active ? createPushPaths(layout.insertion.traces, boxes, effectViewport) : [];
+        effectPaths = effect.active && chosenEffect.current === 'sparkle' ? createPushPaths(layout.insertion.traces, boxes, effectViewport) : [];
+        host.dataset.sceneEffect = chosenEffect.current;
         host.dataset.scenePushEffect = reducedMotion ? 'reduced' : effect.active ? 'active' : 'idle';
         // 曲線は粒子の配置にだけ使い、前面に独立した光点だけを描く。
         const particles = mode === 'dom' && effectOpacity > 0 ? createPushParticles(effectPaths, effectAge, effectViewport) : [];
@@ -246,7 +262,13 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
           const node = nodes.current.get(item.id);
           const box = boxes.get(item.id);
           if (!node || !box) continue;
-          const transform = ctx.drawElementImage(node, box.x, box.y, box.width, box.height);
+          const tip = dominoTransforms.get(item.id);
+          let transform: DOMMatrix | undefined;
+          if (tip) {
+            ctx.setTransform(dpr * tip.a, dpr * tip.b, dpr * tip.c, dpr * tip.d, dpr * (camera.x + tip.e), dpr * (camera.y + tip.f));
+            transform = ctx.drawElementImage(node, 0, 0, box.width, box.height);
+            ctx.setTransform(dpr, 0, 0, dpr, dpr * camera.x, dpr * camera.y);
+          } else transform = ctx.drawElementImage(node, box.x, box.y, box.width, box.height);
           if (mode === 'legacy' && transform) node.style.transform = transform.toString();
           painted = true;
         }
@@ -281,7 +303,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       revealFocus = true; refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
+    runtime.current = { refresh, camera, chooseEffect: () => { effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
     } };
@@ -306,6 +328,11 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       <span role="status" data-renderer-status>{status}</span>
       <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-2 py-1">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>
       <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
+      <label className="flex items-center gap-1">エフェクト
+        <select aria-label="新着エフェクト" value={effectChoice} onChange={event => setEffectPreference(event.target.value as SceneEffectChoice)} className="rounded border bg-transparent px-2 py-1">
+          <option value="off">OFF</option><option value="sparkle">キラキラ</option><option value="domino">ドミノ（試作）</option>
+        </select>
+      </label>
       <span>縦スクロールで移動</span>
     </div>
     <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
