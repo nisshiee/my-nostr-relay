@@ -86,9 +86,39 @@ describe('feed WebGLの同一射影・有界texture・前面粒子',()=>{
     expect(gl.uniform2f).toHaveBeenCalledWith('rippleDirection',1,0);
     expect(surface.updateElementGeometry).toHaveBeenCalledWith(a.node,{canvasTransform:expect.objectContaining({values:sceneCardMatrix(a.box,camera)})});
     const fragment=vi.mocked(gl.shaderSource).mock.calls[1][1];
-    expect(fragment).toContain('smoothstep(0.,.08,uv.x)');expect(fragment).toContain('wave*6.0/max(cardSize');
+    expect(fragment).not.toContain('smoothstep(0.,.08,uv.x)');expect(fragment).toContain('min(edgePx.x,edgePx.y))/6.0');expect(fragment).toContain('wave*6.0/max(cardSize');
     expect(fragment).toContain('distanceToWave*distanceToWave/0.025');expect(fragment).toContain('rippleAmount*.32');expect(fragment).toContain('rippleAmount*.15');expect(fragment).toContain('vec3(.25,.85,1.)*c.a');
-    expect(fragment.match(/texture\(image,/g)).toHaveLength(1);
+    expect(fragment.match(/texture\(image,/g)).toHaveLength(2);expect(fragment).toContain('vec4 c=texture(image,uv)');expect(fragment).toContain('shifted.rgb*(c.a/max(shifted.a,.0001))');expect(fragment).toContain('light=band*rippleAmount*.32');expect(fragment).not.toContain('light=band*guard');
+  });
+  it('6CSSpx境界guardは縦横サイズによらず外へsamplingせず広い静止枠を作らない',()=>{
+    for(const width of [1,10,100,1000])for(const height of [1,10,100,10000]) {
+      for(const u of [0,.0001,.01,.04,.1,.5,.9,.99,1])for(const v of [0,.01,.5,.99,1]) {
+        const distance=Math.min(u*width,(1-u)*width,v*height,(1-v)*height),guard=Math.min(1,Math.max(0,distance)/6);
+        for(let angle=0;angle<16;angle++)for(const wave of [-1,-.5,0,.5,1]) {
+          const x=Math.cos(angle*Math.PI/8)*wave*guard*6,y=Math.sin(angle*Math.PI/8)*wave*guard*6;
+          expect(u+x/width).toBeGreaterThanOrEqual(-1e-12);expect(u+x/width).toBeLessThanOrEqual(1+1e-12);
+          expect(v+y/height).toBeGreaterThanOrEqual(-1e-12);expect(v+y/height).toBeLessThanOrEqual(1+1e-12);
+          expect(Math.hypot(x,y)).toBeLessThanOrEqual(6+1e-12);
+        }
+      }
+    }
+    // 8%の帯ではなく、どれだけ長いカードでも6px内側では抑制なし。
+    for(const height of [100,1000,10000])expect(Math.min(1,Math.min(50,6,50,height-6)/6)).toBe(1);
+  });
+  it('屈折色を元alphaへ正規化し透明角を埋めずpremultiplied上限を保つ',()=>{
+    const smooth=(a:number)=>{const t=Math.max(0,Math.min(1,(a-.95)/.05));return t*t*(3-2*t);};
+    for(const alpha of [0,.01,.5,.95,.97,1])for(const shiftedAlpha of [0,.01,.5,.97,1]) {
+      const original=[.8,.5,.2].map(c=>c*alpha),shifted=[.3,.7,1].map(c=>c*shiftedAlpha);
+      const coverage=smooth(alpha)*smooth(shiftedAlpha);
+      const result=original.map((c,i)=>{
+        const refracted=shifted[i]*(alpha/Math.max(shiftedAlpha,.0001));
+        const mixed=c*(1-coverage)+refracted*coverage;
+        const dark=mixed*(1-.15)+mixed*.55*.15;
+        return dark*(1-.32)+[.25,.85,1][i]*alpha*.32;
+      });
+      for(const c of result){expect(c).toBeGreaterThanOrEqual(0);expect(c).toBeLessThanOrEqual(alpha+1e-12);}
+      if(alpha===0)expect(result).toEqual([0,0,0]);
+    }
   });
   it('context lossでも既存geometryを消して停止',()=>{
     const {renderer,gl,surface}=setup(),a=card('a');renderer.render(frame([a]));vi.mocked(gl.isContextLost).mockReturnValue(true);

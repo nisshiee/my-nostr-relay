@@ -95,6 +95,8 @@ export function createWebGLSceneRenderer(gl: HtmlTextureGL, surface: GeometryCan
       }
       gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('Program failed'); return p;
     };
+    // 波紋中だけ元UVと変位UVを読む。元alphaを保ち、透明な丸角や隣カードを埋めない。
+    // 変位だけを6CSSpx以内の境界距離で制限し、光には広い静止枠を作らない。
     const cardProgram = program(`#version 300 es
       precision highp float; precision highp int;
       in vec2 position; uniform mat4 model; uniform vec2 viewSize; uniform vec2 cardSize; out vec2 uv;
@@ -103,13 +105,18 @@ export function createWebGLSceneRenderer(gl: HtmlTextureGL, surface: GeometryCan
       precision highp float; precision highp int;in vec2 uv;uniform sampler2D image;uniform float amount;uniform int edge;uniform bool footprint;uniform vec2 cardSize;uniform vec2 rippleDirection;uniform float rippleProgress;uniform float rippleAmount;out vec4 color;
       void main(){float t=edge==0?1.-uv.y:edge==1?uv.x:edge==2?uv.y:1.-uv.x;
       if(footprint){float r=min(12.,min(cardSize.x,cardSize.y)*.5);vec2 q=abs(uv*cardSize-cardSize*.5)-(cardSize*.5-vec2(r));float d=length(max(q,0.))+min(max(q.x,q.y),0.)-r;float a=mix(.08,.7,t)*amount*.22*(1.-smoothstep(-1.,1.,d));color=vec4(vec3(15.,23.,42.)/255.*a,a);}
-      else{vec2 sampleUV=uv;float light=0.;float trough=0.;
+      else{vec4 c=texture(image,uv);float light=0.;float trough=0.;
       if(rippleAmount>0.){float span=max(abs(rippleDirection.x)+abs(rippleDirection.y),.001);float along=dot(uv-.5,rippleDirection)/span+.5;
       float distanceToWave=along-mix(-.15,1.15,rippleProgress);float band=exp(-distanceToWave*distanceToWave/0.025);
-      float border=smoothstep(0.,.08,uv.x)*smoothstep(0.,.08,uv.y)*smoothstep(0.,.08,1.-uv.x)*smoothstep(0.,.08,1.-uv.y);
-      float wave=sin(distanceToWave*32.)*band*border*rippleAmount;
-      sampleUV=clamp(uv+rippleDirection*wave*${RIPPLE_EFFECT_MAX_DISPLACEMENT_PX.toFixed(1)}/max(cardSize,vec2(1.)),vec2(0.),vec2(1.));light=band*border*rippleAmount*.32;trough=exp(-(distanceToWave+.12)*(distanceToWave+.12)/.02)*border*rippleAmount*.15;}
-      vec4 c=texture(image,sampleUV);c.rgb=mix(c.rgb,c.rgb*.55,trough);c.rgb=mix(c.rgb,vec3(.25,.85,1.)*c.a,light);float a=mix(.48,.06,t)*amount*.3;color=vec4(c.rgb*(1.-a)+vec3(15.,23.,42.)/255.*a*c.a,c.a);}}`);
+      vec2 edgePx=min(uv,1.-uv)*max(cardSize,vec2(1.));
+      float guard=min(1.,max(0.,min(edgePx.x,edgePx.y))/${RIPPLE_EFFECT_MAX_DISPLACEMENT_PX.toFixed(1)});
+      float wave=sin(distanceToWave*32.)*band*guard*rippleAmount;
+      vec2 sampleUV=clamp(uv+rippleDirection*wave*${RIPPLE_EFFECT_MAX_DISPLACEMENT_PX.toFixed(1)}/max(cardSize,vec2(1.)),vec2(0.),vec2(1.));
+      vec4 shifted=texture(image,sampleUV);
+      float coverage=smoothstep(.95,1.,c.a)*smoothstep(.95,1.,shifted.a);
+      c.rgb=mix(c.rgb,shifted.rgb*(c.a/max(shifted.a,.0001)),coverage);
+      light=band*rippleAmount*.32;trough=exp(-(distanceToWave+.12)*(distanceToWave+.12)/.02)*rippleAmount*.15;}
+      c.rgb=mix(c.rgb,c.rgb*.55,trough);c.rgb=mix(c.rgb,vec3(.25,.85,1.)*c.a,light);float a=mix(.48,.06,t)*amount*.3;color=vec4(c.rgb*(1.-a)+vec3(15.,23.,42.)/255.*a*c.a,c.a);}}`);
     const particleProgram = program(`#version 300 es
       precision highp float; precision highp int;
       in vec2 position;in vec4 tint;uniform vec2 viewSize;out vec4 color;
