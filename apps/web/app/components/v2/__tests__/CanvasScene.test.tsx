@@ -36,6 +36,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -46,6 +47,12 @@ function flushFrame(time = 0) {
     frames.clear();
     for (const callback of pending) callback(time);
   });
+}
+
+function pointer(target: Element | Window, type: string, pointerId = 7, button = 0, isPrimary = true) {
+  const event = new Event(type, { bubbles: true });
+  Object.assign(event, { pointerId, button, isPrimary });
+  fireEvent(target, event);
 }
 
 function InteractiveCard({ focus = false }: { focus?: boolean }) {
@@ -60,6 +67,105 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 }
 
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
+  it("DOM押下はfocusと遅れたclickの間も実表示の矩形と変形を固定する", () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
+    const original = {id:'a',content:<InteractiveCard />};
+    const {rerender} = render(<CanvasScene items={[original]} />); flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]} />); flushFrame(16); flushFrame(250);
+    const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const snapshot = [node.style.transform,node.dataset.sceneX,node.dataset.sceneY];
+    const button = screen.getByRole('button',{name:'クリック 0'});
+    pointer(button,'pointerdown'); fireEvent.focus(button); flushFrame(450);
+    expect([node.style.transform,node.dataset.sceneX,node.dataset.sceneY]).toEqual(snapshot);
+    pointer(window,'pointerup',99); flushFrame(600);
+    expect(node.style.transform).toBe(snapshot[0]);
+    pointer(window,'pointerup'); act(()=>vi.advanceTimersByTime(300)); flushFrame(800);
+    expect(node.style.transform).toBe(snapshot[0]);
+    fireEvent.click(button);
+    expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
+    act(()=>vi.advanceTimersByTime(0)); flushFrame(850);
+    expect(node.dataset.sceneTip).toBe('0');
+  });
+  it("押下由来focusでは非変形座標による自動scrollを起こさない", () => {
+    localStorage.setItem('nlc-v2-effect','domino');
+    vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){return this.dataset.sceneCard==='a'?1000:120;});
+    const original={id:'a',content:<InteractiveCard/>};
+    const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(300);
+    const host=screen.getByLabelText('カード領域。縦スクロールで移動');
+    host.scrollTop=500;fireEvent.scroll(host);flushFrame(300);
+    const button=screen.getByRole('button',{name:'クリック 0'});
+    Object.defineProperty(button,'offsetTop',{configurable:true,value:100});
+    pointer(button,'pointerdown');fireEvent.focus(button);flushFrame(400);
+    expect(host.scrollTop).toBe(500);
+    pointer(window,'pointercancel');
+  });
+  it.each(['cancel','blur','fallback','off','reduced','removed'])("押下固定を%sで解除し残さない", reason => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
+    let changed:(()=>void)|undefined;
+    const media={matches:false,addEventListener(_type:string,cb:()=>void){changed=cb;},removeEventListener(){}};
+    vi.stubGlobal('matchMedia',()=>media);
+    const original={id:'a',content:<InteractiveCard/>};
+    const {rerender,unmount}=render(<CanvasScene items={[original]}/>); flushFrame(0);
+    const incoming={id:'new',content:<span>new</span>};
+    rerender(<CanvasScene items={[incoming,original]}/>); flushFrame(16); flushFrame(250);
+    const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const button=screen.getByRole('button',{name:'クリック 0'});
+    pointer(button,'pointerdown'); fireEvent.focus(button); flushFrame(350);
+    expect(Number(node.dataset.sceneTip)).toBeGreaterThan(0);
+    if(reason==='cancel') pointer(window,'pointercancel');
+    if(reason==='blur') fireEvent(window,new Event('blur'));
+    if(reason==='fallback'){pointer(window,'pointerup');act(()=>vi.advanceTimersByTime(701));}
+    if(reason==='off') fireEvent.change(screen.getByRole('combobox'),{target:{value:'off'}});
+    if(reason==='reduced') act(()=>{media.matches=true;changed?.();});
+    if(reason==='removed') rerender(<CanvasScene items={[incoming]}/>);
+    flushFrame(500);
+    if(reason==='removed') expect(document.querySelector('[data-scene-card="a"]')).toBeNull();
+    else expect(node.dataset.sceneTip).toBe('0');
+    unmount(); frames.clear(); act(()=>vi.runOnlyPendingTimers()); expect(frames.size).toBe(0);
+  });
+  it("unmountはclick待ちtimerとpointer listenerを解除する", () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
+    const schedule=vi.spyOn(globalThis,'setTimeout'), cancel=vi.spyOn(globalThis,'clearTimeout');
+    const original={id:'a',content:<InteractiveCard/>};
+    const {rerender,unmount}=render(<CanvasScene items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
+    pointer(screen.getByRole('button',{name:'クリック 0'}),'pointerdown');pointer(window,'pointerup');
+    const index=schedule.mock.calls.findLastIndex(call=>call[1]===700);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const timer=schedule.mock.results[index].value;
+    unmount(); expect(cancel).toHaveBeenCalledWith(timer);
+    schedule.mockClear();pointer(window,'pointerup');expect(schedule).not.toHaveBeenCalled();
+  });
+  it("native押下は未paintの計算値でなく最後に描いた行列を保持する", () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
+    let matrix:number[]=[];
+    const draws:{id:string|null,matrix:number[],x:number,y:number}[]=[];
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:(...values:number[])=>{matrix=values;},drawElementImage:(node:Element,x:number,y:number)=>{draws.push({id:node.getAttribute('data-scene-card'),matrix:[...matrix],x,y});}} as unknown as CanvasRenderingContext2D);
+    const descriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
+    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value:vi.fn()});
+    try {
+      const original={id:'a',content:<InteractiveCard/>};
+      const {rerender}=render(<CanvasScene items={[original]}/>); flushFrame(0);
+      const surface=document.querySelector('canvas')!;
+      fireEvent(surface,new Event('paint'));
+      rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
+      fireEvent(surface,new Event('paint'));
+      const painted=draws.filter(draw=>draw.id==='a').at(-1)!;
+      flushFrame(350);
+      const button=screen.getByRole('button',{name:'クリック 0'});
+      pointer(button,'pointerdown');fireEvent.focus(button);flushFrame(450);
+      fireEvent(surface,new Event('paint'));
+      expect(draws.filter(draw=>draw.id==='a').at(-1)).toEqual(painted);
+      pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(500);
+      fireEvent(surface,new Event('paint'));
+      expect(draws.filter(draw=>draw.id==='a').at(-1)!.x).not.toBe(0);
+      expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
+    } finally {
+      if(descriptor)Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',descriptor);
+      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
+    }
+  });
   it("nativeドミノはDPR付きアフィン行列と原点描画を使い、終了時に通常座標へ戻す", () => {
     vi.stubGlobal("devicePixelRatio", 2);
     const draw = vi.fn(), matrix = vi.fn();

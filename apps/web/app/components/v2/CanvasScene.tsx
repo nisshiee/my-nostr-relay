@@ -99,10 +99,14 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     let camera: Camera = { x: 0, y: -host.scrollTop, zoom: 1 };
     const heights = new Map<string, number>();
     const localHeld = new Set<string>();
+    let pressed: { pointerId: number; id: string; box: SceneBox; transform: DominoTransform; released: boolean } | null = null;
+    const displayed = new Map<string, { box: SceneBox; transform?: DominoTransform }>();
+    let pressTimer: ReturnType<typeof setTimeout> | undefined;
+    const heldNow = () => new Set([...current.current.heldIds, ...localHeld, ...(pressed ? [pressed.id] : [])]);
     let revealFocus = false;
     const observed = new Set<HTMLElement>();
     const drawOrder = () => {
-      const held = new Set([...current.current.heldIds, ...localHeld]);
+      const held = heldNow();
       return [...current.current.items].reverse().sort((a, b) => Number(held.has(a.id)) - Number(held.has(b.id)));
     };
     const geometry = () => {
@@ -111,6 +115,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         const box = boxes.get(id);
         if (!box) continue;
         node.style.width = `${box.width}px`;
+        node.style.height = pressed?.id === id ? `${pressed.box.height}px` : '';
+        node.style.overflow = pressed?.id === id ? 'clip' : '';
         node.style.zIndex = String(order.get(id) ?? 0);
         const card = motion.cards.get(id);
         const target = targets.get(id) ?? box;
@@ -120,15 +126,18 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         node.dataset.sceneDelay = String(Math.round(card?.delayMs ?? 0));
         const tip = dominoTransforms.get(id);
         node.dataset.sceneTip = String(tip?.amount ?? 0);
-        if (mode === 'dom') node.style.transform = tip
+        if (mode === 'dom') {
+          node.style.transform = tip
           ? `matrix(${tip.a},${tip.b},${tip.c},${tip.d},${tip.e + camera.x},${tip.f + camera.y})`
           : `translate(${camera.x + box.x}px,${camera.y + box.y}px) scale(1)`;
+          displayed.set(id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
+        }
       }
     };
     const changeMode = (next: CanvasMode) => {
       const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const selection = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
-      mode = next;
+      mode = next; displayed.clear();
       surface.hidden = next === 'dom';
       effectSvg.current!.style.display = next === 'dom' ? '' : 'none';
       dom.hidden = next !== 'dom';
@@ -152,6 +161,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       if (disposed || frame) return;
       frame = requestAnimationFrame(time => {
         frame = 0;
+        if (pressed && !nodes.current.has(pressed.id)) releasePress();
+        for (const id of displayed.keys()) if (!nodes.current.has(id)) displayed.delete(id);
         const rect = host.getBoundingClientRect();
         const viewportWidth = host.clientWidth || rect.width;
         const viewportHeight = host.clientHeight || rect.height;
@@ -162,7 +173,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         if (surface.width !== w) surface.width = w;
         if (surface.height !== h) surface.height = h;
         if (layoutDirty) {
-          const held = new Set([...current.current.heldIds, ...localHeld]);
+          const held = heldNow();
           for (const [id, node] of nodes.current) {
             const parent = mode === 'dom' ? dom : surface;
             if (node.parentNode !== parent) {
@@ -182,9 +193,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
           motion = retargetSceneMotion(motion, targets, { chainOrder: plan.chainOrder, heldIds: held, reducedMotion });
           layoutDirty = false;
         }
-        motion = advanceSceneMotion(motion, lastFrameTime === null ? 0 : Math.max(0, time - lastFrameTime), { heldIds: new Set([...current.current.heldIds, ...localHeld]), reducedMotion });
+        motion = advanceSceneMotion(motion, lastFrameTime === null ? 0 : Math.max(0, time - lastFrameTime), { heldIds: heldNow(), reducedMotion });
         lastFrameTime = time;
         boxes = sceneMotionBoxes(motion);
+        if (pressed) boxes.set(pressed.id, pressed.box);
         const bottom = Math.max(viewportHeight, ...[...boxes.values(), ...targets.values()].map(box => box.y + box.height + 16));
         extent.current!.style.height = `${bottom}px`;
         host.scrollLeft = 0;
@@ -199,8 +211,11 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         effectAge = time - effect.startedAt;
         effectOpacity = effect.active && chosenEffect.current === 'sparkle' ? pushEffectOpacity(effectAge) : 0;
         dominoTransforms = effect.active && chosenEffect.current === 'domino'
-          ? createDominoTransforms(layout.insertion.traces, boxes, effectAge, { heldIds: new Set([...current.current.heldIds, ...localHeld]), reducedMotion, directionBoxes: targets })
+          ? createDominoTransforms(layout.insertion.traces, boxes, effectAge, { heldIds: heldNow(), reducedMotion, directionBoxes: targets })
           : new Map();
+        if (pressed && !reducedMotion && chosenEffect.current === 'domino') {
+          dominoTransforms = new Map(dominoTransforms).set(pressed.id, pressed.transform);
+        }
         effectViewport = { x: 0, y: host.scrollTop, width: viewportWidth, height: viewportHeight };
         effectPaths = effect.active && chosenEffect.current === 'sparkle' ? createPushPaths(layout.insertion.traces, boxes, effectViewport) : [];
         host.dataset.sceneEffect = chosenEffect.current;
@@ -246,7 +261,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       });
     };
     const refresh = () => { layoutDirty = true; requestFrame(); };
-    const preference = () => { reducedMotion = media?.matches ?? false; refresh(); };
+    const preference = () => { reducedMotion = media?.matches ?? false; if (reducedMotion) releasePress(); refresh(); };
     media?.addEventListener('change', preference);
     const observer = new ResizeObserver(refresh);
     observer.observe(host);
@@ -269,6 +284,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
             transform = ctx.drawElementImage(node, 0, 0, box.width, box.height);
             ctx.setTransform(dpr, 0, 0, dpr, dpr * camera.x, dpr * camera.y);
           } else transform = ctx.drawElementImage(node, box.x, box.y, box.width, box.height);
+          displayed.set(item.id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
           if (mode === 'legacy' && transform) node.style.transform = transform.toString();
           painted = true;
         }
@@ -297,13 +313,41 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         requestFrame();
       }
     };
+    // pointerdownで実表示を保存し、focusによる変形解除でclick対象が逃げるのを防ぐ。
+    const releasePress = () => {
+      clearTimeout(pressTimer); pressTimer = undefined;
+      if (!pressed) return;
+      pressed = null; refresh();
+    };
+    const press = (event: PointerEvent) => {
+      if (pressed || event.button !== 0 || event.isPrimary === false || reducedMotion || chosenEffect.current !== 'domino') return;
+      const id = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard : undefined;
+      const snapshot = id ? displayed.get(id) : undefined;
+      const box = snapshot?.box;
+      const transform = snapshot?.transform;
+      if (!id || !box || !transform) return;
+      pressed = { pointerId: event.pointerId, id, box: { ...box }, transform: { ...transform }, released: false };
+      revealFocus = false; refresh();
+    };
+    const pointerUp = (event: PointerEvent) => {
+      if (!pressed || event.pointerId !== pressed.pointerId) return;
+      pressed.released = true;
+      // touch互換clickも待つ。clickなしのdrag/選択は有限時間で必ず解除する。
+      clearTimeout(pressTimer); pressTimer = setTimeout(releasePress, 700);
+    };
+    const pointerCancel = (event: PointerEvent) => { if (pressed?.pointerId === event.pointerId) releasePress(); };
+    const clicked = (event: MouseEvent) => {
+      if (!pressed?.released) return;
+      if ('pointerId' in event && event.pointerId !== pressed.pointerId) return;
+      clearTimeout(pressTimer); pressTimer = setTimeout(releasePress, 0);
+    };
     const focus = (event: FocusEvent) => {
       const id = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard : undefined;
       localHeld.clear(); if (id) localHeld.add(id);
-      revealFocus = true; refresh();
+      revealFocus = !(pressed && pressed.id === id); refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, chooseEffect: () => { effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
+    runtime.current = { refresh, camera, chooseEffect: () => { releasePress(); effect.active = false; dominoTransforms = new Map(); requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
     } };
@@ -311,14 +355,20 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
     // 固定サイズ画像の読込完了でもnative再描画を要求する。
     host.addEventListener('canvas-image-ready', refresh);
     host.addEventListener('scroll', scroll, { passive: true });
+    host.addEventListener('pointerdown', press, true);
+    window.addEventListener('pointerup', pointerUp, true); window.addEventListener('pointercancel', pointerCancel, true);
+    window.addEventListener('click', clicked, true); window.addEventListener('blur', releasePress);
     host.addEventListener('focusin', focus); host.addEventListener('focusout', blur);
     window.addEventListener('resize', refresh);
     changeMode(mode); refresh();
     return () => {
       media?.removeEventListener('change', preference);
-      disposed = true; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect();
+      disposed = true; clearTimeout(pressTimer); pressed = null; cancelAnimationFrame(frame); clearTimeout(watchdog.timer); observer.disconnect();
       surface.removeEventListener('paint', paint); host.removeEventListener('scroll', scroll);
       host.removeEventListener('canvas-image-ready', refresh);
+      host.removeEventListener('pointerdown', press, true);
+      window.removeEventListener('pointerup', pointerUp, true); window.removeEventListener('pointercancel', pointerCancel, true);
+      window.removeEventListener('click', clicked, true); window.removeEventListener('blur', releasePress);
       host.removeEventListener('focusin', focus); host.removeEventListener('focusout', blur); window.removeEventListener('resize', refresh);
     };
   }, [forcedDOM]);
