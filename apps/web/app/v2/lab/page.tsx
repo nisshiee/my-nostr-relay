@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { CanvasImageProvider, MediaImage } from '../../components/CanvasAwareImage';
 import { CanvasScene } from '../../components/v2/CanvasScene';
+import { PerspectiveProbe } from '../../components/v2/PerspectiveProbe';
 
 function LabCard({ id, image }: { id: string; image: string }) {
   const [count, setCount] = useState(0);
@@ -26,8 +27,14 @@ export default function Lab() {
   const [input, setInput] = useState('');
   const [image, setImage] = useState('');
   const [ids, setIds] = useState(['1', '2', '3', '4', '5', '6']);
+  const [perspective, setPerspective] = useState(false);
   return <main className="flex h-dvh flex-col bg-zinc-100">
     <header className="flex flex-wrap items-center gap-4 bg-zinc-900 px-5 py-3 text-white"><strong>Nostr Live Canvas V2</strong><span>オフライン検証</span><button className="rounded border px-2 py-1" onClick={() => setIds(previous => [String(Math.max(...previous.map(Number), 0) + 1), ...previous])}>カード追加</button><button className="rounded border px-2 py-1" onClick={() => setIds(previous => previous.slice(1))}>先頭を削除</button><Link href="/v2">実データ版</Link></header>
+    <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-800">
+      <button type="button" aria-expanded={perspective} onClick={() => setPerspective(value => !value)} className="rounded border border-violet-300 px-3 py-1">{perspective ? '遠近プローブを閉じる' : 'CSS遠近プローブを開く'}</button>
+      <span>独立したコンポーネント検証。実フィードの描画には適用しません。</span>
+    </div>
+    {perspective ? <div className="min-h-0 flex-1 overflow-y-auto"><PerspectiveProbe /></div> : <>
     <form className="flex flex-wrap items-center gap-2 bg-white px-4 py-2 text-xs" onSubmit={event => { event.preventDefault(); setImage(input); }}>
       <label>画像URL <input type="url" value={input} onChange={event => setInput(event.target.value)} className="rounded border p-1" placeholder="https://…" /></label>
       <button type="submit" className="rounded border px-2 py-1">安全画像配信を試す</button>
@@ -35,6 +42,7 @@ export default function Lab() {
       <span>公開HTTPS画像・既知の変換queryのみ。配信routeは既定で無効です。SVGや非対応画像は代替表示。</span>
     </form>
     <CanvasImageProvider><CanvasScene items={ids.map(id => ({ id, content: <LabCard id={id} image={image} /> }))} /></CanvasImageProvider>
+    </>}
     <p id="lab-help" className="bg-white px-4 py-2 text-xs text-zinc-700">初期状態は外部通信なしの固定fixtureです。画像URLを指定した場合だけ有効化された限定環境では安全取得route経由で取得します。native表示・クリック・Tab・入力・縦スクロール・DOM切替・追加削除を検証できます。</p>
   </main>;
 }
