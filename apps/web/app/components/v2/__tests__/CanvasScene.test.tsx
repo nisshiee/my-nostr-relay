@@ -6,15 +6,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { CanvasScene } from "../CanvasScene";
-import { PUSH_EFFECT_DURATION_MS } from "../pushEffect";
 import { buildInitialLayout, insertCard, reflow } from "../../../lib/layoutEngine";
 import type { Card } from "../../../lib/types";
 
 let frames: Map<number, FrameRequestCallback>;
 let nextFrame: number;
+let nativeRestores: (() => void)[];
 
 beforeEach(() => {
   localStorage.clear();
+  nativeRestores = [];
   frames = new Map();
   nextFrame = 0;
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -36,6 +37,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  for (const restore of nativeRestores) restore();
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -47,6 +49,17 @@ function flushFrame(time = 0) {
     frames.clear();
     for (const callback of pending) callback(time);
   });
+}
+
+function mockModernNative() {
+  const draw = vi.fn(), fill = vi.fn();
+  vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,arc:vi.fn(),fill,lineTo:vi.fn(),closePath:vi.fn(),save:vi.fn(),restore:vi.fn(),beginPath:vi.fn(),moveTo:vi.fn(),resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
+  for (const [key,value] of [['content','drawable'],['requestPaint',function(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}]] as const) {
+    const old=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,key);
+    Object.defineProperty(HTMLCanvasElement.prototype,key,{configurable:true,value});
+    nativeRestores.push(()=>{if(old)Object.defineProperty(HTMLCanvasElement.prototype,key,old);else Reflect.deleteProperty(HTMLCanvasElement.prototype,key);});
+  }
+  return {draw,fill};
 }
 
 function pointer(target: Element | Window, type: string, pointerId = 7, button = 0, isPrimary = true) {
@@ -103,7 +116,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(host.getAttribute('data-scene-last-pointer-click')).toBe(before);outside.remove();
   });
 
-  it("DOM押下はfocusと遅れたclickの間も実表示の矩形と変形を固定する", () => {
+  it("native押下はfocusと遅れたclickの間も実表示の矩形と変形を固定する", () => {
+    mockModernNative();
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     const original = {id:'a',content:<InteractiveCard />};
     const {rerender} = render(<CanvasScene items={[original]} />); flushFrame(0);
@@ -124,6 +138,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(node.dataset.sceneTip).toBe('0');
   });
   it("押下由来focusでは非変形座標による自動scrollを起こさない", () => {
+    mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
     vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){return this.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard==='a'?1000:120;});
     const original={id:'a',content:<InteractiveCard/>};
@@ -138,6 +153,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     pointer(window,'pointercancel');
   });
   it.each(['cancel','blur','fallback','off','reduced','removed'])("押下固定を%sで解除し残さない", reason => {
+    mockModernNative();
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     let changed:(()=>void)|undefined;
     const media={matches:false,addEventListener(_type:string,cb:()=>void){changed=cb;},removeEventListener(){}};
@@ -162,6 +178,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     unmount(); frames.clear(); act(()=>vi.runOnlyPendingTimers()); expect(frames.size).toBe(0);
   });
   it("unmountはclick待ちtimerとpointer listenerを解除する", () => {
+    mockModernNative();
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     const schedule=vi.spyOn(globalThis,'setTimeout'), cancel=vi.spyOn(globalThis,'clearTimeout');
     const original={id:'a',content:<InteractiveCard/>};
@@ -254,8 +271,10 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       expect(nativeDraw[1]).toBeCloseTo(Number(node.dataset.sceneX)-66,2);
       expect(nativeDraw[2]).toBeCloseTo(Number(node.dataset.sceneY)-66,2);
       fireEvent.click(screen.getByRole('button',{name:'DOMに切替'})); flushFrame(250);
-      expect(face.style.transform).toBe(nativePose);
-      expect(node.style.transform).toBe(`translate(${nativeDraw[1]}px,${nativeDraw[2]-90}px) scale(1)`);
+      expect(face.style.transform).toBe('');
+      expect(node.style.padding).toBe('0px');
+      expect(node.style.transform).toBe(`translate(${nativeDraw[1]+66}px,${nativeDraw[2]+66-90}px) scale(1)`);
+      expect(host.dataset.scenePushEffect).toBe('idle');
       fireEvent.click(screen.getByRole('button',{name:'Nativeを試す'})); flushFrame(250);
       draw.mockClear(); flushFrame(2000);
       expect(draw.mock.calls.every(call=>call[1]!==0 || call[2]!==0)).toBe(true);
@@ -268,6 +287,23 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       if(original) Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',original);
       else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
     }
+  });
+  it("描画失敗でDOMへ退避した瞬間に押下姿勢と効果を解除する", () => {
+    localStorage.setItem('nlc-v2-effect','domino');
+    const {draw}=mockModernNative();
+    const original={id:'a',content:<InteractiveCard/>};
+    const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
+    const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
+    const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
+    const button=screen.getByRole('button',{name:'クリック 0'});
+    pointer(button,'pointerdown');flushFrame(350);expect(node.style.padding).toBe('66px');
+    draw.mockImplementationOnce(()=>{throw new Error('draw failed');});flushFrame(450);
+    expect(document.querySelector('canvas')!.hidden).toBe(true);
+    expect(face.style.transform).toBe('');expect(node.style.padding).toBe('0px');
+    expect(node.style.height).toBe('');expect(face.style.height).toBe('');
+    flushFrame(500);expect(screen.getByLabelText('カード領域。縦スクロールで移動').dataset.scenePushEffect).toBe('idle');
+    pointer(window,'pointerup');fireEvent.click(button);expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
   });
   it.each([true,false])("旧APIは保存済みまたは選択後のドミノをDOMへ切替える (保存=%s)", saved => {
     if(saved)localStorage.setItem('nlc-v2-effect','domino');
@@ -283,7 +319,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
       expect(document.querySelector('canvas')!.hidden).toBe(true);
       expect(draw).not.toHaveBeenCalled();
-      expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).toContain('perspective(');
+      expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).toBe('');
       fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
       expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
     } finally {
@@ -292,6 +328,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     }
   });
   it("keyboard focusの縦revealでは捕捉paddingを座標へ二重加算しない", () => {
+    mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
     const original={id:'a',content:<InteractiveCard/>};
     const {rerender}=render(<CanvasScene items={[original]}/>); flushFrame(0);
@@ -317,6 +354,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("捕捉paddingを配置高さに加えず内側の面だけを監視する", () => {
+    mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
     const observed = new Set<Element>();
     let refresh: (() => void) | undefined;
@@ -351,6 +389,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("保存済みドミノもreduced-motionでは変形せず、解除しても旧新着を再生しない", () => {
+    mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
     let changed: (()=>void) | undefined;
     const media = {matches:true,addEventListener(_type:string,cb:()=>void){changed=cb;},removeEventListener(){}};
@@ -375,7 +414,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     unmount(); render(<CanvasScene items={[item('a')]} />);
     expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('off');
   });
-  it("ドミノはDOMカードを変形し、focusと選択切替で解除して旧効果を再開しない", () => {
+  it("ドミノはnativeカードを変形し、focusと選択切替で解除して旧効果を再開しない", () => {
+    mockModernNative();
     const original = {id:'a',content:<InteractiveCard />};
     const {rerender} = render(<CanvasScene items={[original]} />);
     flushFrame(0);
@@ -384,7 +424,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     flushFrame(16); flushFrame(250);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     expect(Number(node.dataset.sceneTip)).toBeGreaterThan(0);
-    expect(node.style.transform).toContain('translate(');
+    expect(node.style.transform).toBe('');
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     expect(face.style.transform).toContain('perspective(');
     for(const decoration of node.querySelectorAll<HTMLElement>('[data-scene-shade], [data-scene-footprint]')){
@@ -403,27 +443,18 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(document.querySelectorAll('svg path').length).toBe(0);
   });
 
-  it("実新着の因果に沿う星屑だけ短時間表示し、mode切替で再開始せず終了後frameを止める", () => {
-    const item = (id:string) => ({id, content:<span>{id}</span>});
-    const {rerender} = render(<CanvasScene items={[item('a'),item('b')]} />);
-    flushFrame(0);
-    const host = screen.getByLabelText('カード領域。縦スクロールで移動');
-    expect(host.dataset.scenePushEffect).toBe('idle');
-    rerender(<CanvasScene items={[item('new'),item('a'),item('b')]} />);
-    flushFrame(16); flushFrame(100);
-    expect(host.dataset.scenePushEffect).toBe('active');
-    const svg = host.querySelector('svg')!;
-    expect(svg.getAttribute('aria-hidden')).toBe('true');
-    expect(svg.classList.contains('pointer-events-none')).toBe(true);
-    expect(svg.querySelectorAll('path').length).toBeGreaterThan(0);
-    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));
-    flushFrame(900);
-    expect(host.dataset.scenePushEffect).toBe('active');
-    flushFrame(PUSH_EFFECT_DURATION_MS + 20);
-    expect(host.dataset.scenePushEffect).toBe('idle');
-    for(let time=PUSH_EFFECT_DURATION_MS + 36; time<4000 && frames.size; time+=16) flushFrame(time);
-    expect(host.dataset.scenePushEffect).toBe('idle');
-    expect(svg.querySelectorAll('path').length).toBe(0);
+  it("nativeの星屑はDOM切替で停止し復帰後も旧batchを再生しない", () => {
+    const {fill}=mockModernNative();
+    const item=(id:string)=>({id,content:<span>{id}</span>});
+    const {rerender}=render(<CanvasScene items={[item('a'),item('b')]} />);flushFrame(0);
+    const host=screen.getByLabelText('カード領域。縦スクロールで移動');
+    rerender(<CanvasScene items={[item('new'),item('a'),item('b')]} />);flushFrame(16);flushFrame(100);
+    expect(host.dataset.scenePushEffect).toBe('active');expect(fill).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(150);
+    expect(host.dataset.scenePushEffect).toBe('idle');expect(host.querySelector('svg')).toBeNull();
+    fill.mockClear();fireEvent.click(screen.getByRole('button',{name:'Nativeを試す'}));flushFrame(200);
+    expect(host.dataset.scenePushEffect).toBe('idle');expect(fill).not.toHaveBeenCalled();
+    for(let time=216;time<4000&&frames.size;time+=16)flushFrame(time);
     expect(frames.size).toBe(0);
   });
   it("nativeでは連続線なしの星屑をカードより後にcanvasへ描き、SVGを重ねない", () => {
@@ -446,29 +477,25 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
     }
   });
-  it("前面のSVGはカードの上に重なるが操作を遮らず、粒数を制限する", () => {
-    const original = {id:'a',content:<InteractiveCard />};
-    const {rerender} = render(<CanvasScene items={[original]} />);
-    flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]} />);
-    flushFrame(16); flushFrame(400);
-    const host = screen.getByLabelText('カード領域。縦スクロールで移動');
-    const svg = host.querySelector('svg')!;
-    expect(svg.classList.contains('z-10')).toBe(true);
-    expect(svg.classList.contains('pointer-events-none')).toBe(true);
-    expect(svg.previousElementSibling?.classList.contains('isolate')).toBe(true);
-    const particles = svg.querySelector('g > g:last-child')!;
-    expect(particles.children.length).toBeGreaterThan(0);
-    expect(particles.querySelectorAll('path').length).toBeLessThanOrEqual(480);
-    expect(particles.children.length).toBeLessThanOrEqual(720);
-    expect(svg.querySelectorAll('[stroke]').length).toBe(0);
-    expect([...svg.querySelectorAll('path')].every(path => !path.getAttribute('d')?.includes(' C '))).toBe(true);
+  it.each(['sparkle','domino'])("DOMでは保存済み%sも効果なしで入力とクリックを維持する", choice => {
+    localStorage.setItem('nlc-v2-effect',choice);
+    const original={id:'a',content:<InteractiveCard/>};
+    const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(400);
+    const host=screen.getByLabelText('カード領域。縦スクロールで移動');
+    expect(host.dataset.scenePushEffect).toBe('idle');expect(host.querySelector('svg')).toBeNull();
+    for(const node of host.querySelectorAll<HTMLElement>('[data-scene-card]')) {
+      expect(node.dataset.sceneTip).toBe('0');expect(node.style.padding).toBe('0px');
+      expect(node.querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
+    }
+    expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe(choice);
     fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
     expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
-    fireEvent.change(screen.getByRole('textbox',{name:'下書き'}),{target:{value:'星の下でも入力'}});
-    expect((screen.getByRole('textbox',{name:'下書き'}) as HTMLInputElement).value).toBe('星の下でも入力');
+    fireEvent.change(screen.getByRole('textbox'),{target:{value:'効果なしで入力'}});
+    expect((screen.getByRole('textbox') as HTMLInputElement).value).toBe('効果なしで入力');
   });
   it("途中でreduced-motionへ変えると即停止し、解除しても旧効果を再生しない", () => {
+    mockModernNative();
     let changed: (() => void) | undefined;
     const media = {matches:false,addEventListener(_type:string,callback:()=>void){changed=callback;},removeEventListener(){}};
     vi.stubGlobal('matchMedia',()=>media);

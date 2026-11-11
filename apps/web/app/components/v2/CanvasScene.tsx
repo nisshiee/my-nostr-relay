@@ -7,7 +7,7 @@ import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, ty
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
 import type { Card } from "../../lib/types";
-import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
+import { createPushPaths, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
 import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, DOMINO_PERSPECTIVE_MAX_OUTSET, type DominoTransform } from "./dominoEffect";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
@@ -55,9 +55,6 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
   const extent = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const fallback = useRef<HTMLDivElement>(null);
-  const effectSvg = useRef<SVGSVGElement>(null);
-  const effectGroup = useRef<SVGGElement>(null);
-  const effectParticleGroup = useRef<SVGGElement>(null);
   const savedEffect = useRef({ revision: 0, startedAt: 0, active: false });
   const nodes = useRef(new Map<string, HTMLDivElement>());
   const savedBoxes = useRef(new Map<string, SceneBox>());
@@ -221,8 +218,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
       const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const selection = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
       mode = next; displayed.clear();
+      // DOMでは追加効果を止め、nativeへ戻っても過去のbatchを再生しない。
+      if (next === 'dom') {
+        effect.active = false; dominoTransforms = new Map(); effectPaths = []; effectOpacity = 0;
+        clearTimeout(pressTimer); pressTimer = undefined; pressed = null;
+      }
       surface.hidden = next === 'dom';
-      effectSvg.current!.style.display = next === 'dom' ? '' : 'none';
       dom.hidden = next !== 'dom';
       surface.removeAttribute('content');
       surface.removeAttribute('layoutsubtree');
@@ -292,9 +293,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         if (effect.revision !== layout.insertion.revision) {
           effect.revision = layout.insertion.revision;
           effect.startedAt = time;
-          effect.active = chosenEffect.current !== 'off' && !reducedMotion && layout.insertion.traces.some(trace => trace.edges.length > 0);
+          effect.active = mode !== 'dom' && chosenEffect.current !== 'off' && !reducedMotion && layout.insertion.traces.some(trace => trace.edges.length > 0);
         }
-        if (reducedMotion || !layout.insertion.traces.length || time - effect.startedAt >= (chosenEffect.current === 'domino' ? DOMINO_EFFECT_DURATION_MS : PUSH_EFFECT_DURATION_MS)) effect.active = false;
+        if (mode === 'dom' || reducedMotion || !layout.insertion.traces.length || time - effect.startedAt >= (chosenEffect.current === 'domino' ? DOMINO_EFFECT_DURATION_MS : PUSH_EFFECT_DURATION_MS)) effect.active = false;
         effectAge = time - effect.startedAt;
         effectOpacity = effect.active && chosenEffect.current === 'sparkle' ? pushEffectOpacity(effectAge) : 0;
         dominoTransforms = effect.active && chosenEffect.current === 'domino'
@@ -307,30 +308,6 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
         effectPaths = effect.active && chosenEffect.current === 'sparkle' ? createPushPaths(layout.insertion.traces, boxes, effectViewport) : [];
         host.dataset.sceneEffect = chosenEffect.current;
         host.dataset.scenePushEffect = reducedMotion ? 'reduced' : effect.active ? 'active' : 'idle';
-        // 曲線は粒子の配置にだけ使い、前面に独立した光点だけを描く。
-        const particles = mode === 'dom' && effectOpacity > 0 ? createPushParticles(effectPaths, effectAge, effectViewport) : [];
-        const particleGroup = effectParticleGroup.current!;
-        while (particleGroup.children.length > particles.length * 3) particleGroup.lastElementChild!.remove();
-        for (let i = 0; i < particles.length; i++) {
-          const particle = particles[i];
-          let halo = particleGroup.children[i * 3];
-          if (!halo) { halo = document.createElementNS('http://www.w3.org/2000/svg', 'circle'); particleGroup.appendChild(halo); }
-          halo.setAttribute('cx', String(particle.x)); halo.setAttribute('cy', String(particle.y));
-          halo.setAttribute('r', String(particle.haloRadius));
-          halo.setAttribute('fill', particle.haloColor);
-          halo.setAttribute('opacity', String(effectOpacity * particle.haloAlpha));
-          let shape = particleGroup.children[i * 3 + 1];
-          if (!shape) { shape = document.createElementNS('http://www.w3.org/2000/svg', 'path'); particleGroup.appendChild(shape); }
-          shape.setAttribute('d', particle.d);
-          shape.setAttribute('fill', particle.color);
-          shape.setAttribute('opacity', String(effectOpacity * particle.alpha));
-          let core = particleGroup.children[i * 3 + 2];
-          if (!core) { core = document.createElementNS('http://www.w3.org/2000/svg', 'path'); particleGroup.appendChild(core); }
-          core.setAttribute('d', particle.coreD);
-          core.setAttribute('fill', particle.coreColor);
-          core.setAttribute('opacity', String(effectOpacity * particle.coreAlpha));
-        }
-        effectGroup.current!.setAttribute('transform', `translate(0 ${camera.y})`);
         host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
         if (revealFocus) { revealFocus = false; reveal(document.activeElement); }
         savedBoxes.current = boxes;
@@ -477,14 +454,13 @@ export function CanvasScene({ items, heldIds = EMPTY, className }: Props) {
           <option value="off">OFF</option><option value="sparkle">キラキラ</option><option value="domino">ドミノ（試作）</option>
         </select>
       </label>
-      <span>縦スクロールで移動</span>
+      <span>縦スクロールで移動 · エフェクトはnative専用（DOMでは停止）</span>
     </div>
     <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
       <div ref={extent} className="relative w-full" style={{ overflowAnchor: 'none' }}>
         <div ref={layer} className="sticky top-0 w-full overflow-clip">
           <canvas ref={canvas} className="absolute inset-0 z-0 h-full w-full" aria-label="ライブカード" />
           <div ref={fallback} className="absolute inset-0 z-0 isolate" />
-          <svg ref={effectSvg} aria-hidden="true" className="pointer-events-none absolute inset-0 z-10 h-full w-full overflow-visible"><g ref={effectGroup}><g ref={effectParticleGroup} /></g></svg>
         </div>
       </div>
       {items.map(item => <CardRoot key={item.id} item={item} register={register} />)}

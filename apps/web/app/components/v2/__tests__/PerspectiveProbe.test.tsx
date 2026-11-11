@@ -58,12 +58,12 @@ function outer() { return document.querySelector<HTMLDivElement>('[data-perspect
 function inner() { return document.querySelector<HTMLElement>('[data-perspective-card]')!; }
 
 describe('PerspectiveProbeのDOM状態とnative API契約', () => {
-  it('3箇所の独立カウンターと入力を安全に操作し、角度だけを切り替える', () => {
+  it('3箇所の独立カウンターと入力を安全に操作し、DOMでは角度選択を保持しても変形しない', () => {
     render(<PerspectiveProbe />); flushFrame();
     expect(screen.getByRole('status').textContent).toContain('native APIなし');
     const root = outer(), card = inner();
     expect(root.style.transform).toBe('none');
-    expect(card.style.transform).toBe('perspective(700px) rotateX(45deg)');
+    expect(card.style.transform).toBe('perspective(700px) rotateX(0deg)');
     expect(card.style.transformOrigin).toBe('50% 100%');
     expect(card.style.boxShadow).not.toBe('none');
     expect(root.style.paddingBottom).toBe('76px');
@@ -76,7 +76,7 @@ describe('PerspectiveProbeのDOM状態とnative API契約', () => {
     expect(card.style.transform).toBe('perspective(700px) rotateX(0deg)');
     expect(input.value).toBe('送信しないメモ');
     fireEvent.click(screen.getByRole('button', { name: '角度 0° → 傾ける' })); flushFrame();
-    expect(card.style.transform).toBe('perspective(700px) rotateX(45deg)');
+    expect(card.style.transform).toBe('perspective(700px) rotateX(0deg)');
     expect(outer()).toBe(root);
     expect(root.querySelectorAll('[drawable]').length).toBe(0);
     expect(frames.size).toBe(0);
@@ -126,6 +126,7 @@ describe('PerspectiveProbeのDOM状態とnative API契約', () => {
     expect(root.style.left).toBe('70px'); expect(root.style.top).toBe('24px');
     expect(root.style.transform).toBe('none');
     expect(root.hasAttribute('drawable')).toBe(false);
+    expect(card.dataset.perspectiveAngle).toBe('0');
     expect(document.activeElement).toBe(input);
     expect([input.selectionStart, input.selectionEnd]).toEqual([1, 4]);
     fireEvent.click(screen.getByRole('button', { name: 'プローブをNativeへ' })); flushFrame();

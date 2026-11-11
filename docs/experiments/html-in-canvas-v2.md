@@ -266,3 +266,13 @@ hold中のカードは起立から除外し、解除後は現在のbatch時刻�
 診断はイベントをキャンセルせず、focusや状態変更・追加描画を起こさない。イベント内で矩形を再測定して再現条件を変えることも避ける。読み取った座標と実pointerdownの対象が異なるのか、down後にup/clickの対象が変わるのかを実機で比較するための情報であり、原因が既に確定したことを意味しない。
 
 viewportのdata-scene-last-pointer-down/up/clickが各最新のJSON、data-scene-paint-serialとdata-scene-geometry-serialが描画/姿勢適用番号。down診断は既存press処理より前のcaptureなのでpressed:nullでも正常であり、その後のup/clickと比較する。drawnは最後に描いたカード位置・傾き、pendingは現在の計算値。実クリック対象のcard/buttonが読取時と違えばdown前の移動を疑い、同じ対象でdown/up/clickが分かれれば押下後の変化を調べる。mode変更時は診断を初期化する。
+
+## エフェクトをnative限定にし、WebGL投影を部品検証
+
+DOM fallbackではキラキラ・ドミノを描かない。保存済みの選択は維持するが、DOMへの退避で進行中の追加効果を止め、nativeへ戻っても過去のbatchを再生しない。通常の配置モーションとは別の制約である。
+
+CSS3Dを毎frame snapshotへ反映する方式と、平面HTML textureをWebGLで透視投影する方式を同じfixtureで比較する独立probeを追加する。WebGLではtexElementSubImage2DでHTMLを取り込み、描画と同じ射影をupdateElementGeometryに渡す。2Dのaffine拡縮へ戻して台形と呼ぶことはしない。API存在・画素・操作位置・DPR/scrollが実Chromeで確認できるまで実フィードへ採用しない。
+
+比較はUIから開始する短時間のframe間隔・描画回数・texture更新回数で行う。CPUやタスクマネージャは測定しない。1枚のprobeでの改善は、数百枚の実フィード性能の証明ではない。textureの更新漏れ、入力・画像・font・hover/focus、容量・context lossなどを別途検証する必要がある。
+
+frame診断はrequestAnimationFrame callbackの間隔であり、GPUの実行時間や正確な落ちframe数ではない。33.4ms超の回数は固定しきい値の参考値として表示し、画面のrefresh rateやバックグラウンド化の影響を含む。同じ端末・viewport・fixture・測定時間で比較する。

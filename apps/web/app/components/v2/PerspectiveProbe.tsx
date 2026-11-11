@@ -75,6 +75,7 @@ export function PerspectiveProbe() {
   const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void } | null>(null);
   const [forcedDOM, setForcedDOM] = useState(false);
   const [tilted, setTilted] = useState(true);
+  const [nativeEffect, setNativeEffect] = useState(false);
   const [status, setStatus] = useState('DOM · 初期化中');
   const [refresh] = useState(() => () => runtime.current?.refresh());
   const [register] = useState(() => (node: HTMLDivElement | null) => {
@@ -114,6 +115,7 @@ export function PerspectiveProbe() {
       const active = root.current?.contains(document.activeElement) ? document.activeElement as HTMLElement : null;
       const selection = active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
       mode = next;
+      setNativeEffect(next === 'modern');
       clearTimeout(watchdog); watchdog = undefined;
       surface.hidden = mode === 'dom';
       dom.hidden = mode !== 'dom';
@@ -206,8 +208,8 @@ export function PerspectiveProbe() {
         <canvas ref={canvas} aria-label="遠近プローブのCanvas" className="absolute inset-0 h-full w-full" />
         <div ref={fallback} className="absolute inset-0" />
       </div>
-      <ProbeRoot tilted={tilted} register={register} refresh={refresh} />
+      <ProbeRoot tilted={tilted && nativeEffect} register={register} refresh={refresh} />
     </div>
-    <p className="px-4 py-2 text-xs text-zinc-600">上・中央・下のボタン、Tab、入力、縦スクロール、DPR変更をDOMと比較。実フィードの採用前にChrome実機で確認するための静止プローブです。</p>
+    <p className="px-4 py-2 text-xs text-zinc-600">上・中央・下のボタン、Tab、入力、縦スクロール、DPR変更を確認。DOM fallbackでは遠近エフェクトなし。実フィードの採用前にChrome実機で確認するための静止プローブです。</p>
   </section>;
 }
