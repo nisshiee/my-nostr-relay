@@ -234,6 +234,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("新着の最初から詰めた目標へ動き、二段目の再配置をしない", () => {
+    // 配置の全frame回帰では粒子描画を分離する。各エフェクトは専用回帰で検査する。
+    localStorage.setItem('nlc-v2-effect', 'off');
     vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockReturnValue({ x:0,y:0,top:0,left:0,right:400,bottom:600,width:400,height:600,toJSON() {} });
     const heights: Record<string, number> = { a:200, b:120, new:40 };
     vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function(this: HTMLElement) { return heights[this.dataset.sceneCard ?? ''] ?? 120; });
@@ -289,6 +291,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("新着で現在位置とtargetを分け、時間差を経て下へ移動し停止する", () => {
+    // 配置の全frame回帰では粒子描画を分離する。各エフェクトは専用回帰で検査する。
+    localStorage.setItem('nlc-v2-effect', 'off');
     const item = (id: string) => ({ id, content: <button>{id}</button> });
     const { rerender, unmount } = render(<CanvasScene items={[item('a'), item('b'), item('c'), item('d')]} />);
     flushFrame(0);
