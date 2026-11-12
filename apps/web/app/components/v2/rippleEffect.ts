@@ -20,6 +20,16 @@ export function freezeRippleSources(traces: readonly SceneInsertionTrace[], boxe
   }
   return Object.freeze(sources);
 }
+/** 実配置の押出し辺だけを採用。根自身・高さ補正・後続reflowから対象を推測しない。 */
+export function freezeRippleTargets(traces: readonly SceneInsertionTrace[], sources: readonly RippleSource[]): ReadonlySet<string> {
+  const sourceIds = new Set(sources.map(source => source.id));
+  const targets = new Set<string>();
+  for (const trace of traces) {
+    if (!sourceIds.has(trace.sourceId)) continue;
+    for (const edge of trace.edges) targets.add(edge.toId);
+  }
+  return targets;
+}
 export function rippleEffectAmount(progress: number): number {
   if (!Number.isFinite(progress) || progress<=0 || progress>=1) return 0;
   const edge=Math.min(1,progress/.08,(1-progress)/.18);

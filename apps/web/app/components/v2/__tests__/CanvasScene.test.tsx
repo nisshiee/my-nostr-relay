@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { CanvasScene } from "../CanvasScene";
+import * as sceneModule from "../scene";
 import { buildInitialLayout, insertCard, reflow } from "../../../lib/layoutEngine";
 import type { Card } from "../../../lib/types";
 
@@ -832,6 +833,34 @@ describe('CanvasScene WebGL feed接続', () => {
   const original = {id:'a',content:<InteractiveCard/>};
   const incoming = {id:'new',content:<span>new</span>};
 
+  it('波紋の適用先は実edgeだけで固定し通常reflow移動・無関係・単独rootを除外する', () => {
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
+    const update=sceneModule.updateSceneLayout;let clearTraces=false;
+    // 配置は実engine、因果traceだけ固定fixtureとして渡しUIへの適用契約を検査する。
+    vi.spyOn(sceneModule,'updateSceneLayout').mockImplementation((...args)=>{
+      const result=update(...args);
+      if(args[1].some(item=>item.id==='new')) return {...result,insertion:{revision:1,traces:clearTraces?[]:[
+        {sourceId:'new',edges:[{fromId:'new',toId:'a'},{fromId:'a',toId:'second'}]},
+        {sourceId:'second',edges:[]},
+      ]}};
+      return result;
+    });
+    const unrelated={id:'unrelated',content:<span>unrelated</span>},second={id:'second',content:<span>second</span>};
+    const {rerender}=renderUI(<CanvasScene items={[original,unrelated]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[incoming,second,original,unrelated]}/>);flushFrame(100);flushFrame(350);
+    const applied=()=>seen.at(-1)!.cards.filter(c=>c.ripple).map(c=>c.id).sort();
+    expect(applied()).toEqual(['a','second']);
+    expect(host().dataset.sceneRippleCards).toBe('2');
+    expect(JSON.parse(host().dataset.sceneRippleTargets!).sort()).toEqual(['a','second']);
+    // 別traceのrootでも実際に押されたtargetなら対象。単独rootや再配置だけのカードは対象外。
+    clearTraces=true;
+    const positions=seen.at(-1)!.cards.map(c=>({...c.box}));
+    fireEvent(window,new Event('resize'));flushFrame(500);
+    expect(applied()).toEqual(['a','second']);expect(seen.at(-1)!.cards.map(c=>({...c.box}))).not.toEqual(positions);
+    rerender(<CanvasScene items={[incoming,second,original,unrelated]} heldIds={new Set(['a'])}/>);flushFrame(550);
+    expect(applied()).toEqual(['second']);expect(host().dataset.sceneRippleCards).toBe('1');
+  });
+
   it('円形波紋の中心は新着目標で固定され移動・高さreflow・scrollに追従しない', async () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
     let refresh:(()=>void)|undefined;
@@ -842,7 +871,8 @@ describe('CanvasScene WebGL feed接続', () => {
     const ripple=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!.ripple!;
     const sources=ripple().sources;
     expect(sources).toHaveLength(1);expect(sources[0]).toMatchObject({id:'new',x:Number(card('new').dataset.sceneTargetX)+180,y:Number(card('new').dataset.sceneTargetY)+60});
-    expect(seen.at(-1)!.cards.every(c=>c.ripple===ripple())).toBe(true);
+    expect(seen.at(-1)!.cards.find(c=>c.id==='new')!.ripple).toBeUndefined();
+    expect(host().dataset.sceneRippleCards).toBe('1');
     expect(JSON.parse(host().dataset.sceneRippleSources!)).toEqual(sources.map(({x,y})=>[x,y]));
     expect(Number(host().dataset.sceneRippleRadius)).toBe(200);
     await act(async()=>{await Promise.resolve();});flushFrame(350);expect(seen.at(-1)!.dirtyIds!.size).toBe(0);

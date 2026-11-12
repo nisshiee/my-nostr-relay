@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { freezeRippleSources,createRadialRipple,sampleRadialRipple,rippleEffectAmount,RIPPLE_EFFECT_DURATION_MS } from '../rippleEffect';
+import { freezeRippleTargets,freezeRippleSources,createRadialRipple,sampleRadialRipple,rippleEffectAmount,RIPPLE_EFFECT_DURATION_MS } from '../rippleEffect';
 import type { SceneBox,SceneInsertionTrace } from '../scene';
 const box=(x:number,y:number):SceneBox=>({x,y,width:100,height:100});
 describe('新着中心を固定するworld空間同心波',()=>{
@@ -36,5 +36,28 @@ describe('新着中心を固定するworld空間同心波',()=>{
   let max=0;for(let x=-1200;x<=1200;x+=13)for(let y=-1200;y<=1200;y+=17){const p=sampleRadialRipple(multi,x,y);max=Math.max(max,Math.hypot(p.offsetX,p.offsetY));expect(p.light).toBeLessThanOrEqual(.4);}
   expect(max).toBeGreaterThan(4);expect(max).toBeLessThanOrEqual(6);
   expect(sampleRadialRipple(single,1011,0)).toEqual({offsetX:0,offsetY:0,light:0,trough:0});
+ });
+});
+
+describe('実際の押出し対象だけに波面を表示する',()=>{
+ it('根を暗黙追加せず横押出し/末尾を含み、別根から押された根だけは対象にする',()=>{
+  const traces:SceneInsertionTrace[]=[
+   {sourceId:'a',edges:[{fromId:'a',toId:'b'},{fromId:'b',toId:'c'}]},
+   {sourceId:'d',edges:[{fromId:'d',toId:'a'}]},
+   {sourceId:'empty',edges:[]},
+   {sourceId:'old',edges:[{fromId:'old',toId:'unrelated'}]},
+  ];
+  const sources=['a','d','empty'].map(id=>({id,x:0,y:0}));
+  const targets=freezeRippleTargets(traces,sources);
+  expect([...targets]).toEqual(['b','c','a']);
+  expect(targets.has('d')).toBe(false);expect(targets.has('empty')).toBe(false);
+  expect(targets.has('unrelated')).toBe(false);expect(targets.has('held-redirect')).toBe(false);
+  traces[0]={sourceId:'a',edges:[{fromId:'a',toId:'later-reflow'}]};
+  expect([...targets]).toEqual(['b','c','a']);
+ });
+ it('重複を除き、長い実連鎖を任意の辺数で途中打切りしない',()=>{
+  const edges=Array.from({length:120},(_,i)=>({fromId:String(i),toId:String(i+1)}));
+  expect(freezeRippleTargets([{sourceId:'r',edges:[...edges,edges[0]]}],[{id:'r',x:0,y:0}]).size).toBe(120);
+  expect(freezeRippleTargets([{sourceId:'r',edges}],[]).size).toBe(0);
  });
 });
