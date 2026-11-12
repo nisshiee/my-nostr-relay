@@ -832,6 +832,27 @@ describe('CanvasScene WebGL feed接続', () => {
   const original = {id:'a',content:<InteractiveCard/>};
   const incoming = {id:'new',content:<span>new</span>};
 
+  it('円形波紋の中心は新着目標で固定され移動・高さreflow・scrollに追従しない', async () => {
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
+    let refresh:(()=>void)|undefined;
+    vi.stubGlobal('ResizeObserver',class{constructor(fn:()=>void){refresh=fn;}observe(){}unobserve(){}disconnect(){}});
+    let height=120;vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){return this.hasAttribute('data-scene-face')?height:0;});
+    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(300);
+    const ripple=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!.ripple!;
+    const sources=ripple().sources;
+    expect(sources).toHaveLength(1);expect(sources[0]).toMatchObject({id:'new',x:Number(card('new').dataset.sceneTargetX)+180,y:Number(card('new').dataset.sceneTargetY)+60});
+    expect(seen.at(-1)!.cards.every(c=>c.ripple===ripple())).toBe(true);
+    expect(JSON.parse(host().dataset.sceneRippleSources!)).toEqual(sources.map(({x,y})=>[x,y]));
+    expect(Number(host().dataset.sceneRippleRadius)).toBe(200);
+    await act(async()=>{await Promise.resolve();});flushFrame(350);expect(seen.at(-1)!.dirtyIds!.size).toBe(0);
+    height=240;act(()=>refresh?.());flushFrame(400);expect(ripple().sources).toEqual(sources);expect(ripple().ageMs).toBe(300);
+    host().scrollTop=90;fireEvent.scroll(host());flushFrame(450);expect(ripple().sources).toEqual(sources);expect(seen.at(-1)!.camera.y).toBe(-90);
+    rerender(<CanvasScene items={[original]}/>);flushFrame(500);expect(ripple().sources).toEqual(sources);
+    const next={id:'second',content:<span>second</span>};rerender(<CanvasScene items={[next,original]}/>);flushFrame(600);flushFrame(700);
+    expect(ripple().sources.map(s=>s.id)).toEqual(['second']);expect(ripple().ageMs).toBe(100);
+  });
+
   it('波紋はGLでだけ屈折しhold・focus・非focus押下を抑制する', () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
     const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);

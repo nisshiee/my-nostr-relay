@@ -1,55 +1,40 @@
 import { describe, expect, it } from 'vitest';
-import { createRippleEffects, rippleEffectAmount, RIPPLE_EFFECT_MAX_DISPLACEMENT_PX } from '../rippleEffect';
-import type { SceneBox, SceneInsertionTrace } from '../scene';
-const boxes = new Map<string, SceneBox>([['r',{x:0,y:0,width:100,height:100}],['a',{x:0,y:200,width:100,height:100}],['b',{x:200,y:200,width:100,height:100}],['other',{x:400,y:400,width:100,height:100}]]);
-const traces: SceneInsertionTrace[] = [{sourceId:'r',edges:[{fromId:'a',toId:'b'},{fromId:'r',toId:'a'}]}];
-describe('波紋の実因果順・方向・有限寿命',()=>{
- it('強度は中央70%で保持し両端だけ消え、実効変位は6px以内',()=>{
-  for(const progress of [NaN,-1,0,1,2])expect(rippleEffectAmount(progress)).toBe(0);
-  for(const progress of [.15,.25,.5,.75,.85])expect(rippleEffectAmount(progress)).toBeCloseTo(1);
-  expect(rippleEffectAmount(.075)).toBeCloseTo(.5);expect(rippleEffectAmount(.925)).toBeCloseTo(.5);
-  let maximum=0;
-  // shaderと同じ帯・正弦波を密に走査。外周envelopeは常に0..1なので増幅しない。
-  for(let i=0;i<=200000;i++){
-    const d=-1+i/100000;
-    const displacement=Math.abs(Math.sin(d*32)*Math.exp(-d*d/.025)*RIPPLE_EFFECT_MAX_DISPLACEMENT_PX);
-    maximum=Math.max(maximum,displacement);
-  }
-  expect(maximum).toBeGreaterThan(5.4);expect(maximum).toBeLessThan(5.6);expect(maximum).toBeLessThanOrEqual(6);
+import { freezeRippleSources,createRadialRipple,sampleRadialRipple,rippleEffectAmount,RIPPLE_EFFECT_DURATION_MS } from '../rippleEffect';
+import type { SceneBox,SceneInsertionTrace } from '../scene';
+const box=(x:number,y:number):SceneBox=>({x,y,width:100,height:100});
+describe('新着中心を固定するworld空間同心波',()=>{
+ it('辺のない新着でも最新4根の目標中心を値で凍結し重複を除く',()=>{
+  const boxes=new Map<string,SceneBox>(),traces:SceneInsertionTrace[]=[];
+  for(let i=0;i<6;i++){boxes.set(String(i),box(i*100,0));traces.push({sourceId:String(i),edges:[]});}
+  traces.push({sourceId:'5',edges:[]});const sources=freezeRippleSources(traces,boxes);
+  expect(sources.map(s=>s.id)).toEqual(['5','4','3','2']);expect(sources[0]).toEqual({id:'5',x:550,y:50});
+  boxes.get('5')!.x=999;expect(sources[0].x).toBe(550);expect(Object.isFrozen(sources)).toBe(true);expect(Object.isFrozen(sources[0])).toBe(true);
  });
- it('辺の順番ではなくBFS深さで下から横へ向きを変える',()=>{
-  const result=createRippleEffects(traces,boxes,350);
-  expect(result.get('r')).toMatchObject({depth:0,delayMs:0,progress:.5,directionX:0,directionY:1});
-  expect(result.get('a')).toMatchObject({depth:1,delayMs:100,directionX:0,directionY:1});
-  expect(result.get('b')).toMatchObject({depth:2,delayMs:200,directionX:1,directionY:0});
-  expect(result.has('other')).toBe(false);expect(createRippleEffects(traces,boxes,350)).toEqual(result);
+ it('寿命/reducedで停止し時刻だけ進め、カメラやカード位置で波源を変えない',()=>{
+  const sources=freezeRippleSources([{sourceId:'r',edges:[]}],new Map([['r',box(0,0)]]));
+  for(const age of [NaN,-1,0,RIPPLE_EFFECT_DURATION_MS])expect(createRadialRipple(sources,age)).toBeUndefined();
+  expect(createRadialRipple(sources,500,{reducedMotion:true})).toBeUndefined();
+  expect(createRadialRipple([],500)).toBeUndefined();expect(createRadialRipple([{id:'x',x:NaN,y:0}],500)).toBeUndefined();
+  expect(createRadialRipple(sources,500)?.sources).toEqual(sources);expect(rippleEffectAmount(.5)).toBe(1);
  });
- it('開始前・終了・reduced・操作中は描かず解除は現在時刻へ合流',()=>{
-  for(const age of [NaN,-1,0,1300])expect(createRippleEffects(traces,boxes,age).size).toBe(0);
-  expect(createRippleEffects(traces,boxes,350,{reducedMotion:true}).size).toBe(0);
-  expect(createRippleEffects(traces,boxes,350,{heldIds:new Set(['a'])}).has('a')).toBe(false);
-  expect(createRippleEffects(traces,boxes,450).get('a')?.progress).toBe(.5);
-  expect(createRippleEffects(traces,boxes,50).has('a')).toBe(false);
-  expect(createRippleEffects(traces,boxes,700).has('r')).toBe(false);
+ it('同world点は別カードUVやscrollを介しても同じで、等距離は同心円になる',()=>{
+  const effect=createRadialRipple([{id:'r',x:50,y:50}],500)!;
+  const a={origin:box(500,0),u:.5,v:.5},b={origin:box(520,-30),u:.3,v:.8};
+  const value=(c:typeof a)=>sampleRadialRipple(effect,c.origin.x+c.u*c.origin.width,c.origin.y+c.v*c.origin.height);
+  expect(value(a)).toEqual(value(b));expect(value(a).light).toBeGreaterThan(0);
+  const right=sampleRadialRipple(effect,550,50),down=sampleRadialRipple(effect,50,550);
+  expect(right.light).toBeCloseTo(down.light);expect(right.trough).toBeCloseTo(down.trough);
+  const worldY=550,scroll=930;expect(sampleRadialRipple(effect,50,worldY-scroll+scroll)).toEqual(down);
+  expect(sampleRadialRipple(effect,50,50).light).toBe(0);
  });
- it('目標方向を維持し、欠損・循環は有限でburstの根を混線しない',()=>{
-  const moved=new Map(boxes);moved.set('b',{...boxes.get('b')!,x:-200});
-  expect(createRippleEffects(traces,moved,350,{directionBoxes:boxes}).get('b')?.directionX).toBe(1);
-  expect(createRippleEffects([{sourceId:'r',edges:[...traces[0].edges,{fromId:'b',toId:'r'},{fromId:'r',toId:'missing'}]}],boxes,350).size).toBe(3);
-  expect(createRippleEffects([...traces,{sourceId:'b',edges:[{fromId:'b',toId:'a'}]}],boxes,350).get('a')?.sourceId).toBe('b');
- });
- it('最新4根だけ処理し不正boxや孤立辺を無関係カードへ広げない',()=>{
-  const map=new Map<string,SceneBox>(),batch:SceneInsertionTrace[]=[];
-  for(let i=0;i<6;i++){map.set(`r${i}`,{x:i*120,y:0,width:100,height:100});map.set(`c${i}`,{x:i*120,y:120,width:100,height:100});batch.push({sourceId:`r${i}`,edges:[{fromId:`r${i}`,toId:`c${i}`}]});}
-  const result=createRippleEffects(batch,map,350);expect(result.size).toBe(8);expect(result.has('r0')).toBe(false);expect(result.has('r1')).toBe(false);expect(result.has('r5')).toBe(true);
-  const broken=new Map(boxes);broken.set('b',{...boxes.get('b')!,width:NaN});
-  expect(createRippleEffects(traces,broken,350).has('b')).toBe(false);
-  expect(createRippleEffects([{sourceId:'r',edges:[{fromId:'a',toId:'b'}]}],boxes,350).size).toBe(0);
- });
- it('辺数と遅延を制限し末尾も1300msで必ず終わる',()=>{
-  const many=new Map<string,SceneBox>(),edges=[];for(let i=0;i<200;i++){many.set(String(i),{x:0,y:i*120,width:100,height:100});if(i)edges.push({fromId:String(i-1),toId:String(i)});}
-  const trace=[{sourceId:'0',edges}],result=createRippleEffects(trace,many,1299);
-  expect(result.size).toBeLessThanOrEqual(97);expect(result.get('96')).toMatchObject({delayMs:600});expect(result.has('97')).toBe(false);
-  expect(createRippleEffects(trace,many,1300).size).toBe(0);
+ it('主波と200px遅れの輪があり、複数源も加算せず6px以内',()=>{
+  const single=createRadialRipple([{id:'r',x:0,y:0}],800)!;
+  expect(sampleRadialRipple(single,800,0).light).toBeCloseTo(.4);expect(sampleRadialRipple(single,600,0).light).toBeCloseTo(.4*.65);
+  const multi=createRadialRipple([{id:'a',x:0,y:0},{id:'b',x:0,y:0},{id:'c',x:100,y:0},{id:'d',x:0,y:100},{id:'e',x:800,y:0}],800)!;
+  expect(multi.sources).toHaveLength(4);
+  expect(sampleRadialRipple({...single,sources:[single.sources[0],single.sources[0]]},850,0)).toEqual(sampleRadialRipple(single,850,0));
+  let max=0;for(let x=-1200;x<=1200;x+=13)for(let y=-1200;y<=1200;y+=17){const p=sampleRadialRipple(multi,x,y);max=Math.max(max,Math.hypot(p.offsetX,p.offsetY));expect(p.light).toBeLessThanOrEqual(.4);}
+  expect(max).toBeGreaterThan(4);expect(max).toBeLessThanOrEqual(6);
+  expect(sampleRadialRipple(single,1011,0)).toEqual({offsetX:0,offsetY:0,light:0,trough:0});
  });
 });

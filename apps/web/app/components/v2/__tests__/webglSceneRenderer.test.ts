@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { classifyWebGLSceneError, createWebGLSceneRenderer, particleVertices, sceneCardMatrix, sceneCardVisible, type WebGLSceneCard, type WebGLSceneFrame } from '../webglSceneRenderer';
+import { RIPPLE_EFFECT_RING_SPACING_PX,RIPPLE_EFFECT_RING_WIDTH_PX } from '../rippleEffect';
 import { createDominoTransforms } from '../dominoEffect';
 import { projectPoint, type GeometryCanvas, type HtmlTextureGL } from '../webglDomino';
 import { createPushParticles, createPushPaths } from '../pushEffect';
@@ -80,15 +81,15 @@ describe('feed WebGLの同一射影・有界texture・前面粒子',()=>{
   it('波紋はuniformだけ更新しgeometry・texture再取得を変えず次cardで解除する',()=>{
     const {renderer,gl,surface}=setup(),a=card('a'),b=card('b',200);
     renderer.render(frame([a,b]));vi.mocked(gl.uniform1f).mockClear();vi.mocked(gl.texElementSubImage2D).mockClear();
-    a.ripple={sourceId:'a',depth:0,delayMs:0,progress:.5,amount:1,directionX:1,directionY:0};
+    a.ripple={sources:[{id:'a',x:100,y:50}],ageMs:500,amount:1};
     const result=renderer.render(frame([a,b]));expect(result.uploads).toBe(0);expect(gl.texElementSubImage2D).not.toHaveBeenCalled();
     expect(vi.mocked(gl.uniform1f).mock.calls.filter(c=>c[0]==='rippleAmount').map(c=>c[1])).toEqual([1,0]);
-    expect(gl.uniform2f).toHaveBeenCalledWith('rippleDirection',1,0);
+    expect(gl.uniform2f).toHaveBeenCalledWith('rippleSources[0]',100,50);expect(gl.uniform1f).toHaveBeenCalledWith('rippleRadius',500);expect(gl.uniform2f).toHaveBeenCalledWith('cardOrigin',a.box.x,a.box.y);
     expect(surface.updateElementGeometry).toHaveBeenCalledWith(a.node,{canvasTransform:expect.objectContaining({values:sceneCardMatrix(a.box,camera)})});
     const fragment=vi.mocked(gl.shaderSource).mock.calls[1][1];
     expect(fragment).not.toContain('smoothstep(0.,.08,uv.x)');expect(fragment).toContain('min(edgePx.x,edgePx.y))/6.0');expect(fragment).toContain('wave*6.0/max(cardSize');
-    expect(fragment).toContain('distanceToWave*distanceToWave/0.025');expect(fragment).toContain('rippleAmount*.32');expect(fragment).toContain('rippleAmount*.15');expect(fragment).toContain('vec3(.25,.85,1.)*c.a');
-    expect(fragment.match(/texture\(image,/g)).toHaveLength(2);expect(fragment).toContain('vec4 c=texture(image,uv)');expect(fragment).toContain('shifted.rgb*(c.a/max(shifted.a,.0001))');expect(fragment).toContain('light=band*rippleAmount*.32');expect(fragment).not.toContain('light=band*guard');
+    expect(fragment).toContain('worldPoint=cardOrigin+uv*cardSize');expect(fragment).toContain('rippleAmount*.4');expect(fragment).toContain('rippleAmount*.18');expect(fragment).toContain('vec3(124.,58.,237.)/255.*c.a');expect(fragment).toContain('source<4');expect(fragment).toContain('ring<2');expect(fragment).toContain(`float(ring)*${RIPPLE_EFFECT_RING_SPACING_PX}.`);expect(fragment).toContain(`d/${RIPPLE_EFFECT_RING_WIDTH_PX}.`);expect(fragment).toContain(`abs(d)>${RIPPLE_EFFECT_RING_WIDTH_PX*3}.`);
+    expect(fragment.match(/texture\(image,/g)).toHaveLength(2);expect(fragment).toContain('vec4 c=texture(image,uv)');expect(fragment).toContain('shifted.rgb*(c.a/max(shifted.a,.0001))');expect(fragment).toContain('light=strength*rippleAmount*.4');expect(fragment).not.toContain('light=strength*guard');
   });
   it('6CSSpx境界guardは縦横サイズによらず外へsamplingせず広い静止枠を作らない',()=>{
     for(const width of [1,10,100,1000])for(const height of [1,10,100,10000]) {
@@ -113,8 +114,8 @@ describe('feed WebGLの同一射影・有界texture・前面粒子',()=>{
       const result=original.map((c,i)=>{
         const refracted=shifted[i]*(alpha/Math.max(shiftedAlpha,.0001));
         const mixed=c*(1-coverage)+refracted*coverage;
-        const dark=mixed*(1-.15)+mixed*.55*.15;
-        return dark*(1-.32)+[.25,.85,1][i]*alpha*.32;
+        const dark=mixed*(1-.18)+mixed*.55*.18;
+        return dark*(1-.4)+[124/255,58/255,237/255][i]*alpha*.4;
       });
       for(const c of result){expect(c).toBeGreaterThanOrEqual(0);expect(c).toBeLessThanOrEqual(alpha+1e-12);}
       if(alpha===0)expect(result).toEqual([0,0,0]);

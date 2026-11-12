@@ -1,11 +1,11 @@
 import type { SceneBox, Camera } from './scene';
-import { RIPPLE_EFFECT_MAX_DISPLACEMENT_PX, type RippleEffect } from './rippleEffect';
+import { RIPPLE_EFFECT_MAX_DISPLACEMENT_PX, RIPPLE_EFFECT_SPEED_PX_PER_MS, type RadialRipple } from './rippleEffect';
 import type { DominoTransform } from './dominoEffect';
 import type { PushEffectParticle } from './pushEffect';
 import { PUSH_EFFECT_MAX_PARTICLES } from './pushEffect';
 import { multiply4, projectPoint, type Matrix4, type GeometryCanvas, type HtmlTextureGL } from './webglDomino';
 
-export interface WebGLSceneCard { id: string; node: HTMLElement; box: SceneBox; tip?: DominoTransform; ripple?: RippleEffect }
+export interface WebGLSceneCard { id: string; node: HTMLElement; box: SceneBox; tip?: DominoTransform; ripple?: RadialRipple }
 export interface WebGLSceneFrame {
   cards: readonly WebGLSceneCard[]; camera: Camera; viewportWidth: number; viewportHeight: number;
   changedElements?: readonly Element[]; dirtyIds?: ReadonlySet<string>; pinnedIds?: ReadonlySet<string>;
@@ -102,21 +102,24 @@ export function createWebGLSceneRenderer(gl: HtmlTextureGL, surface: GeometryCan
       in vec2 position; uniform mat4 model; uniform vec2 viewSize; uniform vec2 cardSize; out vec2 uv;
       void main(){uv=position;vec4 p=model*vec4(position*cardSize,0.,1.);gl_Position=vec4(2.*p.x/viewSize.x-p.w,p.w-2.*p.y/viewSize.y,0.,p.w);}`,
     `#version 300 es
-      precision highp float; precision highp int;in vec2 uv;uniform sampler2D image;uniform float amount;uniform int edge;uniform bool footprint;uniform vec2 cardSize;uniform vec2 rippleDirection;uniform float rippleProgress;uniform float rippleAmount;out vec4 color;
+      precision highp float; precision highp int;in vec2 uv;uniform sampler2D image;uniform float amount;uniform int edge;uniform bool footprint;uniform vec2 cardSize;uniform vec2 cardOrigin;uniform vec2 rippleSources[4];uniform int rippleCount;uniform float rippleRadius;uniform float rippleAmount;out vec4 color;
       void main(){float t=edge==0?1.-uv.y:edge==1?uv.x:edge==2?uv.y:1.-uv.x;
       if(footprint){float r=min(12.,min(cardSize.x,cardSize.y)*.5);vec2 q=abs(uv*cardSize-cardSize*.5)-(cardSize*.5-vec2(r));float d=length(max(q,0.))+min(max(q.x,q.y),0.)-r;float a=mix(.08,.7,t)*amount*.22*(1.-smoothstep(-1.,1.,d));color=vec4(vec3(15.,23.,42.)/255.*a,a);}
       else{vec4 c=texture(image,uv);float light=0.;float trough=0.;
-      if(rippleAmount>0.){float span=max(abs(rippleDirection.x)+abs(rippleDirection.y),.001);float along=dot(uv-.5,rippleDirection)/span+.5;
-      float distanceToWave=along-mix(-.15,1.15,rippleProgress);float band=exp(-distanceToWave*distanceToWave/0.025);
+      if(rippleAmount>0.){vec2 worldPoint=cardOrigin+uv*cardSize;vec2 rippleDirection=vec2(0.);float strength=0.;float distanceToWave=0.;float ringWeight=0.;
+      for(int source=0;source<4;source++){if(source>=rippleCount)break;vec2 delta=worldPoint-rippleSources[source];float radialDistance=length(delta);
+      for(int ring=0;ring<2;ring++){float radius=rippleRadius-float(ring)*200.;float d=radialDistance-radius;float weight=ring==0?1.:.65;
+      if(radius<0.||abs(d)>210.)continue;float candidate=exp(-.5*(d/70.)*(d/70.))*weight;
+      if(candidate>strength){strength=candidate;distanceToWave=d;ringWeight=weight;rippleDirection=radialDistance>0.?delta/radialDistance:vec2(0.);}}}
       vec2 edgePx=min(uv,1.-uv)*max(cardSize,vec2(1.));
       float guard=min(1.,max(0.,min(edgePx.x,edgePx.y))/${RIPPLE_EFFECT_MAX_DISPLACEMENT_PX.toFixed(1)});
-      float wave=sin(distanceToWave*32.)*band*guard*rippleAmount;
+      float wave=sin(distanceToWave/32.)*strength*guard*rippleAmount;
       vec2 sampleUV=clamp(uv+rippleDirection*wave*${RIPPLE_EFFECT_MAX_DISPLACEMENT_PX.toFixed(1)}/max(cardSize,vec2(1.)),vec2(0.),vec2(1.));
       vec4 shifted=texture(image,sampleUV);
       float coverage=smoothstep(.95,1.,c.a)*smoothstep(.95,1.,shifted.a);
       c.rgb=mix(c.rgb,shifted.rgb*(c.a/max(shifted.a,.0001)),coverage);
-      light=band*rippleAmount*.32;trough=exp(-(distanceToWave+.12)*(distanceToWave+.12)/.02)*rippleAmount*.15;}
-      c.rgb=mix(c.rgb,c.rgb*.55,trough);c.rgb=mix(c.rgb,vec3(.25,.85,1.)*c.a,light);float a=mix(.48,.06,t)*amount*.3;color=vec4(c.rgb*(1.-a)+vec3(15.,23.,42.)/255.*a*c.a,c.a);}}`);
+      light=strength*rippleAmount*.4;trough=strength>0.?exp(-.5*((distanceToWave+65.)/65.)*((distanceToWave+65.)/65.))*ringWeight*rippleAmount*.18:0.;}
+      c.rgb=mix(c.rgb,c.rgb*.55,trough);c.rgb=mix(c.rgb,vec3(124.,58.,237.)/255.*c.a,light);float a=mix(.48,.06,t)*amount*.3;color=vec4(c.rgb*(1.-a)+vec3(15.,23.,42.)/255.*a*c.a,c.a);}}`);
     const particleProgram = program(`#version 300 es
       precision highp float; precision highp int;
       in vec2 position;in vec4 tint;uniform vec2 viewSize;out vec4 color;
@@ -129,7 +132,7 @@ export function createWebGLSceneRenderer(gl: HtmlTextureGL, surface: GeometryCan
     const cardPosition = gl.getAttribLocation(cardProgram, 'position'), particlePosition = gl.getAttribLocation(particleProgram, 'position'), particleTint = gl.getAttribLocation(particleProgram, 'tint');
     const location = (p: WebGLProgram, name: string) => gl.getUniformLocation(p, name);
     const model = location(cardProgram, 'model'), viewSize = location(cardProgram, 'viewSize'), cardSize = location(cardProgram, 'cardSize'), amount = location(cardProgram, 'amount'), edge = location(cardProgram, 'edge'), footprint = location(cardProgram, 'footprint');
-    const rippleDirection = location(cardProgram, 'rippleDirection'), rippleProgress = location(cardProgram, 'rippleProgress'), rippleAmount = location(cardProgram, 'rippleAmount');
+    const cardOrigin = location(cardProgram, 'cardOrigin'), rippleSources = Array.from({length:4},(_,i)=>location(cardProgram, `rippleSources[${i}]`)), rippleCount = location(cardProgram, 'rippleCount'), rippleRadius = location(cardProgram, 'rippleRadius'), rippleAmount = location(cardProgram, 'rippleAmount');
     const imageLocation = location(cardProgram, 'image'), particleViewSize = location(particleProgram, 'viewSize');
     const bindCard = (frame: WebGLSceneFrame) => { gl.useProgram(cardProgram); gl.bindBuffer(gl.ARRAY_BUFFER, quad); gl.enableVertexAttribArray(cardPosition); gl.vertexAttribPointer(cardPosition, 2, gl.FLOAT, false, 0, 0); gl.uniform2f(viewSize, frame.viewportWidth, frame.viewportHeight); gl.uniform1i(imageLocation, 0); };
     return {
@@ -162,8 +165,10 @@ export function createWebGLSceneRenderer(gl: HtmlTextureGL, surface: GeometryCan
             }
             entry.used = tick; gl.bindTexture(gl.TEXTURE_2D, entry.texture);
             if (entry.dirty) { gl.texElementSubImage2D(gl.TEXTURE_2D, 0, 0, 0, card.node); if (gl.getError() !== gl.NO_ERROR) throw new Error('Texture upload failed'); entry.dirty = false; uploads++; }
-            gl.uniform2f(rippleDirection, card.ripple?.directionX ?? 0, card.ripple?.directionY ?? 1);
-            gl.uniform1f(rippleProgress, card.ripple?.progress ?? 0); gl.uniform1f(rippleAmount, card.ripple?.amount ?? 0);
+            gl.uniform2f(cardOrigin,card.box.x,card.box.y);
+            const sources=card.ripple?.sources.slice(0,4) ?? [];
+            gl.uniform1i(rippleCount,sources.length);gl.uniform1f(rippleRadius,(card.ripple?.ageMs ?? 0)*RIPPLE_EFFECT_SPEED_PX_PER_MS);gl.uniform1f(rippleAmount,card.ripple?.amount ?? 0);
+            for(let i=0;i<4;i++)gl.uniform2f(rippleSources[i],sources[i]?.x ?? 0,sources[i]?.y ?? 0);
             gl.uniform2f(cardSize, card.box.width, card.box.height); gl.uniform1f(amount, card.tip?.amount ?? 0);
             gl.uniform1i(edge, card.tip ? ['top', 'right', 'bottom', 'left'].indexOf(card.tip.perspective.edge) : 0);
             if (card.tip) { gl.uniform1i(footprint, 1); gl.uniformMatrix4fv(model, false, new Float32Array(sceneCardMatrix(card.box, frame.camera))); gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); draws++; }
