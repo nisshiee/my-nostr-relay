@@ -22,7 +22,7 @@ function run(state: SceneMotionState, ms: number, frameMs = 16): SceneMotionStat
   return state;
 }
 
-describe('V2の決定的なドミノモーション', () => {
+describe('Canvasの決定的なドミノモーション', () => {
   it('空の初期描画を経て初めて届くfeedは全件即時配置する', () => {
     const empty = retargetSceneMotion(createSceneMotion(), new Map());
     const state = retargetSceneMotion(empty, initialTargets);

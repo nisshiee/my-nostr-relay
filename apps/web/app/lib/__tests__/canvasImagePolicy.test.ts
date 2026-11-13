@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { canvasImageWidth, validateCanvasImageSource } from '../canvasImagePolicy';
 import config from '../../../next.config';
 
-describe('V2の公開画像許可範囲', () => {
+describe('Canvasの公開画像許可範囲', () => {
   it.each(['i.gyazo.com', 'images.example.org', 'another.example.net'])('%sをHTTPS/queryなしで受付する（IP検査はserver）', host => {
     expect(validateCanvasImageSource(`https://${host}/avatar.png`)).toEqual({ allowed: true, url: `https://${host}/avatar.png`, local: false });
   });

@@ -3,7 +3,7 @@ import { RIPPLE_EFFECT_MAX_DISPLACEMENT_PX, RIPPLE_EFFECT_SPEED_PX_PER_MS, type 
 import type { DominoTransform } from './dominoEffect';
 import type { PushEffectParticle } from './pushEffect';
 import { PUSH_EFFECT_MAX_PARTICLES } from './pushEffect';
-import { multiply4, projectPoint, type Matrix4, type GeometryCanvas, type HtmlTextureGL } from './webglDomino';
+import { multiply4, projectPoint, type Matrix4, type GeometryCanvas, type HtmlTextureGL } from './webglGeometry';
 
 export interface WebGLSceneCard { id: string; node: HTMLElement; box: SceneBox; tip?: DominoTransform; ripple?: RadialRipple }
 export interface WebGLSceneFrame {

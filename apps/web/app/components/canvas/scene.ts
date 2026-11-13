@@ -3,7 +3,7 @@ import { buildInitialLayout, insertCard, reflow, type DisplacementEdge } from '.
 import type { Grid, Placement } from '../../lib/layoutTypes';
 import type { Card } from '../../lib/types';
 
-/** V2の配置とモーションはカメラから独立したCSS pxのワールド座標で扱う。 */
+/** 配置とモーションはカメラから独立したCSS pxのワールド座標で扱う。 */
 export interface SceneBox { x: number; y: number; width: number; height: number }
 export interface Camera { x: 0; y: number; zoom: 1 }
 export interface SceneLayoutItem { id: string; card?: Card }
@@ -23,7 +23,7 @@ export interface SceneLayoutResult {
 export interface SceneLayoutState extends SceneLayoutResult {
   /** 新着ごとの実際の押し出し関係。移動量・現在列・chainOrderから推測しない。 */
   insertion: SceneInsertionBatch;
-  /** V1エンジンの論理座標。holdの表示座標をここへ書き戻さない。 */
+  /** 配置エンジンの論理座標。holdの表示座標をここへ書き戻さない。 */
   grid: Grid;
   engineBoxes: Map<string, SceneBox>;
   frozenBoxes: Map<string, SceneBox>;
@@ -65,7 +65,7 @@ function projectBoxes(
       width, height: heights.get(id) ?? DEFAULT_CARD_HEIGHT,
     });
   }
-  // V2既存仕様: focus/holdは実座標を固定し、列数変更でも表示の固定を保つ。
+  // focus/holdは実座標を固定し、列数変更でも表示の固定を保つ。
   // 論理gridは通常どおりreflowするため、表示上の一時的な重なりは許容する。
   const frozenBoxes = new Map<string, SceneBox>();
   for (const id of heldIds) {
@@ -103,10 +103,10 @@ export function createSceneLayout(): SceneLayoutState {
 }
 
 /**
- * V1と同じ初期配置・引力による逐次挿入・通常reflow・遅延保持を使う。
- * V2では新着を全て挿入した後に一度だけ空隙を詰め、その最終位置へ直接動かす。
- * 引力はV1のCardメタデータをそのまま使い、縦gap12と未測定高さ120も引き継ぐ。
- * V2の余白と横幅だけを表示変換し、hold中は実表示座標を別Mapで固定する。
+ * スコアに基づく初期配置・引力による逐次挿入・通常reflow・遅延保持を使う。
+ * 新着を全て挿入した後に一度だけ空隙を詰め、その最終位置へ直接動かす。
+ * 引力はCardメタデータを使い、縦gap12と未測定高さ120を基準にする。
+ * 表示用の余白と横幅だけを表示変換し、hold中は実表示座標を別Mapで固定する。
  */
 export function updateSceneLayout(
   state: SceneLayoutState,
@@ -169,7 +169,7 @@ export function updateSceneLayout(
     }
   }
 
-  // V1と同じく挿入処理後に削除を反映する。高さ変更だけでは直前の連鎖を消さない。
+  // 挿入処理後に削除を反映する。高さ変更だけでは直前の連鎖を消さない。
   const cleanGrid = new Map<string, Placement>();
   for (const [id, placement] of grid) if (previousIds.has(id)) cleanGrid.set(id, { ...placement });
   // 引力が選んだ列・列内順序・連鎖は保持し、途中の押し出し先を表示目標にはしない。
@@ -210,12 +210,4 @@ export function layoutScene(
 ): Map<string, SceneBox> {
   return planSceneLayout(ids, heights, viewport, previous, held).boxes;
 }
-export type CanvasMode = 'modern' | 'legacy' | 'dom';
-export interface DrawableContext extends CanvasRenderingContext2D {
-  drawElementImage(element: Element, x: number, y: number, width: number, height: number): DOMMatrix | undefined;
-}
-export interface DrawableCanvas extends HTMLCanvasElement { requestPaint?: () => void }
-export function detectCanvasMode(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D | null): CanvasMode {
-  if (typeof (canvas as DrawableCanvas).requestPaint !== 'function' || typeof (context as DrawableContext | null)?.drawElementImage !== 'function') return 'dom';
-  return 'content' in canvas ? 'modern' : 'legacy';
-}
+export type CanvasMode = 'modern' | 'dom';

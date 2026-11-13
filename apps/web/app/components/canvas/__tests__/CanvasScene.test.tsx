@@ -18,21 +18,17 @@ function HeaderScene(props: React.ComponentProps<typeof CanvasScene>) {
   const close=React.useCallback(()=>setOpen(false),[]);
   return <><CanvasHeader status="connected" npub={null} onAddDraft={()=>{}} onLogout={()=>{}} showSignerControl={false} onManageSigner={()=>{}} onOpenSettings={()=>setOpen(true)} settingsOpen={open} settingsTrigger={trigger}/><CanvasScene {...props} settingsOpen={open} onSettingsClose={close} settingsTrigger={trigger}/></>;
 }
-// 既存描画回帰では設定を明示的に開いてQA操作を行う。modal自身の回帰はactualRenderを使う。
+// 描画回帰では設定を明示的に開く。modal自身の回帰はactualRenderを使う。
 function renderUI(ui: React.ReactElement, options?: Parameters<typeof actualRender>[1]) {
   const result = actualRender(ui, options);
   const active = document.activeElement as HTMLElement | null;
   const trigger = screen.queryByRole('button', { name: '設定' });
   if (trigger) fireEvent.click(trigger);
-  const summary = screen.queryByText('描画比較（開発用）');
-  if (summary) fireEvent.click(summary);
   if (active?.isConnected && active !== document.body) act(() => active.focus());
   return result;
 }
 function render(ui: React.ReactElement, options?: Parameters<typeof renderUI>[1]) {
   const result = renderUI(ui, options);
-  const choice = screen.queryByRole('combobox', { name: 'QA描画方式' });
-  if (choice) fireEvent.change(choice, { target: { value: 'css' } });
   return result;
 }
 
@@ -81,7 +77,12 @@ function flushFrame(time = 0) {
 
 function mockModernNative() {
   const draw = vi.fn(), fill = vi.fn();
-  vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,arc:vi.fn(),fill,lineTo:vi.fn(),closePath:vi.fn(),save:vi.fn(),restore:vi.fn(),beginPath:vi.fn(),moveTo:vi.fn(),resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
+  vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({} as CanvasRenderingContext2D);
+  backendMock.create.mockImplementation(() => ({dispose:vi.fn(),render:(frame:import('../webglSceneRenderer').WebGLSceneFrame)=>{
+    for(const card of frame.cards) draw(card.node,card.box.x,card.box.y,card.box.width,card.box.height,card.tip);
+    if(frame.particles?.length && frame.particleOpacity) fill(frame.particles);
+    return {draws:frame.cards.length,uploads:frame.cards.length,textureBytes:0,textureCount:frame.cards.length,geometryUpdates:frame.cards.length,drawnIds:frame.cards.map(card=>card.id)};
+  }}));
   for (const [key,value] of [['content','drawable'],['requestPaint',function(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}]] as const) {
     const old=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,key);
     Object.defineProperty(HTMLCanvasElement.prototype,key,{configurable:true,value});
@@ -219,103 +220,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     unmount(); expect(cancel).toHaveBeenCalledWith(timer);
     schedule.mockClear();pointer(window,'pointerup');expect(schedule).not.toHaveBeenCalled();
   });
-  it("native押下は未paintの計算値でなく最後に描いた内側CSS姿勢を保持する", () => {
-    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
-    let matrix:number[]=[];
-    const draws:{id:string|null,matrix:number[],x:number,y:number,width:number,height:number,padding:string,pose:string}[]=[];
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:(...values:number[])=>{matrix=values;},drawElementImage:(node:Element,x:number,y:number,width:number,height:number)=>{draws.push({id:node.getAttribute('data-scene-card'),matrix:[...matrix],x,y,width,height,padding:(node as HTMLElement).style.padding,pose:node.querySelector<HTMLElement>('[data-scene-face]')!.style.transform});}} as unknown as CanvasRenderingContext2D);
-    const descriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
-    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value:vi.fn()});
-    const contentDescriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'content');
-    Object.defineProperty(HTMLCanvasElement.prototype,'content',{configurable:true,value:'drawable'});
-    try {
-      const original={id:'a',content:<InteractiveCard/>};
-      const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>); flushFrame(0);
-      const surface=document.querySelector('canvas')!;
-      fireEvent(surface,new Event('paint'));
-      rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
-      fireEvent(surface,new Event('paint'));
-      const painted=draws.filter(draw=>draw.id==='a').at(-1)!;
-      expect(painted.pose).toContain('perspective(');
-      expect(painted.padding).toBe('66px');
-      expect(painted.width).toBe(492); expect(painted.height).toBe(252);
-      flushFrame(450);
-      expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).not.toBe(painted.pose);
-      const button=screen.getByRole('button',{name:'クリック 0'});
-      pointer(button,'pointerdown');
-      const host=screen.getByLabelText('カード領域。縦スクロールで移動');
-      const diagnostic=JSON.parse(host.getAttribute('data-scene-last-pointer-down')!);
-      expect(diagnostic).toMatchObject({mode:'modern',paint:2,card:'a',button:true,buttonIndex:0,pressed:null});
-      expect(diagnostic.geometry).toBeGreaterThan(diagnostic.paint);
-      expect(diagnostic.drawn.tip).not.toBe(diagnostic.pending.tip);
-      fireEvent.focus(button);flushFrame(550);
-      fireEvent(surface,new Event('paint'));
-      expect(draws.filter(draw=>draw.id==='a').at(-1)).toEqual(painted);
-      pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(600);
-      fireEvent(surface,new Event('paint'));
-      expect(draws.filter(draw=>draw.id==='a').at(-1)!.pose).toBe('');
-      expect(draws.filter(draw=>draw.id==='a').at(-1)!.padding).toBe('0px');
-      expect(draws.filter(draw=>draw.id==='a').at(-1)!.width).toBe(360);
-      expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
-    } finally {
-      if(contentDescriptor)Object.defineProperty(HTMLCanvasElement.prototype,'content',contentDescriptor);
-      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'content');
-      if(descriptor)Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',descriptor);
-      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
-    }
-  });
-  it("nativeドミノは内側CSSだけを遠近変形しDPRとscrollを二重適用しない", () => {
-    vi.stubGlobal("devicePixelRatio", 2);
-    const draw = vi.fn(), matrix = vi.fn();
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:matrix,drawElementImage:draw} as unknown as CanvasRenderingContext2D);
-    const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
-    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
-    const contentDescriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'content');
-    Object.defineProperty(HTMLCanvasElement.prototype,'content',{configurable:true,value:'drawable'});
-    try {
-      const item = (id:string) => ({id,content:<span>{id}</span>});
-      const {rerender} = render(<CanvasScene diagnosticsEnabled items={[item('a')]} />);
-      flushFrame(0);
-      fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'domino'}});
-      rerender(<CanvasScene diagnosticsEnabled items={[item('new'),item('a')]} />);
-      flushFrame(16);
-      const host = screen.getByLabelText('カード領域。縦スクロールで移動');
-      host.scrollTop = 90; fireEvent.scroll(host);
-      draw.mockClear(); matrix.mockClear(); flushFrame(250);
-      expect(matrix.mock.calls.every(call=>call[0]===2 && call[1]===0 && call[2]===0 && call[3]===2 && call[4]===0 && call[5]===-180)).toBe(true);
-      expect(draw.mock.calls.every(call=>call[1]!==0 || call[2]!==0)).toBe(true);
-      const node = document.querySelector<HTMLElement>('[data-scene-card="new"]')!;
-      const face = node.querySelector<HTMLElement>('[data-scene-face]')!;
-      const nativePose = face.style.transform;
-      expect(nativePose).toContain('perspective(');
-      expect(node.style.transform).toBe('');
-      expect(face.hasAttribute('drawable')).toBe(false);
-      const nativeDraw=draw.mock.calls.findLast(call=>call[0]===node)!;
-      expect(node.style.padding).toBe('66px');
-      expect(node.style.boxSizing).toBe('content-box');
-      expect(node.style.pointerEvents).toBe('none');
-      expect(face.style.pointerEvents).toBe('auto');
-      expect(nativeDraw.slice(3)).toEqual([492,252]);
-      expect(nativeDraw[1]).toBeCloseTo(Number(node.dataset.sceneX)-66,2);
-      expect(nativeDraw[2]).toBeCloseTo(Number(node.dataset.sceneY)-66,2);
-      fireEvent.click(screen.getByRole('button',{name:'DOMに切替'})); flushFrame(250);
-      expect(face.style.transform).toBe('');
-      expect(node.style.padding).toBe('0px');
-      expect(node.style.transform).toBe(`translate(${nativeDraw[1]+66}px,${nativeDraw[2]+66-90}px) scale(1)`);
-      expect(host.dataset.scenePushEffect).toBe('idle');
-      fireEvent.click(screen.getByRole('button',{name:'Nativeを試す'})); flushFrame(250);
-      draw.mockClear(); flushFrame(2000);
-      expect(draw.mock.calls.every(call=>call[1]!==0 || call[2]!==0)).toBe(true);
-      expect(face.style.transform).toBe('');
-      expect(node.style.padding).toBe('0px');
-      expect(document.querySelector('[data-renderer-status]')!.textContent).toContain('native');
-    } finally {
-      if(contentDescriptor)Object.defineProperty(HTMLCanvasElement.prototype,'content',contentDescriptor);
-      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'content');
-      if(original) Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',original);
-      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
-    }
-  });
+
+
   it("描画失敗でDOMへ退避した瞬間に押下姿勢と効果を解除する", () => {
     localStorage.setItem('nlc-v2-effect','domino');
     const {draw}=mockModernNative();
@@ -325,7 +231,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     const button=screen.getByRole('button',{name:'クリック 0'});
-    pointer(button,'pointerdown');flushFrame(350);expect(node.style.padding).toBe('66px');
+    pointer(button,'pointerdown');flushFrame(350);expect(node.style.padding).toBe('0px');
     draw.mockImplementationOnce(()=>{throw new Error('draw failed');});flushFrame(450);
     expect(document.querySelector('canvas')!.hidden).toBe(true);
     expect(face.style.transform).toBe('');expect(node.style.padding).toBe('0px');
@@ -333,28 +239,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     flushFrame(500);expect(screen.getByLabelText('カード領域。縦スクロールで移動').dataset.scenePushEffect).toBe('idle');
     pointer(window,'pointerup');fireEvent.click(button);expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
   });
-  it.each([true,false])("旧APIは保存済みまたは選択後のドミノをDOMへ切替える (保存=%s)", saved => {
-    if(saved)localStorage.setItem('nlc-v2-effect','domino');
-    const draw=vi.fn();
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
-    const descriptor=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
-    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
-    try {
-      const original={id:'a',content:<InteractiveCard/>};
-      const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
-      if(!saved)fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'domino'}});
-      draw.mockClear();
-      rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
-      expect(document.querySelector('canvas')!.hidden).toBe(true);
-      expect(draw).not.toHaveBeenCalled();
-      expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).toBe('');
-      fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
-      expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
-    } finally {
-      if(descriptor)Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',descriptor);
-      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
-    }
-  });
+
   it("keyboard focusの縦revealでは捕捉paddingを座標へ二重加算しない", () => {
     mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
@@ -365,14 +250,14 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     const button=screen.getByRole('button',{name:'クリック 0'});
     const host=screen.getByLabelText('カード領域。縦スクロールで移動');
-    expect(node.style.padding).toBe('66px');
+    expect(node.style.padding).toBe('0px');
     Object.defineProperties(button,{
       offsetTop:{configurable:true,value:570-Number(node.dataset.sceneY)},
       offsetHeight:{configurable:true,value:20},
       offsetParent:{configurable:true,value:face},
     });
     Object.defineProperties(face,{
-      offsetTop:{configurable:true,value:66},
+      offsetTop:{configurable:true,value:0},
       offsetParent:{configurable:true,value:node},
     });
     act(()=>button.focus()); flushFrame(300);
@@ -404,7 +289,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face = node.querySelector<HTMLElement>('[data-scene-face]')!;
     expect(observed.has(face)).toBe(true); expect(observed.has(node)).toBe(false);
-    expect(node.style.padding).toBe('66px');
+    expect(node.style.padding).toBe('0px');
     const expectedY = Number(node.dataset.sceneTargetY);
     act(()=>refresh?.()); flushFrame(300);
     expect(Number(node.dataset.sceneTargetY)).toBe(expectedY);
@@ -413,7 +298,6 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'off'}}); flushFrame(400);
     expect(node.style.padding).toBe('0px'); expect(face.style.width).toBe('360px');
     expect(Number(node.dataset.sceneTargetY)).toBe(expectedY+40);
-    expect(node.querySelector<HTMLElement>('[data-scene-footprint]')!.style.inset).toBe('0px');
   });
 
   it("保存済みドミノもreduced-motionでは変形せず、解除しても旧新着を再生しない", () => {
@@ -454,18 +338,13 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(Number(node.dataset.sceneTip)).toBeGreaterThan(0);
     expect(node.style.transform).toBe('');
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
-    expect(face.style.transform).toContain('perspective(');
-    for(const decoration of node.querySelectorAll<HTMLElement>('[data-scene-shade], [data-scene-footprint]')){
-      expect(decoration.style.pointerEvents).toBe('none');
-      expect(decoration.getAttribute('aria-hidden')).toBe('true');
-      expect(Number(decoration.style.opacity)).toBeGreaterThan(0);
-    }
+    expect(face.style.transform).toBe('');
+    expect(node.querySelector('[data-scene-shade], [data-scene-footprint]')).toBeNull();
     expect(document.querySelectorAll('svg path').length).toBe(0);
     fireEvent.focus(screen.getByRole('textbox'));
     flushFrame(300);
     expect(node.dataset.sceneTip).toBe('0');
     expect(face.style.transform).toBe('');
-    expect(node.querySelector<HTMLElement>('[data-scene-shade]')!.style.opacity).toBe('0');
     fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'sparkle'}});
     flushFrame(350);
     expect(document.querySelectorAll('svg path').length).toBe(0);
@@ -485,26 +364,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     for(let time=216;time<4000&&frames.size;time+=16)flushFrame(time);
     expect(frames.size).toBe(0);
   });
-  it("nativeでは連続線なしの星屑をカードより後にcanvasへ描き、SVGを重ねない", () => {
-    const stroke = vi.fn(), fill = vi.fn(), draw = vi.fn();
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({globalAlpha:1,arc:vi.fn(),fill,lineTo:vi.fn(),closePath:vi.fn(),save:vi.fn(),restore:vi.fn(),beginPath:vi.fn(),moveTo:vi.fn(),bezierCurveTo:vi.fn(),stroke,resetTransform:vi.fn(),clearRect:vi.fn(),setTransform:vi.fn(),drawElementImage:draw} as unknown as CanvasRenderingContext2D);
-    const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
-    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
-    try {
-      const {rerender} = render(<CanvasScene diagnosticsEnabled items={[{id:'a',content:<span>a</span>}]} />);
-      flushFrame(0);
-      rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
-      flushFrame(16); flushFrame(100);
-      expect(stroke).not.toHaveBeenCalled();
-      expect(fill).toHaveBeenCalled();
-      expect(fill.mock.invocationCallOrder.at(-1)!).toBeGreaterThan(draw.mock.invocationCallOrder.at(-1)!);
-      expect(document.querySelectorAll('svg path').length).toBe(0);
-      expect(document.querySelector('[data-renderer-status]')!.textContent).toContain('native');
-    } finally {
-      if(original) Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',original);
-      else Reflect.deleteProperty(HTMLCanvasElement.prototype,'requestPaint');
-    }
-  });
+
   it.each(['sparkle','domino','ripple'])("DOMでは保存済み%sも効果なしで入力とクリックを維持する", choice => {
     localStorage.setItem('nlc-v2-effect',choice);
     const original={id:'a',content:<InteractiveCard/>};
@@ -583,7 +443,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(Number(node.dataset.sceneTargetY)).toBe(68);
   });
 
-  it("実カードのscore/pubkeyをV1配置へ渡し、native/DOM往復後も重力のengine座標を保つ", () => {
+  it("実カードのscore/pubkeyを配置エンジンへ渡し、native/DOM往復後も重力のengine座標を保つ", () => {
     const card = (id: string, score: number, pubkey: string): Card => ({ type: 'compose', slotId: id, score, pubkey, created_at: 0 });
     const cards = [card('a', 100, 'alice'), card('b', 80, 'bob'), card('c', 60, 'alice'), card('d', 20, 'dave')];
     const items = (list: Card[]) => list.map(value => ({ id: value.slotId, card: value, content: <span>{value.slotId}</span> }));
@@ -630,8 +490,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(frames.size).toBe(0);
   });
   it("native描画に現在位置を渡し、縦scrollで待機timelineを再開しない", () => {
-    const draw = vi.fn();
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({ globalAlpha:1, arc:vi.fn(),fill:vi.fn(), lineTo:vi.fn(), closePath:vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(), stroke: vi.fn(), resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw } as unknown as CanvasRenderingContext2D);
+    const {draw} = mockModernNative();
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype, 'requestPaint', { configurable:true, value(this: HTMLCanvasElement) { this.dispatchEvent(new Event('paint')); } });
     try {
@@ -805,31 +664,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "下書き" }));
   });
 
-  it("モックnative APIの描画例外でDOMへ戻し、カードを操作できる", () => {
-    // APIを明示的に模倣する単体テスト。実ブラウザのnative描画検証ではない。
-    const draw = vi.fn(() => { throw new Error("unsupported draw"); });
-    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
-      globalAlpha:1, arc:vi.fn(),fill:vi.fn(), lineTo:vi.fn(), closePath:vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(), bezierCurveTo: vi.fn(), stroke: vi.fn(), resetTransform: vi.fn(), clearRect: vi.fn(), setTransform: vi.fn(), drawElementImage: draw,
-    } as unknown as CanvasRenderingContext2D);
-    const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, "requestPaint");
-    Object.defineProperty(HTMLCanvasElement.prototype, "requestPaint", {
-      configurable: true,
-      value(this: HTMLCanvasElement) { this.dispatchEvent(new Event("paint")); },
-    });
-    try {
-      render(<CanvasScene diagnosticsEnabled items={[{ id: "one", content: <InteractiveCard /> }]} />);
-      flushFrame();
-      flushFrame();
-      expect(draw).toHaveBeenCalled();
-      expect(document.querySelector("[data-renderer-status]")!.textContent).toContain("DOM fallback");
-      expect(document.querySelector("canvas")!.hidden).toBe(true);
-      fireEvent.click(screen.getByRole("button", { name: "クリック 0" }));
-      expect(screen.getByRole("button", { name: "クリック 1" })).toBeDefined();
-    } finally {
-      if (original) Object.defineProperty(HTMLCanvasElement.prototype, "requestPaint", original);
-      else Reflect.deleteProperty(HTMLCanvasElement.prototype, "requestPaint");
-    }
-  });
+
 });
 
 // GPU本体は別の回帰で検証し、ここではfeedとrendererの契約を検証する。
@@ -862,7 +697,7 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(screen.queryByRole('dialog')).toBeNull();expect(screen.queryByRole('combobox',{name:'新着エフェクト'})).toBeNull();
     const trigger=screen.getByRole('button',{name:'設定'});act(()=>trigger.focus());fireEvent.click(trigger);
     let dialog=screen.getByRole('dialog',{name:'表示設定'});expect(dialog.getAttribute('aria-modal')).toBe('true');
-    expect(dialog.closest('section[aria-label="V2 canvas"]')).toBeNull();expect(document.activeElement).toBe(screen.getByRole('button',{name:'設定を閉じる'}));
+    expect(dialog.closest('section[aria-label="Live canvas"]')).toBeNull();expect(document.activeElement).toBe(screen.getByRole('button',{name:'設定を閉じる'}));
     fireEvent.keyDown(document,{key:'Escape'});expect(screen.queryByRole('dialog')).toBeNull();expect(document.activeElement).toBe(trigger);
     fireEvent.click(trigger);dialog=screen.getByRole('dialog',{name:'表示設定'});fireEvent.click(dialog.parentElement!);
     expect(screen.queryByRole('dialog')).toBeNull();expect(document.activeElement).toBe(trigger);
@@ -909,14 +744,13 @@ describe('CanvasScene WebGL feed接続', () => {
 
   it('allowNative=falseはAPI対応環境でもcontext取得とnative再試行を禁止する', () => {
     gpuBackend();vi.mocked(HTMLCanvasElement.prototype.getContext).mockClear();
-    renderUI(<CanvasScene diagnosticsEnabled allowNative={false} items={[original]} qaMeasurementToken={1}/>);flushFrame(0);
+    renderUI(<CanvasScene diagnosticsEnabled allowNative={false} items={[original]}/>);flushFrame(0);
     expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();expect(backendMock.create).not.toHaveBeenCalled();
     expect(host().dataset.sceneRenderer).toBe('dom');expect(host().dataset.sceneFallbackStage).toBe('image-gate');
     expect(screen.getAllByText('画像配信が無効のため互換表示を使用しています').length).toBeGreaterThan(0);
     expect(screen.getByRole('button',{name:'DOMに切替'})).toBeDefined();
     expect((screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement).disabled).toBe(true);
-    expect((screen.getByRole('combobox',{name:'QA描画方式'}) as HTMLSelectElement).disabled).toBe(true);
-    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(20);
+    expect(screen.queryByRole('combobox',{name:'QA描画方式'})).toBeNull();
     expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
   });
@@ -938,7 +772,7 @@ describe('CanvasScene WebGL feed接続', () => {
 
   it('既定ではQA・受動診断・frame計測を行わず機能用属性と操作は維持する', () => {
     const {seen}=gpuBackend();const listen=vi.spyOn(window,'addEventListener');
-    const {rerender}=renderUI(<CanvasScene items={[original]} qaMeasurementToken={1}/>);flushFrame(0);
+    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
     expect(frames.size).toBe(0);
     expect(screen.queryByRole('combobox',{name:'QA描画方式'})).toBeNull();
     expect(screen.queryByRole('button',{name:'5秒frame比較'})).toBeNull();
@@ -948,7 +782,7 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(screen.queryByRole('button',{name:'先頭に戻る'})).toBeNull();
     expect(screen.queryByRole('status')).toBeNull();
     expect(listen.mock.calls.some(([type,,options])=>['pointerdown','pointerup','click'].includes(type) && typeof options==='object' && options?.passive)).toBe(false);
-    rerender(<CanvasScene items={[incoming,original]} qaMeasurementToken={2}/>);flushFrame(100);flushFrame(350);
+    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
     expect(seen.at(-1)!.cards.length).toBe(2);
     const node=card('a');expect(node.dataset.sceneCard).toBe('a');expect(node.dataset.sceneCapturePadding).toBe('0');
     expect(node.querySelector('[data-scene-face]')).not.toBeNull();
@@ -961,7 +795,6 @@ describe('CanvasScene WebGL feed接続', () => {
   it('診断を無効へ戻すと既存attrsを消しrendererはWebGLへ戻す', () => {
     gpuBackend();const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     expect(host().dataset.sceneRenderer).toBe('webgl');expect(card('a').dataset.sceneX).toBeDefined();
-    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(50);
     rerender(<CanvasScene items={[original]}/>);flushFrame(100);
     expect(Object.keys(host().dataset)).toEqual([]);expect(card('a').dataset.sceneX).toBeUndefined();
     expect((screen.getByLabelText('WebGLライブカード') as HTMLCanvasElement).hidden).toBe(false);
@@ -1044,13 +877,13 @@ describe('CanvasScene WebGL feed接続', () => {
     fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});flushFrame(490);
     expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
   });
-  it('波紋はCSS比較とDOMで停止しGL復帰で旧batchを再生しない', () => {
+  it('波紋はDOMで停止しGL復帰で旧batchを再生しない', () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
     const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
-    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(30);
+    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(30);
     rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
     expect(host().dataset.scenePushEffect).toBe('idle');expect(host().dataset.sceneRippleCards).toBe('0');
-    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'webgl'}});flushFrame(400);
+    fireEvent.click(screen.getByRole('button',{name:'Nativeを試す'}));flushFrame(400);
     expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
     fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(450);
     expect(host().dataset.scenePushEffect).toBe('idle');
@@ -1129,17 +962,11 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(seen.at(-1)!.particles).toEqual([]);
     fireEvent.change(screen.getByLabelText('下書き'),{target:{value:'keep'}});
     host().scrollTop=90;fireEvent.scroll(host());flushFrame(350);
-    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(400);
+    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(400);
     expect((screen.getByLabelText('下書き') as HTMLInputElement).value).toBe('keep');expect(host().scrollTop).toBe(90);
   });
 
-  it('5秒計測tokenは有限でDOM計測は起動しない', () => {
-    gpuBackend();const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]} qaMeasurementToken={0}/>);flushFrame(0);
-    rerender(<CanvasScene diagnosticsEnabled items={[original]} qaMeasurementToken={1}/>);flushFrame(10);flushFrame(5010);
-    expect(screen.getByLabelText('実フィードframe比較結果').textContent).toContain('webgl');expect(frames.size).toBe(0);
-    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(5100);
-    fireEvent.click(screen.getByRole('button',{name:'5秒frame比較'}));expect(frames.size).toBe(0);
-  });
+
   it('GPUの最後の描画姿勢とboxをpointerdownからclick完了まで固定する', () => {
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','domino');
@@ -1156,6 +983,32 @@ describe('CanvasScene WebGL feed接続', () => {
     pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(600);
     expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
     expect(seen.at(-1)!.cards.find(c=>c.id==='a')!.tip).toBeUndefined();
+  });
+
+  it('GPU押下は未paintの目標ではなく最後の描画snapshotを固定する', () => {
+    vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','domino');
+    Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value:vi.fn()});
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    const surface=screen.getByLabelText('WebGLライブカード');
+    fireEvent(surface,new Event('paint'));
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
+    fireEvent(surface,new Event('paint'));
+    const drawn=seen.at(-1)!.cards.find(c=>c.id==='a')!;
+    flushFrame(550);
+    expect(Number(card('a').dataset.sceneTip)).not.toBe(drawn.tip!.amount);
+    const button=screen.getByRole('button',{name:'クリック 0'});
+    pointer(button,'pointerdown');fireEvent.focus(button);flushFrame(600);
+    const diagnostic=JSON.parse(host().dataset.sceneLastPointerDown!);
+    expect(diagnostic.drawn.tip).toBe(drawn.tip!.amount);
+    expect(diagnostic.pending.tip).not.toBe(diagnostic.drawn.tip);
+    fireEvent(surface,new Event('paint'));
+    const frozen=seen.at(-1)!.cards.find(c=>c.id==='a')!;
+    expect(frozen.box).toEqual(drawn.box);expect(frozen.tip).toEqual(drawn.tip);
+    pointer(window,'pointerup');fireEvent.click(button);act(()=>vi.advanceTimersByTime(0));flushFrame(650);
+    fireEvent(surface,new Event('paint'));
+    expect(seen.at(-1)!.cards.find(c=>c.id==='a')!.tip).toBeUndefined();
+    expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
   });
 
   it('GPU reduced-motionでtipと粒を止め旧batchを再生しない', () => {

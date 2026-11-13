@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { CanvasImageProvider } from "./CanvasAwareImage";
-import { CanvasScene } from "./v2/CanvasScene";
+import { CanvasScene } from "./canvas/CanvasScene";
 import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
 import {
   SCORE_UPDATE_INTERVAL,
@@ -62,7 +62,7 @@ interface LiveCanvasProps {
   unfollow: (targetPubkey: string) => Promise<void>;
 }
 
-export function LiveCanvasV2({ diagnosticsEnabled = false, nativeImagesEnabled = false, imageAccessReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+export function LiveCanvas({ diagnosticsEnabled = false, nativeImagesEnabled = false, imageAccessReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -247,7 +247,7 @@ export function LiveCanvasV2({ diagnosticsEnabled = false, nativeImagesEnabled =
     return sortByScore([...scoredDrafts, ...updatedNotes, ...scoredThreads, ...dedupedFakeThreads]);
   }, [notes, publishedNotes, draftNotes, threadCards, pendingNoteReplies, pendingThreadReplies, nowEpoch, pubkey]);
 
-  // サイズ測定と座標はV2シーンが所有する。既存カードの通知は使用しない。
+  // サイズ測定と座標は描画シーンが所有する。既存カードの通知は使用しない。
   const handleHeightChange = useCallback(() => {}, []);
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
@@ -388,7 +388,7 @@ export function LiveCanvasV2({ diagnosticsEnabled = false, nativeImagesEnabled =
         onClick={() => setIsFullscreen(false)}
         className="fixed right-3 top-3 z-50 rounded-full bg-black/70 px-3 py-1 text-xs text-white"
       >f で戻す</button>}
-      <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="V2 Live Canvas">
+      <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="Live Canvas">
         {(items.length === 0 || isProcessing) && <div className="pointer-events-none absolute inset-0 z-10"><EmptyState status={status} hasNotes={items.length > 0} isProcessing={isProcessing} /></div>}
         <CanvasImageProvider enabled={nativeImagesEnabled}><CanvasScene settingsOpen={settingsOpen} onSettingsClose={closeSettings} settingsTrigger={settingsTrigger} items={isProcessing ? [] : items} heldIds={holdSet} diagnosticsEnabled={diagnosticsEnabled} allowNative={nativeImagesEnabled} nativeUnavailableReason={imageAccessReason} settingsContent={settingsContent} /></CanvasImageProvider>
         {status === "connected" && items.length === 0 && !isProcessing && (

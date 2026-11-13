@@ -22,7 +22,7 @@ export interface SceneRetargetOptions extends SceneMotionOptions {
   snap?: boolean;
 }
 
-// V1と同じ100msの連鎖。200枚でも末尾の開始を長時間待たせない。
+// 100ms間隔の連鎖。長い連鎖でも末尾の開始を長時間待たせない。
 export const SCENE_DOMINO_DELAY_MS = 100;
 export const SCENE_MAX_DELAY_MS = 600;
 export const SCENE_MAX_FRAME_MS = 64;
@@ -89,7 +89,7 @@ export function retargetSceneMotion(
   return { cards, active: [...cards.values()].some(running), initialized: state.initialized || cards.size > 0 };
 }
 
-/** V1のstiffness=300、damping=30を時間差で厳密積分する減衰ばね。 */
+/** stiffness=300、damping=30を時間差で厳密積分する減衰ばね。 */
 function spring(position: number, velocity: number, target: number, seconds: number): [number, number] {
   const decay = DAMPING / 2;
   const frequency = Math.sqrt(STIFFNESS - decay * decay);

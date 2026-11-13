@@ -20,7 +20,7 @@ export function validateCanvasImageSource(source: string): CanvasImageSource {
   if (url.protocol !== 'https:' || url.port || url.username || url.password) return { allowed: false, reason: '公開HTTPS画像のみ対応しています' };
   if (source.length > 2048 || url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname.startsWith('[') || /^[0-9.]+$/.test(url.hostname)) return { allowed: false, reason: '公開hostnameの画像のみ対応しています' };
   if ((source.includes('?') && !url.search) || !hasAllowedPublicImageQuery(url) || source.includes('#')) return { allowed: false, reason: '認証情報の転送を避けるためこのquery付き画像は未対応です' };
-  if (/\.svg(?:z)?$/i.test(url.pathname)) return { allowed: false, reason: '外部SVG画像はV2では未対応です' };
+  if (/\.svg(?:z)?$/i.test(url.pathname)) return { allowed: false, reason: '外部SVG画像はCanvas配信では未対応です' };
   return { allowed: true, url: url.href, local: false };
 }
 

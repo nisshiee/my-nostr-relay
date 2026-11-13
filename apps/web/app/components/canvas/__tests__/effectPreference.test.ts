@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EFFECT_STORAGE_KEY, getEffectPreference, serverEffectPreference, setEffectPreference, subscribeEffectPreference } from '../effectPreference';
 
 afterEach(() => { vi.restoreAllMocks(); setEffectPreference('sparkle'); localStorage.clear(); });
-describe('V2エフェクト選択', () => {
+describe('Canvasエフェクト選択', () => {
   it('SSRは固定値で、未知の保存値は従来のキラキラへ戻す', () => {
     localStorage.setItem(EFFECT_STORAGE_KEY, 'unknown');
     expect(getEffectPreference()).toBe('sparkle');

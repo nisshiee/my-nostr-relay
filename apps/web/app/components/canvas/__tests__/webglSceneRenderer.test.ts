@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { classifyWebGLSceneError, createWebGLSceneRenderer, particleVertices, sceneCardMatrix, sceneCardVisible, type WebGLSceneCard, type WebGLSceneFrame } from '../webglSceneRenderer';
 import { RIPPLE_EFFECT_RING_SPACING_PX,RIPPLE_EFFECT_RING_WIDTH_PX } from '../rippleEffect';
 import { createDominoTransforms } from '../dominoEffect';
-import { projectPoint, type GeometryCanvas, type HtmlTextureGL } from '../webglDomino';
+import { projectPoint, type GeometryCanvas, type HtmlTextureGL } from '../webglGeometry';
 import { createPushParticles, createPushPaths } from '../pushEffect';
 const camera={x:0 as const,y:0,zoom:1 as const};
 function card(id:string,y=0):WebGLSceneCard {return{id,node:document.createElement('div'),box:{x:16,y,width:100,height:100}};}

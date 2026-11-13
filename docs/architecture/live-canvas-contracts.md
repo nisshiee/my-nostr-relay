@@ -10,10 +10,17 @@
 - `app/hooks/useNostrNotes.ts`: kind:1/6 の購読、初期バッファ、リポストの取得、表示ノートの上限。
 - `app/hooks/useNostrReactions.ts`: kind:7 の集計、重複排除、30秒ごとの対象更新。
 - `app/hooks/useEventCache.ts`: 不変なイベントのIDキャッシュと進行中の取得共有。
-- `app/components/LiveCanvasV2.tsx`: スコア再計算、下書き・投稿・スレッドの統合、holdの操作。
-- `app/components/v2/scene.ts`: 配置状態とhold時の表示座標。`sceneMotion.ts` が移動と連鎖遅延を管理する。
-- `app/components/v2/CanvasScene.tsx`: 高さ測定、focus・押下中の保持、native描画とDOM互換表示。
+- `app/components/LiveCanvas.tsx`: スコア再計算、下書き・投稿・スレッドの統合、holdの操作。
+- `app/components/canvas/scene.ts`: 配置状態とhold時の表示座標。`sceneMotion.ts` が移動と連鎖遅延を管理する。
+- `app/components/canvas/CanvasScene.tsx`: 高さ測定、focus・押下中の保持、native描画とDOM互換表示。
 - `app/lib/layoutEngine.ts`: Reactに依存しない初期配置・挿入・reflow。
+
+## 描画方式と互換性
+
+現行画面は `LiveCanvas` と `components/canvas/` の一系統だけを使う。HTML-in-Canvas の WebGL texture API を検出し、未対応・初期化失敗・描画失敗・context loss・画像認証未成立時は同じカードDOMへ退避する。旧V1へ戻る経路ではない。Canvas2D＋CSS比較rendererとラボ/probeは撤去済み。
+
+エフェクトとDOM選択の保存キー `nlc-v2-effect` / `nlc-v2-manual-dom` は既存ユーザー設定を引き継ぐため変更しない。`/v2` のリダイレクトも旧ブックマーク互換のため残す。診断設定は残すが、通常は無効で、比較rendererを再び有効にするものではない。
+
 
 ## 接続と購読の寿命
 
@@ -39,7 +46,7 @@ pool・リレー・フォロー・アカウントなど購読条件が変わっ�
 - 初期取得後に実際のノートID一覧をリアクションhookへ通知する。初期feedが空でも、最初のライブノート／リポスト元ノートが届いたときに通知し直す。その後はリアクション側の定期購読で対象を更新する。
 - ライブ到着した古いリポスト元ノートも、リアクションの取得開始時刻を決める最小 `created_at` に含める。
 
-スコアは通常30分、本人のノートは1時間で半減する鮮度スコア。リポストはリポスト時刻を使う。LiveCanvasV2は10秒ごとに表示用スコアを再計算する。既存カードへのリポスト情報更新は表示側の再計算に反映される。スコア更新だけで既存カードを順位順に並べ直す仕様ではない。
+スコアは通常30分、本人のノートは1時間で半減する鮮度スコア。リポストはリポスト時刻を使う。LiveCanvasは10秒ごとに表示用スコアを再計算する。既存カードへのリポスト情報更新は表示側の再計算に反映される。スコア更新だけで既存カードを順位順に並べ直す仕様ではない。
 
 ## リアクション
 
@@ -74,9 +81,9 @@ pool・リレー・フォロー・アカウントなど購読条件が変わっ�
 - 押し出し: 同列の直下、左右列の重なるカードを候補に、スコアと引力を使って移動先を選ぶ。holdの迂回先が循環したら現在列末尾へ退避し、必ず終了する。
 - 高さ差の補正: 挿入後、holdの位置を保持し、それ以外を下方向へ移動して重なりを解消する。可動カード同士の列内順序は維持するが、holdカードの下へ回り込む場合がある。hold同士は入力時点で重ならないこと。
 - reflow: 列割当と前回y順を維持し、現在の高さで積み直す。削除カードは除去し、未配置カードは追加しない。スコア変化でソートし直さない。
-- 移動連鎖の順序は `chainOrder`。V2は新着を全て挿入し削除を反映した後、一度だけreflowして空隙を詰めた最終位置へ動かす。`sceneMotion.ts` は連鎖順を100ms倍、最大600msの遅延へ変換する。進行中の移動では速度と残りの待機時間を引き継ぐ。
+- 移動連鎖の順序は `chainOrder`。現行版は新着を全て挿入し削除を反映した後、一度だけreflowして空隙を詰めた最終位置へ動かす。`sceneMotion.ts` は連鎖順を100ms倍、最大600msの遅延へ変換する。進行中の移動では速度と残りの待機時間を引き継ぐ。
 
-V2の **grid（エンジン座標）** と **boxes（holdで固定した表示座標を含む）** は異なる。hold中は高さ変化などでエンジンがreflowしても現在の表示位置と幅を固定し、解除で追従する。列数変更でも表示の固定を維持するため、一時的な重なりや画面外への残留があり得る。`insertCard` の非重複保証を、全てのアニメーション途中やhold中の表示まで保証するものと解釈しない。
+現行版の **grid（エンジン座標）** と **boxes（holdで固定した表示座標を含む）** は異なる。hold中は高さ変化などでエンジンがreflowしても現在の表示位置と幅を固定し、解除で追従する。列数変更でも表示の固定を維持するため、一時的な重なりや画面外への残留があり得る。`insertCard` の非重複保証を、全てのアニメーション途中やhold中の表示まで保証するものと解釈しない。
 
 下書き→投稿済みカードは `publishedSlotMapRef` の同じslotIdを使い、測定高さや配置を引き継ぐ。eventIdが変わったことを理由にslotIdを作り直すと、新規挿入や不要なアニメーションになる。
 
@@ -102,7 +109,7 @@ npm run build
 | Filter整合、取得共有、pool変更、失敗再試行 | `hooks/__tests__/useEventCache.test.ts` |
 | 実SimplePoolの再接続・複数リレー重複 | `hooks/__tests__/nostrPoolCompatibility.test.ts` |
 | hold循環、可変高さ、入力不変性、連続挿入 | `lib/__tests__/layoutEngine.test.ts` |
-| hold表示、解除・resize、同じslotId、削除＋挿入 | `components/v2/__tests__/scene.test.ts`、`components/v2/__tests__/sceneMotion.test.ts`、`components/v2/__tests__/CanvasScene.test.tsx` |
+| hold表示、解除・resize、同じslotId、削除＋挿入 | `components/canvas/__tests__/scene.test.ts`、`components/canvas/__tests__/sceneMotion.test.ts`、`components/canvas/__tests__/CanvasScene.test.tsx` |
 
 hookテストは制御可能なpoolと遅延Promiseで競合順序を固定する。ネットワーク速度や `sleep` に依存して再現しない。まず失敗テストを書き、関係する契約を読み、対象hook／純粋関数を小さく修正する。関数分割は契約を置く場所が必要になったときに行い、テスト追加と無関係な全面分割はしない。
 

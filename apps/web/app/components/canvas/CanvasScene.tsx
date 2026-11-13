@@ -2,28 +2,26 @@
 
 import { useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
+import { createSceneLayout, updateSceneLayout, type Camera, type CanvasMode, type SceneBox } from "./scene";
 
 import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotionBoxes, type SceneMotionState } from "./sceneMotion";
 
 import type { Card } from "../../lib/types";
-import { createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
+import { createPushPaths, createPushParticles, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
 import { createRadialRipple, freezeRippleSources, freezeRippleTargets, RIPPLE_EFFECT_DURATION_MS, RIPPLE_EFFECT_SPEED_PX_PER_MS, type RadialRipple, type RippleSource } from "./rippleEffect";
-import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, DOMINO_PERSPECTIVE_MAX_OUTSET, type DominoTransform } from "./dominoEffect";
+import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, type DominoTransform } from "./dominoEffect";
 import { createWebGLSceneRenderer, classifyWebGLSceneError } from "./webglSceneRenderer";
-import { summarizeFrames, type GeometryCanvas, type HtmlTextureGL } from "./webglDomino";
+import { type GeometryCanvas, type HtmlTextureGL } from "./webglGeometry";
 import { useManualDOMPreference, setManualDOMPreference } from "./manualDOMPreference";
 import { SceneSettingsDialog } from "./SceneSettingsDialog";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
-interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode; settingsOpen?: boolean; onSettingsClose?: () => void; settingsTrigger?: RefObject<HTMLButtonElement | null> }
+interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode; settingsOpen?: boolean; onSettingsClose?: () => void; settingsTrigger?: RefObject<HTMLButtonElement | null> }
 const EMPTY = new Set<string>();
-// 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
-const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
 
-type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'legacy-effect' | 'image-gate';
+type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'image-gate';
 interface CardRootProps { item: CanvasSceneItem; register: (id: string, node: HTMLDivElement | null) => void }
 const subscribeHydration = () => () => {};
 const clientSnapshot = () => true;
@@ -45,15 +43,13 @@ function MountedCardRoot({ item, register }: CardRootProps) {
     return () => register(item.id, null);
   }, [item.id, node, register]);
   return createPortal(<>
-    <div data-scene-footprint aria-hidden="true" style={{ position: 'absolute', inset: 0, borderRadius: 12, pointerEvents: 'none', opacity: 0 }} />
     <div data-scene-face style={{ position: 'relative', transformOrigin: '50% 100%', pointerEvents: 'auto' }}>
       {item.content}
-      <div data-scene-shade aria-hidden="true" style={{ position: 'absolute', inset: 0, borderRadius: 12, pointerEvents: 'none', opacity: 0 }} />
     </div>
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent, settingsOpen: controlledSettingsOpen, onSettingsClose, settingsTrigger: externalSettingsTrigger }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent, settingsOpen: controlledSettingsOpen, onSettingsClose, settingsTrigger: externalSettingsTrigger }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
   const [localSettingsOpen, setSettingsOpen] = useState(false);
@@ -62,7 +58,6 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
   const settingsTrigger = externalSettingsTrigger ?? localSettingsTrigger;
   const closeSettings = useCallback(() => { setSettingsOpen(false); onSettingsClose?.(); }, [onSettingsClose]);
   const viewport = useRef<HTMLDivElement>(null);
-  const canvas = useRef<DrawableCanvas>(null);
   const gpuCanvas = useRef<GeometryCanvas>(null);
   const extent = useRef<HTMLDivElement>(null);
   const layer = useRef<HTMLDivElement>(null);
@@ -75,14 +70,11 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
   const savedMotion = useRef<SceneMotionState | null>(null);
   const savedTargets = useRef(new Map<string, SceneBox>());
   const savedLayout = useRef(createSceneLayout());
-  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; chooseEffect: () => void; measure: () => void; camera: Camera } | null>(null);
+  const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; chooseEffect: () => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
   const forcedDOM = useManualDOMPreference();
-  const [qaRenderer, setRenderer] = useState<'webgl' | 'css'>('webgl');
-  const renderer = diagnosticsEnabled ? qaRenderer : 'webgl';
   const [domMode, setDomMode] = useState(true);
-  const [metrics, setMetrics] = useState('未計測。rAF間隔でありCPU/GPU時間ではありません。');
   const [register] = useState(() => (id: string, node: HTMLDivElement | null) => {
     const old = nodes.current.get(id);
     if (node) { nodes.current.set(id, node); runtime.current?.attach(node); }
@@ -96,24 +88,19 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
   // カードのpassive effectによるautofocusより先にportalの行先を接続する。
   useLayoutEffect(() => {
     const host = viewport.current!;
-    const cssSurface = canvas.current!;
     const gpuSurface = gpuCanvas.current!;
-    const surface = renderer === 'webgl' ? gpuSurface : cssSurface;
+    const surface = gpuSurface;
     const dom = fallback.current!;
-    let ctx: DrawableContext | null = null;
     let gpu: ReturnType<typeof createWebGLSceneRenderer> | null = null;
     let supported: CanvasMode = 'dom';
     let fallbackStage: FallbackStage = !allowNative ? 'image-gate' : forcedDOM ? 'manual' : 'init';
     let fallbackReason = !allowNative ? 'disabled' : forcedDOM ? 'requested' : 'api-unavailable';
     if (allowNative && !forcedDOM) try {
-      if (renderer === 'webgl') {
-        const gl = gpuSurface.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true }) as HtmlTextureGL | null;
-        if (gl && gpuSurface.requestPaint && 'content' in gpuSurface) { gpu = createWebGLSceneRenderer(gl, gpuSurface); supported = 'modern'; }
-      } else { ctx = cssSurface.getContext('2d') as DrawableContext | null; supported = detectCanvasMode(cssSurface, ctx); }
+      const gl = gpuSurface.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true }) as HtmlTextureGL | null;
+      if (gl && gpuSurface.requestPaint && 'content' in gpuSurface) { gpu = createWebGLSceneRenderer(gl, gpuSurface); supported = 'modern'; }
     } catch (error) { supported = 'dom'; fallbackReason = diagnosticsEnabled ? classifyWebGLSceneError(error) : 'unavailable'; }
-    let mode: CanvasMode = !allowNative || forcedDOM || supported === 'legacy' && chosenEffect.current === 'domino' ? 'dom' : supported;
+    let mode: CanvasMode = !allowNative || forcedDOM ? 'dom' : supported;
     if (mode !== 'dom') { fallbackStage = 'none'; fallbackReason = 'none'; }
-    else if (!forcedDOM && supported === 'legacy') { fallbackStage = 'legacy-effect'; fallbackReason = 'unsupported'; }
     let boxes = savedBoxes.current;
     let targets = savedTargets.current;
     let layout = savedLayout.current;
@@ -122,7 +109,6 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     let viewWidth = 1, viewHeight = 1;
     const dirtyIds = new Set(current.current.items.map(item => item.id));
     let totalUploads = 0, totalDraws = 0, textureBytes = 0;
-    let measurement: { start: number | null; previous: number | null; samples: number[]; draws: number; uploads: number } | null = null;
     const effect = savedEffect.current;
     let effectPaths: readonly PushEffectPath[] = [];
     let effectViewport: PushEffectBox | undefined;
@@ -208,27 +194,15 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     const setStyle = (node: HTMLElement, key: keyof CSSStyleDeclaration, value: string) => {
       if (node.style[key] !== value) (node.style as unknown as Record<string, string>)[key as string] = value;
     };
-    // drawable自身は変形せず、その内側だけを遠近変形する。装飾は矩形内に収める。
-    const applyPose = (node: HTMLDivElement, box: SceneBox, tip?: DominoTransform) => {
+    // HTMLは平面textureのまま。遠近投影と陰影はWebGL側だけで処理する。
+    const applyPose = (node: HTMLDivElement, box: SceneBox) => {
       const face = node.querySelector<HTMLElement>(':scope > [data-scene-face]');
-      const footprint = node.querySelector<HTMLElement>(':scope > [data-scene-footprint]');
-      const shade = face?.querySelector<HTMLElement>(':scope > [data-scene-shade]');
-      if (!face || !footprint || !shade) return;
-      const visualTip = renderer === 'css' && mode !== 'dom' ? tip : undefined;
-      const padding = visualTip ? DOMINO_CAPTURE_PADDING : 0;
-      setStyle(node, 'padding', `${padding}px`);
-      node.dataset.sceneCapturePadding = String(padding);
+      if (!face) return;
+      setStyle(node, 'padding', '0px');
+      node.dataset.sceneCapturePadding = '0';
       setStyle(face, 'width', `${box.width}px`);
       setStyle(face, 'height', pressed?.id === node.dataset.sceneCard ? `${box.height}px` : '');
       setStyle(face, 'overflow', pressed?.id === node.dataset.sceneCard ? 'clip' : '');
-      setStyle(footprint, 'inset', `${padding}px`);
-      setStyle(face, 'transform', visualTip?.perspective.cssTransform ?? '');
-      setStyle(face, 'transformOrigin', visualTip?.perspective.transformOrigin ?? '50% 100%');
-      setStyle(footprint, 'background', visualTip?.perspective.shade.footprintGradient ?? '');
-      setStyle(footprint, 'opacity', String(visualTip?.perspective.shade.footprintOpacity ?? 0));
-      setStyle(shade, 'background', visualTip?.perspective.shade.faceGradient ?? '');
-      setStyle(shade, 'opacity', String(visualTip?.perspective.shade.faceOpacity ?? 0));
-      setStyle(shade, 'boxShadow', visualTip?.perspective.shade.edgeShadow ?? '');
     };
     const geometry = () => {
       if (diagnosticsEnabled) { geometrySeq = nextSerial(geometrySeq); host.dataset.sceneGeometrySerial = String(geometrySeq); }
@@ -238,7 +212,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         if (!box) continue;
         setStyle(node, 'width', `${box.width}px`);
         // GPUのsource border boxと論理quadを一致させる。面の自然高は別途測る。
-        setStyle(node, 'height', renderer === 'webgl' && mode !== 'dom' ? `${box.height}px` : pressed?.id === id ? `${pressed.box.height}px` : '');
+        setStyle(node, 'height', mode !== 'dom' ? `${box.height}px` : pressed?.id === id ? `${pressed.box.height}px` : '');
         setStyle(node, 'overflow', pressed?.id === id ? 'clip' : '');
         setStyle(node, 'zIndex', String(order.get(id) ?? 0));
         if (diagnosticsEnabled) {
@@ -251,10 +225,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         node.dataset.sceneTip = String(dominoTransforms.get(id)?.amount ?? 0);
         }
         const tip = dominoTransforms.get(id);
-        applyPose(node, box, tip);
+        applyPose(node, box);
         if (mode === 'dom') {
-          const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
-          setStyle(node, 'transform', `translate(${camera.x + box.x - padding}px,${camera.y + box.y - padding}px) scale(1)`);
+          setStyle(node, 'transform', `translate(${camera.x + box.x}px,${camera.y + box.y}px) scale(1)`);
           displayed.set(id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
         }
       }
@@ -266,20 +239,18 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const selection = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
       mode = next; displayed.clear();
-      if (diagnosticsEnabled) host.dataset.sceneRenderer = next === 'dom' ? 'dom' : renderer;
+      if (diagnosticsEnabled) host.dataset.sceneRenderer = next === 'dom' ? 'dom' : 'webgl';
       setDomMode(next === 'dom');
       // DOMでは追加効果を止め、nativeへ戻っても過去のbatchを再生しない。
       if (next === 'dom') {
         effect.active = false; dominoTransforms = new Map(); radialRipple = undefined; ripplePointer = null; effectPaths = []; effectOpacity = 0;
         clearTimeout(pressTimer); pressTimer = undefined; pressed = null;
-        gpu?.dispose(); gpu = null; measurement = null;
+        gpu?.dispose(); gpu = null;
       }
-      cssSurface.hidden = next === 'dom' || renderer !== 'css';
-      gpuSurface.hidden = next === 'dom' || renderer !== 'webgl';
+      gpuSurface.hidden = next === 'dom';
       dom.hidden = next !== 'dom';
-      for (const candidate of [cssSurface, gpuSurface]) { candidate.removeAttribute('content'); candidate.removeAttribute('layoutsubtree'); }
+      surface.removeAttribute('content');
       if (next === 'modern') surface.setAttribute('content', 'drawable');
-      if (next === 'legacy') surface.setAttribute('layoutsubtree', '');
       for (const node of nodes.current.values()) {
         setStyle(node, 'transform', '');
         if (next === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
@@ -302,16 +273,6 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         const viewportWidth = host.clientWidth || rect.width;
         const viewportHeight = host.clientHeight || rect.height;
         viewWidth = viewportWidth; viewHeight = viewportHeight;
-        if (measurement) {
-          measurement.start ??= time;
-          if (measurement.previous !== null && measurement.samples.length < 1200) measurement.samples.push(time - measurement.previous);
-          measurement.previous = time;
-          if (time - measurement.start >= 5000) {
-            const result = summarizeFrames(measurement.samples);
-            setMetrics(`${renderer} / ${result.count} rAF intervals / p50 ${result.p50.toFixed(1)}ms / p95 ${result.p95.toFixed(1)}ms / >33.4ms ${result.over33} / draw ${totalDraws - measurement.draws} / upload ${totalUploads - measurement.uploads} / cache ${(textureBytes / 1048576).toFixed(1)}MiB`);
-            measurement = null;
-          }
-        }
         layer.current!.style.height = `${viewportHeight}px`;
         const dpr = window.devicePixelRatio || 1;
         const w = Math.max(1, Math.round(viewportWidth * dpr));
@@ -334,7 +295,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
             const width = measuredWidth ?? Math.max(160, Math.min(360, viewportWidth - 32));
             setStyle(node, 'width', `${width}px`);
             if (face) setStyle(face, 'width', `${width}px`);
-            // 捕捉用paddingは配置の高さに含めず、変形前の面だけを測定・監視する。
+            // GPU投影と分離した、変形前の面だけを測定・監視する。
             heights.set(id, face?.offsetHeight || 120);
             if (face && !observed.has(face)) { observer.observe(face); observed.add(face); }
           }
@@ -359,16 +320,16 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
           effect.startedAt = time;
           savedRippleSources.current = freezeRippleSources(layout.insertion.traces, targets);
           savedRippleTargets.current = freezeRippleTargets(layout.insertion.traces, savedRippleSources.current);
-          effect.active = mode !== 'dom' && (chosenEffect.current !== 'ripple' || renderer === 'webgl') && chosenEffect.current !== 'off' && !reducedMotion && (chosenEffect.current === 'ripple' ? savedRippleSources.current.length > 0 && savedRippleTargets.current.size > 0 : layout.insertion.traces.some(trace => trace.edges.length > 0));
+          effect.active = mode !== 'dom' && chosenEffect.current !== 'off' && !reducedMotion && (chosenEffect.current === 'ripple' ? savedRippleSources.current.length > 0 && savedRippleTargets.current.size > 0 : layout.insertion.traces.some(trace => trace.edges.length > 0));
         }
-        if (mode === 'dom' || chosenEffect.current === 'ripple' && renderer !== 'webgl' || reducedMotion || (chosenEffect.current === 'ripple' ? !savedRippleSources.current.length || !savedRippleTargets.current.size : !layout.insertion.traces.length) || time - effect.startedAt >= (chosenEffect.current === 'domino' ? DOMINO_EFFECT_DURATION_MS : chosenEffect.current === 'ripple' ? RIPPLE_EFFECT_DURATION_MS : PUSH_EFFECT_DURATION_MS)) effect.active = false;
+        if (mode === 'dom' || reducedMotion || (chosenEffect.current === 'ripple' ? !savedRippleSources.current.length || !savedRippleTargets.current.size : !layout.insertion.traces.length) || time - effect.startedAt >= (chosenEffect.current === 'domino' ? DOMINO_EFFECT_DURATION_MS : chosenEffect.current === 'ripple' ? RIPPLE_EFFECT_DURATION_MS : PUSH_EFFECT_DURATION_MS)) effect.active = false;
         effectAge = time - effect.startedAt;
         effectOpacity = effect.active && chosenEffect.current === 'sparkle' ? pushEffectOpacity(effectAge) : 0;
         dominoTransforms = effect.active && chosenEffect.current === 'domino'
           ? createDominoTransforms(layout.insertion.traces, boxes, effectAge, { heldIds: heldNow(), reducedMotion, directionBoxes: targets })
           : new Map();
         if (ripplePointer && !current.current.items.some(item => item.id === ripplePointer!.id)) ripplePointer = null;
-        radialRipple = effect.active && chosenEffect.current === 'ripple' && renderer === 'webgl'
+        radialRipple = effect.active && chosenEffect.current === 'ripple'
           ? createRadialRipple(savedRippleSources.current, effectAge, { reducedMotion })
           : undefined;
         if (diagnosticsEnabled) {
@@ -399,7 +360,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
             if (!painted && !disposed) { changeMode('dom', 'watchdog', 'paint-timeout'); refresh(); }
           }, 2500);
         }
-        if (motion.active || effect.active || measurement) requestFrame();
+        if (motion.active || effect.active) requestFrame();
         else lastFrameTime = null;
       });
     };
@@ -411,7 +372,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     const paint = (event: Event) => {
       if (mode === 'dom' || disposed) return;
       try {
-        if (renderer === 'webgl' && gpu) {
+        if (gpu) {
           const paintHeld = heldNow();
           const cards = drawOrder().flatMap(item => {
             const node = nodes.current.get(item.id), box = boxes.get(item.id);
@@ -427,24 +388,10 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
             else displayed.delete(card.id);
           }
           painted = true;
-        } else if (ctx) {
-          ctx.resetTransform(); ctx.clearRect(0, 0, surface.width, surface.height);
-          const dpr = window.devicePixelRatio || 1;
-          ctx.setTransform(dpr, 0, 0, dpr, dpr * camera.x, dpr * camera.y);
-          for (const item of drawOrder()) {
-            const node = nodes.current.get(item.id), box = boxes.get(item.id);
-            if (!node || !box) continue;
-            const tip = dominoTransforms.get(item.id), padding = tip ? DOMINO_CAPTURE_PADDING : 0;
-            const transform = ctx.drawElementImage(node, box.x - padding, box.y - padding, box.width + padding * 2, box.height + padding * 2);
-            displayed.set(item.id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
-            if (mode === 'legacy' && transform) setStyle(node, 'transform', transform.toString());
-            if (diagnosticsEnabled) { totalDraws++; totalUploads++; } painted = true;
-          }
-          drawPushPaths(ctx, effectPaths, effectOpacity, effectAge, effectViewport);
         }
         if (diagnosticsEnabled) { paintSeq = nextSerial(paintSeq); host.dataset.scenePaintSerial = String(paintSeq);
         host.dataset.sceneUploads = String(totalUploads); host.dataset.sceneDraws = String(totalDraws); host.dataset.sceneTextureBytes = String(textureBytes); }
-        if (painted) { clearTimeout(watchdog.timer); setStatus(`HTML-in-Canvas · native ${renderer === 'webgl' ? 'WebGL' : mode + ' CSS比較'}`); }
+        if (painted) { clearTimeout(watchdog.timer); setStatus('HTML-in-Canvas · native WebGL'); }
       } catch (error) { changeMode('dom', 'render', diagnosticsEnabled ? classifyWebGLSceneError(error) : 'unavailable'); refresh(); }
     };
     // ホイール・touch・キーボードはブラウザの縦スクロールへ任せる。
@@ -474,7 +421,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       pressed = null; refresh();
     };
     const press = (event: PointerEvent) => {
-      if (chosenEffect.current === 'ripple' && renderer === 'webgl' && mode !== 'dom' && !reducedMotion && !ripplePointer && event.button === 0 && event.isPrimary !== false) {
+      if (chosenEffect.current === 'ripple' && mode !== 'dom' && !reducedMotion && !ripplePointer && event.button === 0 && event.isPrimary !== false) {
         const id = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard : undefined;
         if (id) { ripplePointer = { pointerId: event.pointerId, id }; requestFrame(); }
       }
@@ -507,12 +454,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       revealFocus = !(pressed && pressed.id === id); refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, measure: () => {
-      if (!diagnosticsEnabled) return;
-      if (mode === 'dom') { setMetrics('DOMではnative比較計測を開始しません'); return; }
-      measurement = { start: null, previous: null, samples: [], draws: totalDraws, uploads: totalUploads };
-      setMetrics('5秒計測中…（自然な新着条件は同一ではありません）'); requestFrame();
-    }, chooseEffect: () => { releaseRipple(); releasePress(); if (mode === 'legacy' && chosenEffect.current === 'domino') changeMode('dom', 'legacy-effect', 'unsupported'); effect.active = false; dominoTransforms = new Map(); radialRipple = undefined; requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
+    runtime.current = { refresh, camera, chooseEffect: () => { releaseRipple(); releasePress(); effect.active = false; dominoTransforms = new Map(); radialRipple = undefined; requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
       const id = node.dataset.sceneCard; if (id) dirtyIds.add(id);
@@ -529,7 +471,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       for (const record of records) {
         const target = record.target instanceof Element ? record.target : record.target.parentElement;
         if (!target) continue;
-        if (record.type === 'attributes' && (target.hasAttribute('data-scene-card') || target.hasAttribute('data-scene-face') || target.hasAttribute('data-scene-shade') || target.hasAttribute('data-scene-footprint'))) continue;
+        if (record.type === 'attributes' && (target.hasAttribute('data-scene-card') || target.hasAttribute('data-scene-face'))) continue;
         const id = target.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard;
         if (id) { dirtyIds.add(id); changed = true; }
       }
@@ -571,11 +513,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       window.removeEventListener('click', clicked, true); window.removeEventListener('blur', releasePress); window.removeEventListener('blur', releaseRipple); ripplePointer = null;
       host.removeEventListener('focusin', focus); host.removeEventListener('focusout', blur); window.removeEventListener('resize', refresh);
     };
-  }, [forcedDOM, renderer, diagnosticsEnabled, allowNative]);
+  }, [forcedDOM, diagnosticsEnabled, allowNative]);
 
-  useLayoutEffect(() => { if (diagnosticsEnabled && qaMeasurementToken > 0) runtime.current?.measure(); }, [qaMeasurementToken, diagnosticsEnabled]);
-
-  return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="V2 canvas">
+  return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="Live canvas">
     {diagnosticsEnabled && <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
       <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>{allowNative ? status : nativeUnavailableReason}</span>
       <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
@@ -592,18 +532,11 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       <p className="mb-3 text-xs text-zinc-500">エフェクトはHTML-in-Canvas表示でのみ利用できます。</p>
       {<button type="button" onClick={() => setManualDOMPreference(!forcedDOM)} className="rounded border px-3 py-2">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>}
       {settingsContent}
-      {diagnosticsEnabled && <details className="mt-5 border-t pt-3 text-xs">
-        <summary>描画比較（開発用）</summary>
-        <label>比較方式 <select aria-label="QA描画方式" disabled={!allowNative} value={renderer} onChange={event => setRenderer(event.target.value as 'webgl' | 'css')}><option value="webgl">WebGL texture</option><option value="css">Canvas2D + CSS 比較</option></select></label>
-        <button type="button" disabled={!allowNative} onClick={() => runtime.current?.measure()}>5秒frame比較</button>
-        <output aria-label="実フィードframe比較結果">{metrics}</output>
-        <p>rAF間隔と固定33.4ms超過数です。CPU/GPU時間ではなく、自然な新着条件も同一ではありません。</p>
-      </details>}
+
     </SceneSettingsDialog>}
     <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
       <div ref={extent} className="relative w-full" style={{ overflowAnchor: 'none' }}>
         <div ref={layer} className="sticky top-0 w-full overflow-clip">
-          <canvas ref={canvas} className="absolute inset-0 z-0 h-full w-full" aria-label="ライブカード" />
           <canvas ref={gpuCanvas} className="absolute inset-0 z-0 h-full w-full" aria-label="WebGLライブカード" />
           <div ref={fallback} className="absolute inset-0 z-0 isolate" />
         </div>

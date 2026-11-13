@@ -3,10 +3,10 @@
 import React, { type ComponentProps, type ReactNode } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LiveCanvasV2 } from "../LiveCanvasV2";
+import { LiveCanvas } from "../LiveCanvas";
 import type { NoteCard as Note } from "../../lib/types";
 
-vi.mock("../v2/CanvasScene", () => ({
+vi.mock("../canvas/CanvasScene", () => ({
   CanvasScene: ({ items, heldIds, allowNative, settingsOpen, settingsContent, onSettingsClose }: {
     settingsOpen?: boolean; settingsContent?: ReactNode; onSettingsClose?: () => void;
     allowNative: boolean;
@@ -48,13 +48,13 @@ function makeNote(slotId = "slot-a", eventId = "event-a"): Note {
   return { type: "note", slotId, eventId, pubkey: "me", content: "テスト投稿", tags: [], created_at: Math.floor(Date.now() / 1000), score: 1 };
 }
 
-function makeProps(): ComponentProps<typeof LiveCanvasV2> {
+function makeProps(): ComponentProps<typeof LiveCanvas> {
   return {
     notes: [], threadCards: [], profiles: new Map(), reactions: new Map(),
     status: "connected", pubkey: "me", npub: null,
     publishEvent: vi.fn(), publishedSlotMapRef: { current: new Map() },
     sendReaction: vi.fn(), sendRepost: vi.fn(),
-    cache: {} as ComponentProps<typeof LiveCanvasV2>["cache"],
+    cache: {} as ComponentProps<typeof LiveCanvas>["cache"],
     onLogout: vi.fn(), showSignerControl: false, onManageSigner: vi.fn(),
     isProcessing: false, recentEmojis: [], emojiSets: [], looseEmojis: [],
     fetchProfiles: vi.fn(), fetchUserRecentNotes: vi.fn(), fetchHashtagNotes: vi.fn(),
@@ -62,22 +62,22 @@ function makeProps(): ComponentProps<typeof LiveCanvasV2> {
   };
 }
 
-describe("LiveCanvasV2 のカード統合", () => {
+describe("LiveCanvas のカード統合", () => {
   it.each([false,true])("空/処理中でもヘッダーから設定を開閉できる processing=%s", isProcessing => {
-    render(<LiveCanvasV2 {...makeProps()} isProcessing={isProcessing} settingsContent={<span>本人確認fixture</span>} />);
+    render(<LiveCanvas {...makeProps()} isProcessing={isProcessing} settingsContent={<span>本人確認fixture</span>} />);
     fireEvent.click(screen.getByRole('button',{name:'設定'}));expect(screen.getByRole('dialog').textContent).toContain('本人確認fixture');
     fireEvent.click(screen.getByRole('button',{name:'閉じる'}));expect(screen.queryByRole('dialog')).toBeNull();
   });
   it("画像gateとnative描画可否を同じ値で連動させる", () => {
     const props = {...makeProps(), notes: [makeNote()]};
-    const {rerender} = render(<LiveCanvasV2 {...props} />);
+    const {rerender} = render(<LiveCanvas {...props} />);
     expect(screen.getByTestId('scene').dataset.allowNative).toBe('false');
-    rerender(<LiveCanvasV2 {...props} nativeImagesEnabled />);
+    rerender(<LiveCanvas {...props} nativeImagesEnabled />);
     expect(screen.getByTestId('scene').dataset.allowNative).toBe('true');
   });
   it("空フィードでも下書きを作成し、公開時にslotIdを引き継いで固定を解除する", () => {
     const props = makeProps();
-    const { container } = render(<LiveCanvasV2 {...props} />);
+    const { container } = render(<LiveCanvas {...props} />);
     fireEvent.click(screen.getByText("新規投稿"));
     const draftSlot = container.querySelector("[data-slot]")!.getAttribute("data-slot");
     fireEvent.click(screen.getByText("編集中"));
@@ -92,7 +92,7 @@ describe("LiveCanvasV2 のカード統合", () => {
   it("カード操作のholdをシーンに渡し、解除を反映する", () => {
     const props = makeProps();
     props.notes = [makeNote()];
-    const { container } = render(<LiveCanvasV2 {...props} />);
+    const { container } = render(<LiveCanvas {...props} />);
     fireEvent.click(screen.getByText("固定"));
     expect(container.querySelector("[data-slot]")!.getAttribute("data-held")).toBe("true");
     fireEvent.click(screen.getByText("解除"));
@@ -105,7 +105,7 @@ describe("LiveCanvasV2 のカード統合", () => {
     props.notes = [note];
     props.threadCards = [{ type: "thread", slotId: note.slotId, pubkey: note.pubkey,
       created_at: note.created_at, score: 1, notes: [note], eventIds: new Set([note.eventId]) }];
-    const { container } = render(<LiveCanvasV2 {...props} />);
+    const { container } = render(<LiveCanvas {...props} />);
     expect(container.querySelectorAll("[data-slot]")).toHaveLength(1);
     expect(screen.getByText("スレッド")).toBeDefined();
     expect(screen.queryByText("テスト投稿")).toBeNull();

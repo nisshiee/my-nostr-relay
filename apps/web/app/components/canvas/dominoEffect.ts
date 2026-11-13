@@ -1,20 +1,11 @@
 import type { SceneBox, SceneInsertionTrace } from './scene';
 
-export interface DominoMatrix {
-  readonly a: number;
-  readonly b: number;
-  readonly c: number;
-  readonly d: number;
-  readonly e: number;
-  readonly f: number;
-}
-
-export interface DominoTransform extends DominoMatrix {
+export interface DominoTransform {
   readonly sourceId: string;
   readonly depth: number;
   readonly delayMs: number;
   readonly amount: number;
-  /** 非drawableの内側の面へ適用する透視投影。外側の配置座標とは分離する。 */
+  /** GPU描画とDOMのhit座標へ同じ透視投影を適用する。外側の配置座標とは分離する。 */
   readonly perspective: DominoPerspective;
 }
 
@@ -28,20 +19,7 @@ export interface DominoProjectedPoint {
   readonly w: number;
 }
 
-export interface DominoShade {
-  /** 面の内側の装飾専用レイヤーへ適用し、入力イベントは受け取らせない。 */
-  readonly faceGradient: string;
-  readonly faceOpacity: number;
-  /** 変形しない外側の矩形内に敷く影。面の裏に置き、paddingや外側の描画領域を増やさない。 */
-  readonly footprintGradient: string;
-  readonly footprintOpacity: number;
-  /** 変形する面の内側へ置くinsetだけの明暗。外側へ影をはみ出させない。 */
-  readonly edgeShadow: string;
-}
-
 export interface DominoPerspective {
-  readonly cssTransform: string;
-  readonly transformOrigin: string;
   readonly axis: 'x' | 'y';
   readonly edge: DominoPivotEdge;
   readonly angleDeg: number;
@@ -52,7 +30,6 @@ export interface DominoPerspective {
   readonly corners: readonly [DominoProjectedPoint, DominoProjectedPoint, DominoProjectedPoint, DominoProjectedPoint];
   /** 元のカード矩形から出る投影面の量。描画側は別途AA用余白を足せる。 */
   readonly outsets: Readonly<{ top: number; right: number; bottom: number; left: number }>;
-  readonly shade: DominoShade;
 }
 
 export interface DominoEffectOptions {
@@ -89,11 +66,6 @@ function validBox(box: SceneBox | undefined): box is SceneBox {
     Number.isFinite(box.x + box.width) && Number.isFinite(box.y + box.height);
 }
 
-/** カードのローカル座標からワールド座標への、変形なしの平行移動。 */
-export function dominoIdentity(box: SceneBox): DominoMatrix {
-  return { a: 1, b: 0, c: 0, d: 1, e: box.x, f: box.y };
-}
-
 function directionBetween(from: SceneBox, to: SceneBox): Direction {
   const dx = (to.x + to.width / 2) - (from.x + from.width / 2);
   const dy = (to.y + to.height / 2) - (from.y + from.height / 2);
@@ -115,26 +87,6 @@ export function dominoEffectAmount(ageMs: number, delayMs = 0): number {
   if (ageMs <= fallStart) return 1;
   if (ageMs >= fallStart + DOMINO_EFFECT_FALL_MS) return 0;
   return 1 - smoothstep((ageMs - fallStart) / DOMINO_EFFECT_FALL_MS);
-}
-
-function matrixFor(box: SceneBox, direction: Direction, amount: number): DominoMatrix | null {
-  // 下辺中央を支点に、縦の短縮・横のせん断・画面内の回転だけで立体感を出す。
-  // 旧アフィン版との比較用の計算。現在の表示では内側のperspectiveを使用する。
-  const tilt = amount * (0.73 + 0.23 * Math.abs(direction.y));
-  const compression = Math.cos(tilt) - direction.y * Math.sin(tilt) * 0.1;
-  const shear = -direction.x * Math.sin(tilt) * 0.2;
-  const rotation = direction.x * amount * 0.18;
-  const sine = Math.sin(rotation);
-  const cosine = Math.cos(rotation);
-  const a = cosine;
-  const b = sine;
-  const c = (cosine * shear - sine * compression) || 0;
-  const d = sine * shear + cosine * compression;
-  const pivotX = box.width / 2;
-  const pivotY = box.height;
-  const e = box.x + pivotX * (1 - a) - pivotY * c;
-  const f = box.y - pivotX * b + pivotY * (1 - d);
-  return [a, b, c, d, e, f].every(Number.isFinite) ? { a, b, c, d, e, f } : null;
 }
 
 function perspectiveFor(box: SceneBox, direction: Direction, amount: number): DominoPerspective {
@@ -178,30 +130,16 @@ function perspectiveFor(box: SceneBox, direction: Direction, amount: number): Do
     top: Math.max(0, -Math.min(...corners.map(point => point.y))),
     bottom: Math.max(0, Math.max(...corners.map(point => point.y)) - box.height),
   };
-  const dark = (0.26 * amount).toFixed(6);
-  const light = (0.2 * amount).toFixed(6);
-  const edgeOffsets = {
-    top: ['0 2px', '0 -1px'], right: ['-2px 0', '1px 0'],
-    bottom: ['0 -2px', '0 1px'], left: ['2px 0', '-1px 0'],
-  }[edge];
   return {
-    cssTransform: `perspective(${perspectivePx}px) rotate${horizontal ? 'Y' : 'X'}(${angleDeg}deg)`,
-    transformOrigin: `${pivotX}px ${pivotY}px`,
     axis, edge, angleDeg, perspectivePx, pivotX, pivotY,
     corners, outsets,
-    shade: {
-      faceGradient: `linear-gradient(to ${edge}, rgba(15,23,42,0.48), rgba(15,23,42,0.06))`,
-      faceOpacity: amount * 0.3,
-      footprintGradient: `linear-gradient(to ${edge}, rgba(15,23,42,0.08), rgba(15,23,42,0.7))`,
-      footprintOpacity: amount * 0.22,
-      edgeShadow: `inset ${edgeOffsets[0]} 0 rgba(15,23,42,${dark}), inset ${edgeOffsets[1]} 0 rgba(255,255,255,${light})`,
-    },
+
   };
 }
 
 /**
  * 実際の押出辺を根からたどり、カードごとの因果的な傾きを返す。
- * 各matrixはローカル(0,0)からワールド座標への変換。MapにないカードはdominoIdentity。
+ * Mapにないカードは通常の平面として描画する。
  * 表示Boxやばねを変更せず、hold/focus・reduced-motion・寿命外は常に変形なしになる。
  * 新しい根を優先し、同じカードへのburstを加算しない。根の間に辺を補わない。
  */
@@ -262,9 +200,8 @@ export function createDominoTransforms(
     const delayMs = Math.min(DOMINO_EFFECT_MAX_DELAY_MS, step.depth * DOMINO_EFFECT_STEP_MS);
     const amount = dominoEffectAmount(ageMs, delayMs);
     if (amount === 0) continue;
-    const matrix = matrixFor(box, step.direction, amount);
-    if (matrix) transforms.set(id, {
-      ...matrix, sourceId: step.sourceId, depth: step.depth, delayMs, amount,
+    transforms.set(id, {
+      sourceId: step.sourceId, depth: step.depth, delayMs, amount,
       perspective: perspectiveFor(box, step.direction, amount),
     });
   }

@@ -10,7 +10,7 @@ type Entry = {
   bytes: number; expiry?: ReturnType<typeof setTimeout>;
 };
 
-/** V2専用。同一originの取得routeだけを、全カードで同時に最大2件取得する。 */
+/** Canvas画像配信用。同一originの取得routeだけを、全カードで同時に最大2件取得する。 */
 export function createCanvasImageLoader() {
   const entries = new Map<string, Entry>();
   const queue: Entry[] = [];

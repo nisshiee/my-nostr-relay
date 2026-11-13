@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SceneBox, SceneInsertionTrace } from '../scene';
 import {
-  createDominoTransforms, dominoEffectAmount, dominoIdentity,
+  createDominoTransforms, dominoEffectAmount,
   DOMINO_EFFECT_RISE_MS, DOMINO_EFFECT_HOLD_MS, DOMINO_EFFECT_FALL_MS,
   DOMINO_EFFECT_DURATION_MS, DOMINO_EFFECT_MAX_CARDS, DOMINO_EFFECT_MAX_DELAY_MS,
   DOMINO_EFFECT_MAX_EDGES, DOMINO_EFFECT_MAX_TRACES, DOMINO_EFFECT_PULSE_MS, DOMINO_EFFECT_STEP_MS,
   DOMINO_PERSPECTIVE_DISTANCE_RATIO, DOMINO_PERSPECTIVE_MAX_ANGLE_DEG, DOMINO_PERSPECTIVE_MAX_OUTSET,
-  type DominoMatrix, type DominoPivotEdge,
+  type DominoPivotEdge,
 } from '../dominoEffect';
 
 const box = (x: number, y: number): SceneBox => ({ x, y, width: 320, height: 180 });
@@ -18,13 +18,7 @@ const trace = (sourceId: string, pairs: readonly (readonly [string, string])[]):
   sourceId, edges: pairs.map(([fromId, toId]) => ({ fromId, toId })),
 });
 const chain = [trace('root', [['a', 'b'], ['root', 'a']])];
-const point = (matrix: DominoMatrix, x: number, y: number) => ({
-  x: matrix.a * x + matrix.c * y + matrix.e,
-  y: matrix.b * x + matrix.d * y + matrix.f,
-});
-const visual = (id: string, age: number) => createDominoTransforms(chain, boxes, age).get(id) ?? dominoIdentity(boxes.get(id)!);
-
-describe('V2の因果的なカード傾斜', () => {
+describe('因果的なカード傾斜', () => {
   it('全員が同時に起立し、倒伏だけ根からの深さに100msずつ遅延する', () => {
     for (const age of [1, 50, 100, 199, 200, 250, 280]) {
       const result = createDominoTransforms(chain, boxes, age);
@@ -41,8 +35,8 @@ describe('V2の因果的なカード傾斜', () => {
     const later = createDominoTransforms(chain, boxes, 450);
     expect(later.get('root')!.amount).toBeLessThan(later.get('a')!.amount);
     expect(later.get('a')!.amount).toBeLessThan(later.get('b')!.amount);
-    expect(visual('root', 350).d).toBeCloseTo(visual('a', 450).d, 12);
-    expect(visual('a', 450).d).toBeCloseTo(visual('b', 550).d, 12);
+    expect(createDominoTransforms(chain, boxes, 350).get('root')!.amount).toBeCloseTo(createDominoTransforms(chain, boxes, 450).get('a')!.amount, 12);
+    expect(createDominoTransforms(chain, boxes, 450).get('a')!.amount).toBeCloseTo(createDominoTransforms(chain, boxes, 550).get('b')!.amount, 12);
   });
 
   it('同じ親の分岐は同時に始まり、循環・重複・切れた辺を連鎖に足さない', () => {
@@ -58,44 +52,14 @@ describe('V2の因果的なカード傾斜', () => {
     expect(result.has('left')).toBe(false);
   });
 
-  it('下辺中央を動かさず、縦に押されたカードを短縮して倒す', () => {
-    const matrix = visual('a', 296);
-    const current = boxes.get('a')!;
-    const pivot = point(matrix, current.width / 2, current.height);
-    expect(pivot.x).toBeCloseTo(current.x + current.width / 2, 10);
-    expect(pivot.y).toBeCloseTo(current.y + current.height, 10);
-    expect(matrix.d).toBeLessThan(0.55);
-    expect(point(matrix, current.width / 2, 0).y).toBeGreaterThan(current.y + 70);
-    expect(matrix.a).toBe(1);
-    expect(matrix.b).toBe(0);
-    expect(matrix.c).toBe(0);
-  });
-
-  it('実際の横向きの辺で右/左へ傾き、下辺の支点は維持する', () => {
-    const right = createDominoTransforms([trace('a', [['a', 'right']])], boxes, 296).get('right')!;
-    const left = createDominoTransforms([trace('a', [['a', 'left']])], boxes, 296).get('left')!;
-    expect(right.b).toBeGreaterThan(0);
-    expect(right.c).toBeLessThan(0);
-    expect(left.b).toBeLessThan(0);
-    expect(left.c).toBeGreaterThan(0);
-    for (const [id, matrix] of [['right', right], ['left', left]] as const) {
-      const current = boxes.get(id)!;
-      const top = point(matrix, current.width / 2, 0);
-      expect(Math.sign(top.x - (current.x + current.width / 2))).toBe(id === 'right' ? 1 : -1);
-      const pivot = point(matrix, current.width / 2, current.height);
-      expect(pivot.x).toBeCloseTo(current.x + current.width / 2, 10);
-      expect(pivot.y).toBeCloseTo(current.y + current.height, 10);
-    }
-  });
-
   it('表示カードが交差しても目標Boxから傾く方向を保ち、現在Boxを支点にする', () => {
     const moving = new Map(boxes);
     moving.set('right', box(-700, 208));
     const result = createDominoTransforms([trace('a', [['a', 'right']])], moving, 296, { directionBoxes: boxes });
     const matrix = result.get('right')!;
-    expect(matrix.b).toBeGreaterThan(0);
-    expect(point(matrix, 160, 180).x).toBeCloseTo(-540, 10);
-    expect(point(matrix, 160, 180).y).toBeCloseTo(388, 10);
+    expect(matrix.perspective.edge).toBe('left');
+    expect(matrix.perspective.pivotX).toBe(0);
+    expect(matrix.perspective.pivotY).toBe(90);
   });
 
   it('hold/focusされたカードは変形せず、後続の因果深さは変えない', () => {
@@ -141,12 +105,10 @@ describe('V2の因果的なカード傾斜', () => {
     for (const age of [-100, 0, DOMINO_EFFECT_DURATION_MS, 1e9, NaN, Infinity, -Infinity]) {
       expect(createDominoTransforms(chain, boxes, age).size).toBe(0);
     }
-    expect(visual('a', 0)).toEqual(dominoIdentity(boxes.get('a')!));
-    expect(visual('a', 100 + DOMINO_EFFECT_PULSE_MS)).toEqual(dominoIdentity(boxes.get('a')!));
-    expect(dominoIdentity(boxes.get('a')!)).toEqual({ a: 1, b: 0, c: 0, d: 1, e: 16, f: 208 });
+    expect(createDominoTransforms(chain, boxes, 100 + DOMINO_EFFECT_PULSE_MS).has('a')).toBe(false);
   });
 
-  it('一回だけ共通起立して順次倒れ、有限な正の行列式で文字を裏返さない', () => {
+  it('一回だけ共通起立して順次倒れ、有限な正の透視除数で文字を裏返さない', () => {
     expect(dominoEffectAmount(DOMINO_EFFECT_RISE_MS)).toBe(1);
     expect(dominoEffectAmount(DOMINO_EFFECT_RISE_MS + DOMINO_EFFECT_HOLD_MS)).toBe(1);
     expect(DOMINO_EFFECT_FALL_MS).toBe(420);
@@ -158,8 +120,10 @@ describe('V2の因果的なカード傾斜', () => {
     for (let age = 1; age < DOMINO_EFFECT_DURATION_MS; age += 7) {
       const result = createDominoTransforms([trace('root', [['root', 'a'], ['a', 'right'], ['right', 'left']])], boxes, age);
       for (const matrix of result.values()) {
-        expect([matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f].every(Number.isFinite)).toBe(true);
-        expect(matrix.a * matrix.d - matrix.b * matrix.c).toBeGreaterThan(0.45);
+        for (const point of matrix.perspective.corners) {
+          expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
+          expect(point.w).toBeGreaterThan(0.8);
+        }
         expect(matrix.amount).toBeGreaterThan(0);
         expect(matrix.amount).toBeLessThanOrEqual(1);
       }
@@ -236,7 +200,7 @@ describe('V2の因果的なカード傾斜', () => {
     const overlapped = new Map([['root', box(16, 16)], ['a', box(16, 16)]]);
     const result = createDominoTransforms([trace('root', [['root', 'a']])], overlapped, 250);
     expect(result.size).toBe(2);
-    expect(result.get('a')!.d).toBeGreaterThan(0);
+    expect(result.get('a')!.perspective.edge).toBe('top');
   });
 
   it('Box・trace・hold入力を変更せず、表示座標を平行移動しても傾きは同じ', () => {
@@ -248,12 +212,6 @@ describe('V2の因果的なカード傾斜', () => {
     const moved = createDominoTransforms(chain, translated, 250, { heldIds: held });
     for (const [id, matrix] of original) {
       const next = moved.get(id)!;
-      expect(next.a).toBe(matrix.a);
-      expect(next.b).toBe(matrix.b);
-      expect(next.c).toBe(matrix.c);
-      expect(next.d).toBe(matrix.d);
-      expect(next.e).toBeCloseTo(matrix.e + 900, 10);
-      expect(next.f).toBeCloseTo(matrix.f - 800, 10);
       expect(next.perspective).toEqual(matrix.perspective);
     }
     expect(JSON.stringify([...boxes])).toBe(snapshot);
@@ -262,7 +220,7 @@ describe('V2の因果的なカード傾斜', () => {
   });
 });
 
-describe('V2の手前へ倒れる透視投影データ', () => {
+describe('手前へ倒れる透視投影データ', () => {
   const target = box(16, 16);
   const directions = [
     { source: box(16, -300), edge: 'top', axis: 'x', sign: 1, hinge: [0, 1] },
@@ -283,10 +241,7 @@ describe('V2の手前へ倒れる透視投影データ', () => {
     expect(projection.edge).toBe(edge);
     expect(projection.axis).toBe(axis);
     expect(projection.angleDeg).toBe(sign * DOMINO_PERSPECTIVE_MAX_ANGLE_DEG);
-    expect(projection.cssTransform).toBe(
-      `perspective(${projection.perspectivePx}px) rotate${axis.toUpperCase()}(${projection.angleDeg}deg)`,
-    );
-    expect(projection.transformOrigin).toBe(`${projection.pivotX}px ${projection.pivotY}px`);
+
     for (const [index, point] of projection.corners.entries()) {
       expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
       expect(point.x).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
@@ -359,7 +314,7 @@ describe('V2の手前へ倒れる透視投影データ', () => {
     }
   });
 
-  it('有限だが極端な寸法でも透視距離・CSS・投影点に無限大を作らない', () => {
+  it('有限だが極端な寸法でも透視距離・投影点に無限大を作らない', () => {
     for (const { source, axis } of directions) {
       for (const dimension of [Number.MAX_VALUE, 1e100, 1e14, Number.MIN_VALUE]) {
         const current = {
@@ -374,8 +329,6 @@ describe('V2の手前へ倒れる透視投影データ', () => {
         const projection = result.get('target')!.perspective;
         expect(Number.isFinite(projection.perspectivePx)).toBe(true);
         expect(projection.perspectivePx).toBeGreaterThan(0);
-        expect(projection.cssTransform).not.toMatch(/Infinity|NaN/);
-        expect(projection.transformOrigin).not.toMatch(/Infinity|NaN/);
         for (const point of projection.corners) {
           expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
           expect(point.w).toBeGreaterThan(0.8);
@@ -401,12 +354,10 @@ describe('V2の手前へ倒れる透視投影データ', () => {
     expect(result.get('target')!.perspective.edge).toBe('left');
   });
 
-  it('パルスの端では台形と影が連続的に消え、同じ終了時刻でデータもなくなる', () => {
+  it('パルスの端では台形が連続的に消え、同じ終了時刻でデータもなくなる', () => {
     for (const age of [0.001, 799.999]) {
       const projection = perspective(directions[0].source, age);
       expect(Math.abs(projection.angleDeg)).toBeLessThan(1e-6);
-      expect(projection.shade.faceOpacity).toBeLessThan(1e-8);
-      expect(projection.shade.footprintOpacity).toBeLessThan(1e-8);
       for (const [index, point] of projection.corners.entries()) {
         expect(point.x).toBeCloseTo(corners[index].x, 6);
         expect(point.y).toBeCloseTo(corners[index].y, 6);
@@ -442,18 +393,4 @@ describe('V2の手前へ倒れる透視投影データ', () => {
     }
   });
 
-  it('面と接地影は別レイヤー用で、エッジの影は全方向でinsetだけになる', () => {
-    for (const { source, edge } of directions) {
-      const { shade } = perspective(source);
-      expect(shade.faceGradient).toContain(`linear-gradient(to ${edge},`);
-      expect(shade.footprintGradient).toContain(`linear-gradient(to ${edge},`);
-      expect(shade.faceOpacity).toBeGreaterThan(0);
-      expect(shade.faceOpacity).toBeLessThanOrEqual(0.3);
-      expect(shade.footprintOpacity).toBeGreaterThan(0);
-      expect(shade.footprintOpacity).toBeLessThanOrEqual(0.22);
-      expect(shade.edgeShadow.match(/inset/g)).toHaveLength(2);
-      expect(shade.edgeShadow).not.toMatch(/drop-shadow|filter|padding/);
-      expect(shade.edgeShadow).not.toContain('NaN');
-    }
-  });
 });

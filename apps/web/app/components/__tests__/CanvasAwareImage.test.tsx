@@ -12,18 +12,18 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); canvasImageLoader.dispose(); vi.unstubAllGlobals(); });
 const source = 'https://i.gyazo.com/avatar.png';
-describe('V2画像の同一origin配信', () => {
+describe('Canvas画像の同一origin配信', () => {
   it('配信gate無効時は通常画像へ戻しproxy要求を作らない', () => {
     render(<CanvasImageProvider enabled={false}><MediaImage alt="互換画像" src={source} /><CanvasAwareImage alt="互換avatar" src={source} width={32} height={32} unoptimized /></CanvasImageProvider>);
     expect(screen.getByAltText('互換画像').getAttribute('src')).toBe(source);
     expect(screen.getByAltText('互換avatar').getAttribute('src')).toBe(source);
     expect(fetch).not.toHaveBeenCalled();
   });
-  it('V1のimgとunoptimizedアバターは元URLのまま', () => {
+  it('DOM互換表示のimgとunoptimizedアバターは元URLのまま', () => {
     render(<><MediaImage alt="本文" src={source} /><CanvasAwareImage alt="本人" src={source} width={32} height={32} unoptimized /></>);
     for (const image of screen.getAllByRole('img')) expect(image.getAttribute('src')).toBe(source);
   });
-  it('V2はアバター/本文/emojiを固定幅の安全取得routeへ送る', async () => {
+  it('認証付き描画はアバター/本文/emojiを固定幅の安全取得routeへ送る', async () => {
     render(<CanvasImageProvider>
       <CanvasAwareImage alt="本人" src={source} width={32} height={32} unoptimized />
       <MediaImage alt="本文" src={source} srcSet="https://outside.test/leak.png 2x" />
@@ -35,7 +35,7 @@ describe('V2画像の同一origin配信', () => {
     expect(screen.getByAltText('本文').getAttribute('srcset')).toBeNull();
     expect(screen.getByAltText('絵文字').getAttribute('src')).toBe('blob:canvas-image');
   });
-  it('V2 inline raster is POSTed and rendered only as a returned blob', async () => {
+  it('Canvas inline raster is POSTed and rendered only as a returned blob', async () => {
     const data = 'data:image/png;base64,aGVsbG8=';
     render(<CanvasImageProvider><MediaImage src={data} alt="inline" imageSize={40} srcSet="data:image/png;base64,aA== 2x" /></CanvasImageProvider>);
     await waitFor(() => expect(screen.getByAltText('inline').getAttribute('src')).toBe('blob:canvas-image'));

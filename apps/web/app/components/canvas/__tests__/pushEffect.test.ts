@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  createPushPaths, createPushParticles, drawPushPaths, pushEffectOpacity,
+  createPushPaths, createPushParticles, pushEffectOpacity,
   PUSH_EFFECT_DURATION_MS, PUSH_EFFECT_FADE_IN_MS, PUSH_EFFECT_MAX_EDGES,
   PUSH_EFFECT_MAX_TRACES, PUSH_EFFECT_MAX_PARTICLES, PUSH_EFFECT_MAX_HALOS, PUSH_EFFECT_STYLE,
-  type PushEffectBox, type PushEffectContext, type PushEffectTrace,
+  type PushEffectBox, type PushEffectTrace,
 } from '../pushEffect';
 
 const box = (x: number, y: number, height = 120): PushEffectBox => ({ x, y, width: 360, height });
@@ -11,36 +11,8 @@ const trace = (sourceId: string, pairs: readonly [string, string][]): PushEffect
   sourceId, edges: pairs.map(([fromId, toId]) => ({ fromId, toId })),
 });
 
-function fakeContext() {
-  const initial = {
-    strokeStyle: 'red', fillStyle: 'blue', globalAlpha: 0.5, lineWidth: 7,
-    lineCap: 'butt' as CanvasLineCap, lineJoin: 'miter' as CanvasLineJoin,
-    shadowBlur: 8, shadowColor: 'purple', filter: 'blur(3px)',
-  };
-  const strokeStates: typeof initial[] = [];
-  const fillStates: typeof initial[] = [];
-  const writes: [PropertyKey, unknown][] = [];
-  const currentState = () => Object.fromEntries(Object.keys(initial).map(key => [key, target[key as keyof typeof initial]]));
-  let saved: Record<string, unknown> = {};
-  const target = {
-    ...initial,
-    save: vi.fn(() => { saved = currentState(); }),
-    restore: vi.fn(() => { Object.assign(target, saved); }),
-    beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), closePath: vi.fn(), arc: vi.fn(), bezierCurveTo: vi.fn(),
-    stroke: vi.fn(() => { strokeStates.push(currentState() as typeof initial); }),
-    fill: vi.fn(() => { fillStates.push(currentState() as typeof initial); }),
-  };
-  const ctx = new Proxy(target, {
-    set(object, property, value) {
-      writes.push([property, value]);
-      return Reflect.set(object, property, value);
-    },
-  });
-  return { ctx, initial, strokeStates, fillStates, writes };
-}
-
 describe('魔法の杖の視認性', () => {
-  it('nativeとSVG共通の金と白の砂だけを使い、連続線のスタイルを持たない', () => {
+  it('金と白の砂だけを使い、連続線のスタイルを持たない', () => {
     expect(PUSH_EFFECT_STYLE).toEqual({
       dustColor: '#a86d00', warmDustColor: '#cf8d09', brightDustColor: '#e7b329',
       whiteColor: '#fff4b7', starColor: '#b87900', haloColor: '#e9ac20',
@@ -49,7 +21,7 @@ describe('魔法の杖の視認性', () => {
   });
 });
 
-describe('V2の押出因果パス', () => {
+describe('押出因果パス', () => {
   it('分岐と独立した根を実際の親子辺だけで描き、順序から接続を補わない', () => {
     const boxes = new Map([
       ['a', box(16, 0)], ['b', box(16, 132)], ['c', box(392, 132)],
@@ -190,7 +162,7 @@ describe('V2の押出因果パス', () => {
   });
 });
 
-describe('V2の押出エフェクトの寿命と描画', () => {
+describe('押出エフェクトの寿命と描画', () => {
   it('80msで現れ1000msまで明るさを保ち2200msで消える', () => {
     expect(PUSH_EFFECT_DURATION_MS).toBe(2200);
     expect(PUSH_EFFECT_FADE_IN_MS).toBe(80);
@@ -204,63 +176,7 @@ describe('V2の押出エフェクトの寿命と描画', () => {
     for (const age of [-1, 2201, 60000, NaN, Infinity]) expect(pushEffectOpacity(age)).toBe(0);
   });
 
-  it('独立した砂と星だけをfillし、連続線・輪郭線・ぼかし・影を描かない', () => {
-    const paths = createPushPaths([trace('a', [['a', 'b'], ['a', 'c']])], new Map([
-      ['a', box(16, 0)], ['b', box(16, 132)], ['c', box(392, 132)],
-    ]));
-    const viewport = { x: 0, y: 0, width: 400, height: 500 };
-    const particles = createPushParticles(paths, 500, viewport);
-    const { ctx, initial, fillStates, writes } = fakeContext();
-    drawPushPaths(ctx, paths, 0.8, 500, viewport);
-    expect(ctx.save).toHaveBeenCalledOnce();
-    expect(ctx.restore).toHaveBeenCalledOnce();
-    const haloCount = particles.filter(particle => particle.haloRadius > 0).length;
-    const coreCount = particles.filter(particle => particle.coreRadius > 0).length;
-    expect(ctx.beginPath).toHaveBeenCalledTimes(particles.length + haloCount + coreCount);
-    expect(ctx.moveTo.mock.calls).toEqual(particles.filter(particle => particle.kind === 'star').flatMap(particle => [
-      [particle.points[0].x, particle.points[0].y], [particle.corePoints[0].x, particle.corePoints[0].y],
-    ]));
-    expect(ctx.bezierCurveTo).not.toHaveBeenCalled();
-    expect(ctx.stroke).not.toHaveBeenCalled();
-    expect(ctx.fill).toHaveBeenCalledTimes(particles.length + haloCount + coreCount);
-    expect(ctx.arc.mock.calls).toEqual(particles.flatMap(particle => [
-      ...(particle.haloRadius > 0 ? [[particle.x, particle.y, particle.haloRadius, 0, Math.PI * 2]] : []),
-      ...(particle.kind === 'dot' ? [[particle.x, particle.y, particle.radius, 0, Math.PI * 2]] : []),
-      ...(particle.kind === 'dot' && particle.coreRadius > 0 ? [[particle.x, particle.y, particle.coreRadius, 0, Math.PI * 2]] : []),
-    ]));
-    expect(ctx.lineTo.mock.calls).toEqual(particles.flatMap(particle => [
-      ...particle.points.slice(1).map(point => [point.x, point.y]),
-      ...particle.corePoints.slice(1).map(point => [point.x, point.y]),
-    ]));
-    const expectedFills = particles.flatMap(particle => [
-      ...(particle.haloRadius > 0 ? [{ alpha: particle.haloAlpha, color: particle.haloColor }] : []),
-      { alpha: particle.alpha, color: particle.color },
-      ...(particle.coreRadius > 0 ? [{ alpha: particle.coreAlpha, color: particle.coreColor }] : []),
-    ]);
-    for (let index = 0; index < expectedFills.length; index++) {
-      expect(fillStates[index].globalAlpha).toBeCloseTo(0.5 * 0.8 * expectedFills[index].alpha);
-      expect(fillStates[index].fillStyle).toBe(expectedFills[index].color);
-    }
-    for (const state of fillStates) {
-      expect(state).toMatchObject({ shadowBlur: 0, shadowColor: 'transparent', filter: 'none' });
-    }
-    expect(writes.filter(([property]) => property === 'filter')).toEqual([['filter', 'none']]);
-    expect(writes.filter(([property]) => property === 'shadowBlur')).toEqual([['shadowBlur', 0]]);
-    expect(ctx).toMatchObject(initial);
-  });
 
-  it('非表示なら描かず、描画に失敗してもsaveした状態を復元する', () => {
-    const paths = createPushPaths([trace('a', [['a', 'b']])], new Map([['a', box(16, 0)], ['b', box(16, 132)]]));
-    const { ctx, initial } = fakeContext();
-    for (const opacity of [0, -1, NaN, Infinity]) drawPushPaths(ctx, paths, opacity, 500);
-    for (const age of [0, -1, PUSH_EFFECT_DURATION_MS, NaN, Infinity]) drawPushPaths(ctx, paths, 1, age);
-    drawPushPaths(ctx, [], 1, 500);
-    expect(ctx.save).not.toHaveBeenCalled();
-    ctx.fill.mockImplementation(() => { throw new Error('描画失敗'); });
-    expect(() => drawPushPaths(ctx as PushEffectContext, paths, 1, 500)).toThrow('描画失敗');
-    expect(ctx.restore).toHaveBeenCalledOnce();
-    expect(ctx).toMatchObject(initial);
-  });
 });
 
 describe('決定的な魔法の星と光点', () => {
@@ -390,9 +306,7 @@ describe('決定的な魔法の星と光点', () => {
     const adjacentDust = createPushParticles([adjacent], 500, viewport);
     expect(adjacentDust.some(particle => particle.x < 400)).toBe(true);
     const outside = { ...viewport, y: 2000 };
-    const { ctx } = fakeContext();
-    drawPushPaths(ctx, paths, 1, 500, outside);
-    expect(ctx.fill).not.toHaveBeenCalled();
+    expect(createPushParticles(paths, 500, outside)).toEqual([]);
   });
 
   it('画面が長い辺の始点や終点に近くても、可視部分の砂を暗くしない', () => {

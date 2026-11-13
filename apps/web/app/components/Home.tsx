@@ -6,10 +6,10 @@ import { useNostrRelay } from "../hooks/useNostrRelay";
 import { useThreadCards } from "../hooks/useThreadCards";
 import { useRecentEmojis } from "../hooks/useRecentEmojis";
 import { useCanvasImageSession, type CanvasImageAccessMode } from "../hooks/useCanvasImageSession";
-import { useNativeCanvasCapability } from "./v2/nativeCanvasCapability";
-import { useManualDOMPreference } from "./v2/manualDOMPreference";
+import { useNativeCanvasCapability } from "./canvas/nativeCanvasCapability";
+import { useManualDOMPreference } from "./canvas/manualDOMPreference";
 import { ImageProxyAccess } from "./ImageProxyAccess";
-import { LiveCanvasV2 } from "./LiveCanvasV2";
+import { LiveCanvas } from "./LiveCanvas";
 
 export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" }: { diagnosticsEnabled?: boolean; imageAccessMode?: CanvasImageAccessMode }) {
   const {
@@ -65,12 +65,12 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" 
     [sendReaction, addEmoji],
   );
 
-  // 認証済み → V2キャンバスを全画面表示
+  // 認証済み → キャンバスを全画面表示
   if (pubkey) {
     return (
       <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 [&>div]:h-full">
-      <LiveCanvasV2
+      <LiveCanvas
         diagnosticsEnabled={diagnosticsEnabled}
         nativeImagesEnabled={nativeCapable && !manualDOM && imageAccess.nativeImagesEnabled}
         imageAccessReason={!nativeCapable || manualDOM || imageAccessMode === "owner" ? imageReason : undefined}

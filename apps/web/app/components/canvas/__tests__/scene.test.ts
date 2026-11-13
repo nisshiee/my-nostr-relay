@@ -5,7 +5,7 @@ import { DEFAULT_CARD_HEIGHT, GAP } from '../../../lib/constants';
 import type { Grid, Placement } from '../../../lib/layoutTypes';
 import type { Card, NoteCard } from '../../../lib/types';
 import {
-  createSceneLayout, detectCanvasMode, layoutScene, planSceneLayout, updateSceneLayout,
+  createSceneLayout, layoutScene, planSceneLayout, updateSceneLayout,
   type SceneLayoutState,
 } from '../scene';
 import { createSceneMotion, retargetSceneMotion } from '../sceneMotion';
@@ -18,7 +18,7 @@ const items = (cards: readonly Card[]) => cards.map(card => ({ id: card.slotId, 
 const viewport = (columns: number) => columns * 400;
 const base = () => [note('a', 0.9), note('b', 0.8), note('c', 0.7), note('d', 0.6)];
 
-describe('V2の新着ごとの不変な押し出しtrace', () => {
+describe('シーンの新着ごとの不変な押し出しtrace', () => {
   it('空feedと初期配置ではエフェクト用のrevisionを進めない', () => {
     const empty = updateSceneLayout(createSceneLayout(), [], new Map(), 800);
     expect(empty.insertion).toEqual({ revision: 0, traces: [] });
@@ -150,7 +150,7 @@ describe('V2の新着ごとの不変な押し出しtrace', () => {
   });
 });
 
-describe('V2の新着と同時に隙間のない最終位置を計算する', () => {
+describe('シーンの新着と同時に隙間のない最終位置を計算する', () => {
   function gapFixture() {
     const cards = [note('a', 2), note('b', 1)];
     const heights = new Map([['a', 200], ['b', 120], ['new', 40]]);
@@ -290,7 +290,7 @@ describe('V2の新着と同時に隙間のない最終位置を計算する', ()
 type Oracle = { grid: Grid; ids: ReadonlySet<string>; columns: number; chain: ReadonlyMap<string, number> };
 const emptyOracle = (): Oracle => ({ grid: new Map(), ids: new Set(), columns: 0, chain: new Map() });
 
-/** V1公開APIで各段階を再現し、V2の挿入後一括reflowと連鎖保持を比較する。 */
+/** 配置エンジンの公開APIで各段階を再現し、シーンの挿入後一括reflowと連鎖保持を比較する。 */
 function oracleStep(previous: Oracle, cards: readonly Card[], columns: number, heights = new Map<string, number>(), held = new Set<string>()): Oracle {
   const ids = new Set(cards.map(card => card.slotId));
   const rebuild = columns !== previous.columns || previous.grid.size === 0;
@@ -337,16 +337,8 @@ function seeded(cards: readonly Card[], grid: Map<string, Placement>, columns: n
   return { ...state, grid, boxes, engineBoxes: new Map(boxes) };
 }
 
-describe('V2 sceneのAPI検出と互換入口', () => {
-  it('能力がなければDOMを選び、nativeのAPI世代を分ける', () => {
-    expect(detectCanvasMode({} as HTMLCanvasElement, null)).toBe('dom');
-    expect(detectCanvasMode({ requestPaint() {} } as unknown as HTMLCanvasElement, {} as CanvasRenderingContext2D)).toBe('dom');
-    const ctx = { drawElementImage() {} } as unknown as CanvasRenderingContext2D;
-    expect(detectCanvasMode({ requestPaint() {} } as unknown as HTMLCanvasElement, ctx)).toBe('legacy');
-    expect(detectCanvasMode({ requestPaint() {}, content: '' } as unknown as HTMLCanvasElement, ctx)).toBe('modern');
-  });
-
-  it('メタデータなしのlabと互換入口もV1配置を通る', () => {
+describe('sceneの配置互換入口', () => {
+  it('メタデータなしの互換入口も共有配置を通る', () => {
     const ids = ['a', 'b', 'c', 'd'];
     const cards = ids.map((id, index) => note(id, ids.length - index, `scene:${id}`));
     const expected = buildInitialLayout(cards, 2, new Map());
@@ -358,8 +350,8 @@ describe('V2 sceneのAPI検出と互換入口', () => {
   });
 });
 
-describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせるadapter', () => {
-  it.each([1, 2, 3])('%i列の初期配置は高さではなくV1のスコア配分に一致する', columns => {
+describe('配置エンジンの初期配置・引力とシーンの挿入後一括reflowを合わせるadapter', () => {
+  it.each([1, 2, 3])('%i列の初期配置は高さではなく配置エンジンのスコア配分に一致する', columns => {
     const cards = base();
     const heights = new Map([['a', 700], ['b', 40], ['c', 310], ['d', 91]]);
     const result = updateSceneLayout(createSceneLayout(), items(cards), heights, viewport(columns));
@@ -372,7 +364,7 @@ describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせる
     expect(result.boxes).toEqual(result.engineBoxes);
   });
 
-  it('同スコアの並びと左優先の同点処理もV1に一致する', () => {
+  it('同スコアの並びと左優先の同点処理も配置エンジンに一致する', () => {
     const cards = ['a', 'b', 'c', 'd', 'e', 'f'].map(id => note(id, 1));
     const result = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 1200);
     expectOracle(result, oracleStep(emptyOracle(), cards, 3));
@@ -394,7 +386,7 @@ describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせる
     }
   });
 
-  it('押し出し先にもpubkeyの引力を適用し、下と隣列の候補をV1と同じように選ぶ', () => {
+  it('押し出し先にもpubkeyの引力を適用し、下と隣列の候補を配置エンジンと同じように選ぶ', () => {
     const cards = [note('victim', 50, 'shared'), note('related', 30, 'shared'), note('below', 10), note('adj', 10)];
     const grid = new Map([
       ['victim', { col: 1, y: 0 }], ['below', { col: 1, y: 132 }],
@@ -424,7 +416,7 @@ describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせる
     }
   });
 
-  it('同時到着はV1同様に入力順で一枚ずつ挿入し、最後の挿入が先頭になる', () => {
+  it('同時到着は配置エンジンと同様に入力順で一枚ずつ挿入し、最後の挿入が先頭になる', () => {
     const cards = [note('a', 3), note('b', 2)];
     const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 400);
     const nextCards = [note('new1', 5), note('new2', 4), ...cards];
@@ -456,7 +448,7 @@ describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせる
     expect(state.grid.has('b')).toBe(false);
   });
 
-  it('削除と挿入が同時ならV1同様に挿入を処理してから削除スロットを除く', () => {
+  it('削除と挿入が同時なら配置エンジンと同様に挿入を処理してから削除スロットを除く', () => {
     const cards = base();
     const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 800);
     const nextCards = [note('new', 1, 'a'), ...cards.filter(card => card.slotId !== 'b')];
@@ -509,7 +501,7 @@ describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせる
     expect(result.chainOrder.size).toBe(0);
   });
 
-  it('holdだけの変更はV1のreflowを通し、表示は実座標・幅を別管理する', () => {
+  it('holdだけの変更は配置エンジンのreflowを通し、表示は実座標・幅を別管理する', () => {
     const cards = [note('a', 3), note('b', 2), note('c', 1)];
     let expected = oracleStep(emptyOracle(), cards, 1);
     const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 400);
@@ -537,7 +529,7 @@ describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせる
     expect(released.frozenBoxes.size).toBe(0);
   });
 
-  it('列数変更は論理配置を再構築し、V2既存の実表示holdを保持する', () => {
+  it('列数変更は論理配置を再構築し、実表示holdを保持する', () => {
     const cards = base();
     let state = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 800);
     const held = new Set(['a']);
@@ -549,7 +541,7 @@ describe('V1の初期配置・引力とV2の挿入後一括reflowを合わせる
     expect(resized.engineBoxes.get('a')!.x).toBe(16);
   });
 
-  it('隣列のhold同士を迂回してもV1と同じ位置へ有限回で配置できる', () => {
+  it('隣列のhold同士を迂回しても配置エンジンと同じ位置へ有限回で配置できる', () => {
     const cards = [note('lower-a', 10), note('lower-b', 10), note('a', 0), note('b', 0)];
     const grid = new Map([
       ['a', { col: 0, y: 0 }], ['b', { col: 1, y: 0 }],

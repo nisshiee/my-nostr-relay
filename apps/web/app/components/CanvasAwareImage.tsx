@@ -7,7 +7,7 @@ import { canvasImageWidth, CANVAS_IMAGE_QUALITY, validateCanvasImageSource } fro
 import { canvasImageLoader, type CanvasImageLoad } from '../lib/canvasImageLoader';
 
 const CanvasImageContext = createContext(false);
-/** V1は元の画像表示を維持し、V2のカード内だけ同一origin配信を使う。 */
+/** 認証付き描画では同一origin配信を使い、DOM互換表示では通常の画像経路を使う。 */
 export function CanvasImageProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
   return <CanvasImageContext.Provider value={enabled}>{children}</CanvasImageContext.Provider>;
 }
@@ -39,12 +39,12 @@ function OptimizedCanvasImage({ src, imageSize = 640, ...props }: MediaImageProp
 /** 通常imgを使う本文・preview・絵文字向け。 */
 export function MediaImage({ imageSize, ...props }: MediaImageProps) {
   const canvas = useContext(CanvasImageContext);
-  // eslint-disable-next-line @next/next/no-img-element -- V1の既存img挙動を変更しない
+  // eslint-disable-next-line @next/next/no-img-element -- DOM互換表示では通常のimgを使う
   if (!canvas) return <img {...props} alt={props.alt ?? ''} />;
   return <OptimizedCanvasImage key={typeof props.src === 'string' ? props.src : 'non-url'} {...props} imageSize={imageSize} />;
 }
 
-/** 既存next/imageアバター向け。V1ではunoptimized等の既存propsを変更しない。 */
+/** 既存next/imageアバター向け。DOM互換表示ではunoptimized等の既存propsを維持する。 */
 export default function CanvasAwareImage(props: ImageProps) {
   const canvas = useContext(CanvasImageContext);
   if (!canvas) return <NextImage {...props} />;
