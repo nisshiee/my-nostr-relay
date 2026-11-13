@@ -198,8 +198,6 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
     const applyPose = (node: HTMLDivElement, box: SceneBox) => {
       const face = node.querySelector<HTMLElement>(':scope > [data-scene-face]');
       if (!face) return;
-      setStyle(node, 'padding', '0px');
-      node.dataset.sceneCapturePadding = '0';
       setStyle(face, 'width', `${box.width}px`);
       setStyle(face, 'height', pressed?.id === node.dataset.sceneCard ? `${box.height}px` : '');
       setStyle(face, 'overflow', pressed?.id === node.dataset.sceneCard ? 'clip' : '');
@@ -405,9 +403,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
       let cursor = target instanceof HTMLElement ? target : null;
       const controlHeight = cursor?.offsetHeight ?? box.height;
       while (cursor && cursor !== node && node?.contains(cursor)) { offsetY += cursor.offsetTop; cursor = cursor.offsetParent as HTMLElement | null; }
-      // offsetTopには捕捉paddingが入るが、boxは元のカード面の座標。
-      const padding = Number(node?.dataset.sceneCapturePadding) || 0;
-      const top = box.y + offsetY - padding;
+      const top = box.y + offsetY;
       if (top < host.scrollTop || top + controlHeight > host.scrollTop + r.height) {
         host.scrollTop = Math.max(0, top < host.scrollTop || controlHeight >= r.height ? top - 16 : top + controlHeight - r.height + 16);
         camera = { x: 0, y: -host.scrollTop, zoom: 1 };

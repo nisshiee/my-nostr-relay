@@ -203,7 +203,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     if(reason==='removed') rerender(<CanvasScene diagnosticsEnabled items={[incoming]}/>);
     flushFrame(500);
     if(reason==='removed') expect(document.querySelector('[data-scene-card="a"]')).toBeNull();
-    else { expect(node.dataset.sceneTip).toBe('0'); expect(node.style.padding).toBe('0px'); }
+    else { expect(node.dataset.sceneTip).toBe('0'); expect(node.style.padding).toBe(''); }
     unmount(); frames.clear(); act(()=>vi.runOnlyPendingTimers()); expect(frames.size).toBe(0);
   });
   it("unmountはclick待ちtimerとpointer listenerを解除する", () => {
@@ -231,16 +231,16 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     const button=screen.getByRole('button',{name:'クリック 0'});
-    pointer(button,'pointerdown');flushFrame(350);expect(node.style.padding).toBe('0px');
+    pointer(button,'pointerdown');flushFrame(350);expect(node.style.padding).toBe('');
     draw.mockImplementationOnce(()=>{throw new Error('draw failed');});flushFrame(450);
     expect(document.querySelector('canvas')!.hidden).toBe(true);
-    expect(face.style.transform).toBe('');expect(node.style.padding).toBe('0px');
+    expect(face.style.transform).toBe('');expect(node.style.padding).toBe('');
     expect(node.style.height).toBe('');expect(face.style.height).toBe('');
     flushFrame(500);expect(screen.getByLabelText('カード領域。縦スクロールで移動').dataset.scenePushEffect).toBe('idle');
     pointer(window,'pointerup');fireEvent.click(button);expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
   });
 
-  it("keyboard focusの縦revealでは捕捉paddingを座標へ二重加算しない", () => {
+  it("keyboard focusの縦revealはカード内のcontrol位置を使う", () => {
     mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
     const original={id:'a',content:<InteractiveCard/>};
@@ -250,7 +250,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     const button=screen.getByRole('button',{name:'クリック 0'});
     const host=screen.getByLabelText('カード領域。縦スクロールで移動');
-    expect(node.style.padding).toBe('0px');
+    expect(node.style.padding).toBe('');
     Object.defineProperties(button,{
       offsetTop:{configurable:true,value:570-Number(node.dataset.sceneY)},
       offsetHeight:{configurable:true,value:20},
@@ -263,10 +263,10 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     act(()=>button.focus()); flushFrame(300);
     expect(document.activeElement).toBe(button);
     expect(host.scrollTop).toBe(0);
-    expect(node.style.padding).toBe('0px');
+    expect(node.style.padding).toBe('');
   });
 
-  it("捕捉paddingを配置高さに加えず内側の面だけを監視する", () => {
+  it("配置高さは内側の面だけを測定して監視する", () => {
     mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
     const observed = new Set<Element>();
@@ -289,14 +289,14 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face = node.querySelector<HTMLElement>('[data-scene-face]')!;
     expect(observed.has(face)).toBe(true); expect(observed.has(node)).toBe(false);
-    expect(node.style.padding).toBe('0px');
+    expect(node.style.padding).toBe('');
     const expectedY = Number(node.dataset.sceneTargetY);
     act(()=>refresh?.()); flushFrame(300);
     expect(Number(node.dataset.sceneTargetY)).toBe(expectedY);
     height=220; act(()=>refresh?.()); flushFrame(350);
     expect(Number(node.dataset.sceneTargetY)).toBe(expectedY+40);
     fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'off'}}); flushFrame(400);
-    expect(node.style.padding).toBe('0px'); expect(face.style.width).toBe('360px');
+    expect(node.style.padding).toBe(''); expect(face.style.width).toBe('360px');
     expect(Number(node.dataset.sceneTargetY)).toBe(expectedY+40);
   });
 
@@ -373,7 +373,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const host=screen.getByLabelText('カード領域。縦スクロールで移動');
     expect(host.dataset.scenePushEffect).toBe('idle');expect(host.querySelector('svg')).toBeNull();
     for(const node of host.querySelectorAll<HTMLElement>('[data-scene-card]')) {
-      expect(node.dataset.sceneTip).toBe('0');expect(node.style.padding).toBe('0px');
+      expect(node.dataset.sceneTip).toBe('0');expect(node.style.padding).toBe('');
       expect(node.querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
     }
     expect((screen.getByRole('combobox', {name:'新着エフェクト'}) as HTMLSelectElement).value).toBe(choice);
@@ -784,10 +784,10 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(listen.mock.calls.some(([type,,options])=>['pointerdown','pointerup','click'].includes(type) && typeof options==='object' && options?.passive)).toBe(false);
     rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
     expect(seen.at(-1)!.cards.length).toBe(2);
-    const node=card('a');expect(node.dataset.sceneCard).toBe('a');expect(node.dataset.sceneCapturePadding).toBe('0');
+    const node=card('a');expect(node.dataset.sceneCard).toBe('a');
     expect(node.querySelector('[data-scene-face]')).not.toBeNull();
     expect(Object.keys(host().dataset)).toEqual([]);
-    expect(Object.keys(node.dataset).sort()).toEqual(['sceneCapturePadding','sceneCard']);
+    expect(Object.keys(node.dataset).sort()).toEqual(['sceneCard']);
     const button=screen.getByRole('button',{name:'クリック 0'});pointer(button,'pointerdown');pointer(window,'pointerup');fireEvent.click(button);flushFrame(400);
     expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();expect(host().dataset.sceneLastPointerDown).toBeUndefined();
     for(let t=500;t<=10000;t+=100) flushFrame(t);expect(frames.size).toBe(0);
@@ -865,7 +865,7 @@ describe('CanvasScene WebGL feed接続', () => {
     const latest=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!;
     expect(latest().ripple!.amount).toBeGreaterThan(0);expect(latest().tip).toBeUndefined();
     expect(card('a').querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
-    expect(card('a').style.padding).toBe('0px');
+    expect(card('a').style.padding).toBe('');
     pointer(card('a'),'pointerdown');flushFrame(370);expect(latest().ripple).toBeUndefined();
     pointer(window,'pointerup');flushFrame(380);expect(latest().ripple).toBeDefined();
     pointer(card('a'),'pointerdown');flushFrame(385);expect(latest().ripple).toBeUndefined();
@@ -908,7 +908,7 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(host().dataset.sceneRenderer).toBe('webgl');
     expect(seen.at(-1)!.cards.some(c=>(c.tip?.amount??0)>0)).toBe(true);
     expect(card('a').querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
-    expect(card('a').style.padding).toBe('0px');
+    expect(card('a').style.padding).toBe('');
     const canvas=screen.getByLabelText('WebGLライブカード') as HTMLCanvasElement;
     expect(canvas.width).toBe(1600);expect(canvas.height).toBe(1200);
     host().scrollTop=90;fireEvent.scroll(host());flushFrame(300);
