@@ -234,9 +234,12 @@ export async function resolveExtensionProvider({
   throw new Error("NIP-07拡張が見つかりません");
 }
 
+export const AUTO_LOGIN_TIMEOUT_MS = 15_000;
+
 interface RequestPublicKeyOptions {
   signal: AbortSignal;
   readRemotePointer?: () => string | null;
+  timeoutMs?: number;
   pollIntervalMs?: number;
 }
 
@@ -251,6 +254,7 @@ export async function requestPublicKey(
     signal,
     readRemotePointer = () => localStorage.getItem(REMOTE_POINTER_KEY),
     pollIntervalMs = 100,
+    timeoutMs,
   }: RequestPublicKeyOptions,
 ): Promise<string> {
   if (signal.aborted) throw abortError();
@@ -272,14 +276,27 @@ export async function requestPublicKey(
   const providerRequest = provider.getPublicKey();
   // キャンセル後に upstream が解決・拒否しても未処理 Promise にしない。
   void providerRequest.catch(() => undefined);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: () => void = () => undefined;
   const cancellation = new Promise<never>((_, reject) => {
-    signal.addEventListener("abort", () => reject(abortError()), { once: true });
+    onAbort = () => reject(abortError());
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    if (timeoutMs !== undefined) {
+      timeout = setTimeout(() => reject(new Error(
+        "署名器から応答がありません。署名器と接続リレーを確認し、ログインをやり直してください。",
+      )), timeoutMs);
+    }
   });
 
   try {
-    return await Promise.race([providerRequest, cancellation]);
+    const pubkey = await Promise.race([providerRequest, cancellation]);
+    if (signal.aborted) throw abortError();
+    return pubkey;
   } finally {
     if (workaroundTimer) clearInterval(workaroundTimer);
+    if (timeout) clearTimeout(timeout);
+    signal.removeEventListener("abort", onAbort);
   }
 }
 

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AUTO_LOGIN_TIMEOUT_MS } from "../../lib/nostrLogin";
 import { clearActiveSigner } from "../../lib/nostrSigner";
 import type { Nostr } from "../../types/nostr";
 import { AuthProvider, useAuth } from "../AuthContext";
@@ -32,6 +33,8 @@ function AuthProbe() {
   const auth = useAuth();
   return (
     <>
+      <span data-testid="auto-loading">{String(auth.autoLoading)}</span>
+      <span data-testid="error">{auth.loginError}</span>
       <span data-testid="availability">
         {auth.nip07Available === null
           ? "pending"
@@ -63,10 +66,47 @@ afterEach(() => {
   clearActiveSigner();
   localStorage.clear();
   setWindowNostr(undefined);
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
 describe("AuthProvider interactions", () => {
+  it("応答のない自動復元を期限で終了し、古い応答を無視して手動再試行できる", async () => {
+    vi.useFakeTimers();
+    const stale = deferred<string>();
+    const getPublicKey = vi.fn<Nostr["getPublicKey"]>()
+      .mockImplementationOnce(() => stale.promise)
+      .mockResolvedValueOnce(REMOTE_PUBKEY);
+    setWindowNostr(provider(getPublicKey, { remote: true }));
+    localStorage.setItem("nostr-relay:pubkey", STORED_PUBKEY);
+    localStorage.setItem("nostr-relay:login-method", "remote");
+    localStorage.setItem("wnj:bunkerPointer", "test-pointer");
+    render(<AuthProvider><AuthProbe /></AuthProvider>);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByTestId("auto-loading").textContent).toBe("true");
+    await act(async () => { await vi.advanceTimersByTimeAsync(AUTO_LOGIN_TIMEOUT_MS); });
+    expect(screen.getByTestId("auto-loading").textContent).toBe("false");
+    expect(screen.getByTestId("error").textContent).toContain("署名器から応答がありません");
+    expect(localStorage.getItem("wnj:bunkerPointer")).toBe("test-pointer");
+    await act(async () => { stale.resolve(STORED_PUBKEY); });
+    expect(screen.getByTestId("pubkey").textContent).toBe("none");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "remote login" })); });
+    expect(screen.getByTestId("pubkey").textContent).toBe(REMOTE_PUBKEY);
+  });
+
+  it("自動復元もキャンセルでき、遅れて届いた公開鍵でログインしない", async () => {
+    const stale = deferred<string>();
+    setWindowNostr(provider(() => stale.promise, { remote: true }));
+    localStorage.setItem("nostr-relay:pubkey", STORED_PUBKEY);
+    localStorage.setItem("nostr-relay:login-method", "remote");
+    render(<AuthProvider><AuthProbe /></AuthProvider>);
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: "cancel" }));
+    await act(async () => { stale.resolve(STORED_PUBKEY); });
+    expect(screen.getByTestId("auto-loading").textContent).toBe("false");
+    expect(screen.getByTestId("pubkey").textContent).toBe("none");
+  });
+
   it("mount直後に既存のNIP-07拡張を検出する", async () => {
     setWindowNostr(provider(vi.fn(async () => STORED_PUBKEY)));
 
