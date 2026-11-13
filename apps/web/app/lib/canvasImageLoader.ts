@@ -69,7 +69,11 @@ export function createCanvasImageLoader() {
         ...(typeof entry.request === 'string' ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry.request) }),
         credentials: 'same-origin', redirect: 'error', signal: entry.controller!.signal });
       if (!entry.listeners.size) { await response.body?.cancel(); return; }
-      if (response.status === 503) { notify(entry, { status: 'disabled' }); return; }
+      if ([401, 403, 503].includes(response.status)) {
+        notify(entry, { status: 'disabled' });
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('canvas-image-unauthorized'));
+        return;
+      }
       if (response.status === 429 && entry.attempts++ < 8) {
         const value = response.headers.get('Retry-After');
         const seconds = value === null ? NaN : Number(value);
@@ -125,6 +129,15 @@ export function createCanvasImageLoader() {
         }
         pump();
       };
+    },
+    invalidateAuthorization() {
+      // 通信中のslotはfinallyまで保持するが、旧認証の応答/Blobを新セッションへ再利用しない。
+      for (const entry of [...entries.values()]) {
+        entry.listeners.clear();
+        remove(entry);
+        entry.state = { status: 'disabled' };
+      }
+      clearTimeout(timer);
     },
     dispose() {
       for (const entry of entries.values()) {

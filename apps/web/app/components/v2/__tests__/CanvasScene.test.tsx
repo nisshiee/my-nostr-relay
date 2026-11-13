@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React, { useEffect, useRef, useState } from "react";
-import { act, cleanup, fireEvent, render as renderUI, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as actualRender, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot, type Root } from "react-dom/client";
@@ -12,6 +12,17 @@ import type { Card } from "../../../lib/types";
 
 const backendMock = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('../webglSceneRenderer', async importOriginal => ({ ...await importOriginal<typeof import('../webglSceneRenderer')>(), createWebGLSceneRenderer: backendMock.create }));
+// 既存描画回帰では設定を明示的に開いてQA操作を行う。modal自身の回帰はactualRenderを使う。
+function renderUI(ui: React.ReactElement, options?: Parameters<typeof actualRender>[1]) {
+  const result = actualRender(ui, options);
+  const active = document.activeElement as HTMLElement | null;
+  const trigger = screen.queryByRole('button', { name: '設定' });
+  if (trigger) fireEvent.click(trigger);
+  const summary = screen.queryByText('描画比較（開発用）');
+  if (summary) fireEvent.click(summary);
+  if (active?.isConnected && active !== document.body) act(() => active.focus());
+  return result;
+}
 function render(ui: React.ReactElement, options?: Parameters<typeof renderUI>[1]) {
   const result = renderUI(ui, options);
   const choice = screen.queryByRole('combobox', { name: 'QA描画方式' });
@@ -833,12 +844,49 @@ describe('CanvasScene WebGL feed接続', () => {
   const original = {id:'a',content:<InteractiveCard/>};
   const incoming = {id:'new',content:<span>new</span>};
 
+  it('設定modalはbody portalに開きEscape・背景・閉じるでtriggerへfocusを戻す', () => {
+    gpuBackend();actualRender(<CanvasScene items={[original]}/>);flushFrame(0);
+    expect(screen.queryByRole('dialog')).toBeNull();expect(screen.queryByRole('combobox',{name:'新着エフェクト'})).toBeNull();
+    const trigger=screen.getByRole('button',{name:'設定'});act(()=>trigger.focus());fireEvent.click(trigger);
+    let dialog=screen.getByRole('dialog',{name:'表示設定'});expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(dialog.closest('section[aria-label="V2 canvas"]')).toBeNull();expect(document.activeElement).toBe(screen.getByRole('button',{name:'設定を閉じる'}));
+    fireEvent.keyDown(document,{key:'Escape'});expect(screen.queryByRole('dialog')).toBeNull();expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);dialog=screen.getByRole('dialog',{name:'表示設定'});fireEvent.click(dialog.parentElement!);
+    expect(screen.queryByRole('dialog')).toBeNull();expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);fireEvent.click(screen.getByRole('button',{name:'設定を閉じる'}));
+    expect(screen.queryByRole('dialog')).toBeNull();expect(document.activeElement).toBe(trigger);
+  });
+  it('設定modalのTabは端で循環し閉じるまでカード入力をremountしない', () => {
+    gpuBackend();actualRender(<CanvasScene items={[original]}/>);flushFrame(0);
+    const input=screen.getByLabelText('下書き');fireEvent.change(input,{target:{value:'keep settings draft'}});
+    fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
+    fireEvent.click(screen.getByRole('button',{name:'設定'}));
+    const close=screen.getByRole('button',{name:'設定を閉じる'}),last=screen.getByRole('button',{name:'DOMに切替'});
+    fireEvent.keyDown(close,{key:'Tab',shiftKey:true});expect(document.activeElement).toBe(last);
+    fireEvent.keyDown(last,{key:'Tab'});expect(document.activeElement).toBe(close);
+    fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});flushFrame(100);
+    expect(localStorage.getItem('nlc-v2-effect')).toBe('off');
+    fireEvent.click(close);expect(screen.getByLabelText('下書き')).toBe(input);expect((input as HTMLInputElement).value).toBe('keep settings draft');
+    expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
+  });
+  it('設定modalはDOMで保存選択と認証理由を表示し閉じるだけでもTab循環する', () => {
+    localStorage.setItem('nlc-v2-effect','ripple');
+    actualRender(<CanvasScene allowNative={false} nativeUnavailableReason="画像表示にはログインが必要です" items={[original]}/>);flushFrame(0);
+    fireEvent.click(screen.getByRole('button',{name:'設定'}));
+    const dialog=screen.getByRole('dialog',{name:'表示設定'}),select=screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement;
+    expect(select.disabled).toBe(true);expect(select.value).toBe('ripple');expect(dialog.textContent).toContain('画像表示にはログインが必要です');
+    expect(screen.queryByRole('button',{name:'Nativeを試す'})).toBeNull();expect(screen.queryByRole('combobox',{name:'QA描画方式'})).toBeNull();
+    const close=screen.getByRole('button',{name:'設定を閉じる'});fireEvent.keyDown(close,{key:'Tab'});expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close,{key:'Tab',shiftKey:true});expect(document.activeElement).toBe(close);
+    fireEvent.click(close);expect(localStorage.getItem('nlc-v2-effect')).toBe('ripple');
+  });
+
   it('allowNative=falseはAPI対応環境でもcontext取得とnative再試行を禁止する', () => {
     gpuBackend();vi.mocked(HTMLCanvasElement.prototype.getContext).mockClear();
     renderUI(<CanvasScene diagnosticsEnabled allowNative={false} items={[original]} qaMeasurementToken={1}/>);flushFrame(0);
     expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();expect(backendMock.create).not.toHaveBeenCalled();
     expect(host().dataset.sceneRenderer).toBe('dom');expect(host().dataset.sceneFallbackStage).toBe('image-gate');
-    expect(screen.getByText('画像配信が無効のため互換表示を使用しています')).toBeDefined();
+    expect(screen.getAllByText('画像配信が無効のため互換表示を使用しています').length).toBeGreaterThan(0);
     expect(screen.queryByRole('button',{name:'Nativeを試す'})).toBeNull();expect(screen.queryByRole('button',{name:'DOMに切替'})).toBeNull();
     expect((screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement).disabled).toBe(true);
     expect((screen.getByRole('combobox',{name:'QA描画方式'}) as HTMLSelectElement).disabled).toBe(true);
@@ -870,7 +918,7 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(screen.queryByRole('button',{name:'5秒frame比較'})).toBeNull();
     expect(screen.queryByLabelText('実フィードframe比較結果')).toBeNull();
     expect(screen.getByText('表示設定')).toBeDefined();
-    expect(screen.getByRole('button',{name:'DOMに切替'}).closest('details')).not.toBeNull();
+    expect(screen.getByRole('button',{name:'DOMに切替'}).closest('[role=dialog]')).not.toBeNull();
     expect(listen.mock.calls.some(([type,,options])=>['pointerdown','pointerup','click'].includes(type) && typeof options==='object' && options?.passive)).toBe(false);
     rerender(<CanvasScene items={[incoming,original]} qaMeasurementToken={2}/>);flushFrame(100);flushFrame(350);
     expect(seen.at(-1)!.cards.length).toBe(2);

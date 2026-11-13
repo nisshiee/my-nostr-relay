@@ -1,4 +1,4 @@
-import { isCanvasImageProxyEnabled as enabled } from "../../lib/canvasImageDeployment";
+import { isCanvasImageProxyEnabled as enabled, canvasImageAccessStatus } from "../../lib/canvasImageDeployment";
 import { createHash } from "node:crypto";
 import { normalizeCanvasInlineImage } from "../../lib/canvasInlineImage";
 import { fetchInlineImage, fetchPublicImage, PublicImageDeadlineError, type PublicImageWidth } from "../../lib/publicImageFetch";
@@ -69,6 +69,9 @@ function store(s: State, key: string, bytes: Buffer): void {
 let reportedDisabled = false;
 
 export async function GET(request: Request): Promise<Response> {
+  // 認証は本文/cache/DNSより先。署名やcookieの値をログへ出さない。
+  const access = canvasImageAccessStatus(request);
+  if (access !== 200) return failure(access);
   // キャッシュ参照より先に判定し、無効時はDNS・外部通信を一切開始しない。
   if (!enabled()) {
     if (!reportedDisabled) console.warn("canvas-image: disabled", { flag: process.env.CANVAS_IMAGE_PROXY_ENABLED === "1", scope: process.env.CANVAS_IMAGE_PROXY_SCOPE === "protected-preview", platformPresent: Boolean(process.env.VERCEL_ENV || process.env.VERCEL_TARGET_ENV) });
@@ -85,10 +88,12 @@ export async function GET(request: Request): Promise<Response> {
   const width = Number(widthText);
   if (!url || url.length > 2048 || !WIDTHS.has(width) || String(width) !== widthText ||
       (params.has("q") && params.get("q") !== "75")) return failure(400);
-  return serve(JSON.stringify([url, width]), () => fetchPublicImage(url, width as PublicImageWidth));
+  return serve(request, JSON.stringify([url, width]), () => fetchPublicImage(url, width as PublicImageWidth));
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const access = canvasImageAccessStatus(request);
+  if (access !== 200) return failure(access);
   // 無効時は本文すら読み込まず、デコードも開始しない。
   if (!enabled()) return failure(503);
   const origin = request.headers.get("origin");
@@ -143,10 +148,12 @@ export async function POST(request: Request): Promise<Response> {
   if (data === null) return failure(400);
   const width = record.width as PublicImageWidth;
   const key = `inline:${width}:${createHash("sha256").update(data).digest("hex")}`;
-  return serve(key, () => fetchInlineImage(data, width));
+  return serve(request, key, () => fetchInlineImage(data, width));
 }
 
-async function serve(key: string, fetchImage: () => Promise<Buffer>): Promise<Response> {
+async function serve(request: Request, key: string, fetchImage: () => Promise<Buffer>): Promise<Response> {
+  const access = canvasImageAccessStatus(request);
+  if (access !== 200) return failure(access);
   const s = state();
   const now = Date.now();
   for (const [oldKey, entry] of s.cache) if (entry.expires <= now) remove(s, oldKey);
@@ -154,7 +161,8 @@ async function serve(key: string, fetchImage: () => Promise<Buffer>): Promise<Re
   if (cached) {
     s.cache.delete(key);
     s.cache.set(key, cached);
-    return image(cached.bytes);
+    const access = canvasImageAccessStatus(request);
+    return access === 200 ? image(cached.bytes) : failure(access);
   }
   let job = s.inflight.get(key);
   if (!job) {
@@ -184,7 +192,8 @@ async function serve(key: string, fetchImage: () => Promise<Buffer>): Promise<Re
   try {
     const bytes = await job;
     // 処理中に無効化された場合も画像を返さない。
-    return enabled() ? image(bytes) : failure(503);
+    const access = canvasImageAccessStatus(request);
+    return access === 200 ? image(bytes) : failure(access);
   } catch (error) {
     // URL・上流messageは出さず、自前の固定reasonだけを診断に残す。
     const message = error instanceof Error ? error.message : "";

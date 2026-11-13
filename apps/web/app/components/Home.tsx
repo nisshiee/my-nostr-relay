@@ -5,9 +5,11 @@ import { useAuth } from "../contexts/AuthContext";
 import { useNostrRelay } from "../hooks/useNostrRelay";
 import { useThreadCards } from "../hooks/useThreadCards";
 import { useRecentEmojis } from "../hooks/useRecentEmojis";
+import { useCanvasImageSession, type CanvasImageAccessMode } from "../hooks/useCanvasImageSession";
+import { ImageProxyAccess } from "./ImageProxyAccess";
 import { LiveCanvasV2 } from "./LiveCanvasV2";
 
-export function Home({ diagnosticsEnabled = false, nativeImagesEnabled = false }: { diagnosticsEnabled?: boolean; nativeImagesEnabled?: boolean }) {
+export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" }: { diagnosticsEnabled?: boolean; imageAccessMode?: CanvasImageAccessMode }) {
   const {
     pubkey,
     npub,
@@ -23,6 +25,8 @@ export function Home({ diagnosticsEnabled = false, nativeImagesEnabled = false }
     manageRemoteSigner,
     logout,
   } = useAuth();
+  const imageAccess = useCanvasImageSession({ pubkey, mode: imageAccessMode });
+  const handleLogout = () => { if (imageAccessMode === "owner") void imageAccess.revoke(); logout(); };
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
   const {
@@ -56,14 +60,16 @@ export function Home({ diagnosticsEnabled = false, nativeImagesEnabled = false }
     [sendReaction, addEmoji],
   );
 
-  // 認証済み → LiveCanvas を全画面表示
+  // 認証済み → V2キャンバスを全画面表示
   if (pubkey) {
     return (
       <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
+      {imageAccessMode === "owner" && <ImageProxyAccess access={imageAccess} />}
       <div className="min-h-0 flex-1 [&>div]:h-full">
       <LiveCanvasV2
         diagnosticsEnabled={diagnosticsEnabled}
-        nativeImagesEnabled={nativeImagesEnabled}
+        nativeImagesEnabled={imageAccess.nativeImagesEnabled}
+        imageAccessReason={imageAccessMode === "owner" ? imageAccess.reason : undefined}
         notes={filteredNotes}
         threadCards={threadCards}
         profiles={profiles}
@@ -76,7 +82,7 @@ export function Home({ diagnosticsEnabled = false, nativeImagesEnabled = false }
         sendReaction={handleSendReaction}
         sendRepost={sendRepost}
         cache={cache}
-        onLogout={logout}
+        onLogout={handleLogout}
         showSignerControl={loginMethod === "remote"}
         onManageSigner={manageRemoteSigner}
         isProcessing={isProcessing}

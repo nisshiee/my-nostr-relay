@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
 
@@ -13,10 +13,11 @@ import { createRadialRipple, freezeRippleSources, freezeRippleTargets, RIPPLE_EF
 import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, DOMINO_PERSPECTIVE_MAX_OUTSET, type DominoTransform } from "./dominoEffect";
 import { createWebGLSceneRenderer, classifyWebGLSceneError } from "./webglSceneRenderer";
 import { summarizeFrames, type GeometryCanvas, type HtmlTextureGL } from "./webglDomino";
+import { SceneSettingsDialog } from "./SceneSettingsDialog";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
-interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean }
+interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string }
 const EMPTY = new Set<string>();
 // 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
 const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
@@ -51,9 +52,12 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています' }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const viewport = useRef<HTMLDivElement>(null);
   const canvas = useRef<DrawableCanvas>(null);
   const gpuCanvas = useRef<GeometryCanvas>(null);
@@ -570,26 +574,28 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="V2 canvas">
     <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-      <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>{allowNative ? status : '画像配信が無効のため互換表示を使用しています'}</span>
+      <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>{allowNative ? status : nativeUnavailableReason}</span>
       <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
-      <label className="flex items-center gap-1">エフェクト
-        <select aria-label="新着エフェクト" disabled={!allowNative || domMode} aria-describedby={domMode ? "scene-effect-unavailable" : undefined} value={effectChoice} onChange={event => setEffectPreference(event.target.value as SceneEffectChoice)} className="rounded border bg-transparent px-2 py-1">
+      <button ref={settingsTrigger} type="button" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} className="rounded border px-2 py-1">設定</button>
+      <span>縦スクロールで移動</span>
+    </div>
+    {settingsOpen && <SceneSettingsDialog onClose={closeSettings} trigger={settingsTrigger}>
+      <label className="mb-3 flex items-center justify-between gap-3">新着エフェクト
+        <select aria-label="新着エフェクト" disabled={!allowNative || domMode} aria-describedby={!allowNative || domMode ? "scene-effect-unavailable" : undefined} value={effectChoice} onChange={event => setEffectPreference(event.target.value as SceneEffectChoice)} className="rounded border bg-transparent px-2 py-1">
           <option value="off">OFF</option><option value="sparkle">キラキラ</option><option value="domino">ドミノ（試作）</option><option value="ripple">波紋（試作）</option>
         </select>
       </label>
-      {domMode && <span id="scene-effect-unavailable">エフェクトはHTML-in-Canvas対応表示で利用できます。選択は保存されています。</span>}
-      <span>縦スクロールで移動 · エフェクトはnative専用（DOMでは停止）</span>
-    </div>
-    <details className="border-b px-4 py-1 text-xs">
-      <summary>表示設定</summary>
-      {allowNative && <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-2 py-1">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>}
-      {diagnosticsEnabled && <>
-      <label>比較方式 <select aria-label="QA描画方式" disabled={!allowNative} value={renderer} onChange={event => setRenderer(event.target.value as 'webgl' | 'css')}><option value="webgl">WebGL texture</option><option value="css">Canvas2D + CSS 比較</option></select></label>
-      <button type="button" disabled={!allowNative} onClick={() => runtime.current?.measure()}>5秒frame比較</button>
-      <output aria-label="実フィードframe比較結果">{metrics}</output>
-      <p>rAF間隔と固定33.4ms超過数です。CPU/GPU時間ではなく、自然な新着条件も同一ではありません。</p>
-      </>}
-    </details>
+      {(!allowNative || domMode) && <p id="scene-effect-unavailable" className="mb-4 text-xs text-zinc-500">{!allowNative ? nativeUnavailableReason : 'エフェクトはHTML-in-Canvas対応表示で利用できます。選択は保存されています。'}</p>}
+      <p className="mb-3 text-xs text-zinc-500">エフェクトはHTML-in-Canvas表示でのみ利用できます。</p>
+      {allowNative && <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-3 py-2">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>}
+      {diagnosticsEnabled && <details className="mt-5 border-t pt-3 text-xs">
+        <summary>描画比較（開発用）</summary>
+        <label>比較方式 <select aria-label="QA描画方式" disabled={!allowNative} value={renderer} onChange={event => setRenderer(event.target.value as 'webgl' | 'css')}><option value="webgl">WebGL texture</option><option value="css">Canvas2D + CSS 比較</option></select></label>
+        <button type="button" disabled={!allowNative} onClick={() => runtime.current?.measure()}>5秒frame比較</button>
+        <output aria-label="実フィードframe比較結果">{metrics}</output>
+        <p>rAF間隔と固定33.4ms超過数です。CPU/GPU時間ではなく、自然な新着条件も同一ではありません。</p>
+      </details>}
+    </SceneSettingsDialog>}
     <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
       <div ref={extent} className="relative w-full" style={{ overflowAnchor: 'none' }}>
         <div ref={layer} className="sticky top-0 w-full overflow-clip">

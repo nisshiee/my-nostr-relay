@@ -19,7 +19,7 @@ describe('標準Homeの描画方式', () => {
     expect(renderer.props.mock.calls[0][0]).toMatchObject({ diagnosticsEnabled: false, nativeImagesEnabled: false });
   });
   it('serverで判定したboolのみV2へ渡す', () => {
-    render(<Home diagnosticsEnabled nativeImagesEnabled />);
+    render(<Home diagnosticsEnabled imageAccessMode="preview" />);
     expect(renderer.props.mock.calls[0][0]).toMatchObject({ diagnosticsEnabled: true, nativeImagesEnabled: true });
   });
   it('未認証は既存ログイン操作を残しV1/V2選択は表示しない', () => {

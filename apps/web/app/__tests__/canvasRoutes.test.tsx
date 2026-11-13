@@ -27,15 +27,15 @@ describe('標準画面と診断route', () => {
     const page = Page();
     expect(React.isValidElement(page)).toBe(true);
     expect(page.type).toBe(Home);
-    expect(page.props).toEqual({ diagnosticsEnabled: false, nativeImagesEnabled: false });
+    expect(page.props).toEqual({ diagnosticsEnabled: false, imageAccessMode: 'disabled' });
     expect(() => V2Page()).toThrow('redirect:/');
   });
   it('画像gateはserverで判定し本番はDOM、保護Previewだけnative可否を渡す', () => {
     vi.stubEnv('CANVAS_IMAGE_PROXY_ENABLED', '1');
     vi.stubEnv('CANVAS_IMAGE_PROXY_SCOPE', 'protected-preview');
-    environment('production');expect(Page().props.nativeImagesEnabled).toBe(false);
-    environment('preview');expect(Page().props.nativeImagesEnabled).toBe(true);
-    vi.stubEnv('CANVAS_IMAGE_PROXY_ENABLED', '0');expect(Page().props.nativeImagesEnabled).toBe(false);
+    environment('production');expect(Page().props.imageAccessMode).toBe('disabled');
+    environment('preview');expect(Page().props.imageAccessMode).toBe('preview');
+    vi.stubEnv('CANVAS_IMAGE_PROXY_ENABLED', '0');expect(Page().props.imageAccessMode).toBe('disabled');
   });
   it('明示された保護Previewだけに診断boolとラボを渡す', () => {
     environment('preview');

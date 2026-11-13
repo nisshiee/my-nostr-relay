@@ -11,6 +11,18 @@ beforeEach(() => {
 });
 afterEach(() => { loader.dispose(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe('canvas image queue', () => {
+  it.each([401,403])('認証拒否%sは再試行せずdisabledにする', async status => {
+    const fetcher=vi.fn(async()=>new Response('',{status}));vi.stubGlobal('fetch',fetcher);
+    const listener=vi.fn();loader.subscribe(source(),listener);await vi.runAllTimersAsync();
+    expect(fetcher).toHaveBeenCalledTimes(1);expect(listener).toHaveBeenLastCalledWith({status:'disabled'});
+  });
+  it('認証破棄後は旧Blobと通信応答を再利用せず、旧unsubscribeでも復活しない', async () => {
+    const fetcher=vi.fn(async()=>image());vi.stubGlobal('fetch',fetcher);
+    const unsub=loader.subscribe(source(),vi.fn());await vi.runAllTimersAsync();
+    loader.invalidateAuthorization();unsub();
+    loader.subscribe(source(),vi.fn());await vi.runAllTimersAsync();
+    expect(fetcher).toHaveBeenCalledTimes(2);expect(URL.revokeObjectURL).toHaveBeenCalled();
+  });
   it('20-image bursts never exceed two active fetches', async () => {
     let active = 0; let maximum = 0; let ready = 0;
     const fetcher = vi.fn(async () => {
