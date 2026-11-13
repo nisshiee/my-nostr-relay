@@ -6,6 +6,8 @@ import { useNostrRelay } from "../hooks/useNostrRelay";
 import { useThreadCards } from "../hooks/useThreadCards";
 import { useRecentEmojis } from "../hooks/useRecentEmojis";
 import { useCanvasImageSession, type CanvasImageAccessMode } from "../hooks/useCanvasImageSession";
+import { useNativeCanvasCapability } from "./v2/nativeCanvasCapability";
+import { useManualDOMPreference } from "./v2/manualDOMPreference";
 import { ImageProxyAccess } from "./ImageProxyAccess";
 import { LiveCanvasV2 } from "./LiveCanvasV2";
 
@@ -25,7 +27,10 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" 
     manageRemoteSigner,
     logout,
   } = useAuth();
-  const imageAccess = useCanvasImageSession({ pubkey, mode: imageAccessMode });
+  const manualDOM = useManualDOMPreference();
+  const nativeCapable = useNativeCanvasCapability();
+  const imageAccess = useCanvasImageSession({ pubkey, mode: imageAccessMode, nativeCapable, manualDOM });
+  const imageReason = !nativeCapable ? "このブラウザはHTML-in-Canvasに対応していないため互換表示を使用しています" : manualDOM ? "互換表示を選択中です。画像の本人確認は行いません。" : imageAccess.reason;
   const handleLogout = () => { if (imageAccessMode === "owner") void imageAccess.revoke(); logout(); };
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
@@ -64,12 +69,12 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" 
   if (pubkey) {
     return (
       <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
-      {imageAccessMode === "owner" && <ImageProxyAccess access={imageAccess} />}
       <div className="min-h-0 flex-1 [&>div]:h-full">
       <LiveCanvasV2
         diagnosticsEnabled={diagnosticsEnabled}
-        nativeImagesEnabled={imageAccess.nativeImagesEnabled}
-        imageAccessReason={imageAccessMode === "owner" ? imageAccess.reason : undefined}
+        nativeImagesEnabled={nativeCapable && !manualDOM && imageAccess.nativeImagesEnabled}
+        imageAccessReason={!nativeCapable || manualDOM || imageAccessMode === "owner" ? imageReason : undefined}
+        settingsContent={imageAccessMode === "owner" ? <ImageProxyAccess access={imageAccess} nativeCapable={nativeCapable} manualDOM={manualDOM} /> : undefined}
         notes={filteredNotes}
         threadCards={threadCards}
         profiles={profiles}
@@ -110,6 +115,8 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" 
         <h1 className="mb-6 text-center text-2xl font-bold text-zinc-900 dark:text-zinc-100">
           Nostr Live Canvas
         </h1>
+
+        {imageAccessMode === "owner" && !manualDOM && <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">対応ブラウザではログイン後、画像配信の本人確認署名を署名器へ依頼します。リレーへの投稿は行いません。</p>}
 
         {/* 自動ログインまたは署名器接続中 */}
         {(autoLoading || remoteLoading || extensionLoading) && (

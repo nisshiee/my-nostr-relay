@@ -9,7 +9,7 @@ const key='a'.repeat(64);
 vi.mock('../../lib/nostrSigner',()=>({signEventWithActiveSigner:vi.fn()}));
 const fetchMock=vi.fn<typeof fetch>();
 function App({mode,pubkey=key}:{mode:CanvasImageAccessMode;pubkey?:string}) {
- const access=useCanvasImageSession({pubkey,mode});
+ const access=useCanvasImageSession({pubkey,mode,nativeCapable:true});
  return <CanvasImageProvider enabled={access.nativeImagesEnabled}><MediaImage src="https://images.example/image.png" imageSize={64} alt="実loader画像" width={32} height={32}/></CanvasImageProvider>;
 }
 beforeEach(()=>{
@@ -27,7 +27,7 @@ describe('session親と実loader子のeffect順序',()=>{
   expect(fetchMock.mock.calls.every(([url])=>String(url).startsWith('/api/canvas-image?'))).toBe(true);
  });
  it('owner status成功で新しくmountされた画像subscriptionを破棄しない',async()=>{
-  fetchMock.mockImplementation(async url=>String(url)==='/api/canvas-image/auth'
+  fetchMock.mockImplementation(async url=>String(url).startsWith('/api/canvas-image/auth')
    ? ({ok:true,status:200,json:async()=>({available:true,authenticated:true,pubkey:key,expiresAt:Date.now()+60000})}) as Response
    : ({ok:true,status:200,blob:async()=>new Blob(['pixels'],{type:'image/webp'})}) as Response);
   render(<App mode="owner"/>);

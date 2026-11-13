@@ -876,9 +876,22 @@ describe('CanvasScene WebGL feed接続', () => {
     const dialog=screen.getByRole('dialog',{name:'表示設定'}),select=screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement;
     expect(select.disabled).toBe(true);expect(select.value).toBe('ripple');expect(dialog.textContent).toContain('画像表示にはログインが必要です');
     expect(screen.queryByRole('button',{name:'Nativeを試す'})).toBeNull();expect(screen.queryByRole('combobox',{name:'QA描画方式'})).toBeNull();
-    const close=screen.getByRole('button',{name:'設定を閉じる'});fireEvent.keyDown(close,{key:'Tab'});expect(document.activeElement).toBe(close);
-    fireEvent.keyDown(close,{key:'Tab',shiftKey:true});expect(document.activeElement).toBe(close);
+    const close=screen.getByRole('button',{name:'設定を閉じる'}),toggle=screen.getByRole('button',{name:'DOMに切替'});
+    fireEvent.keyDown(close,{key:'Tab',shiftKey:true});expect(document.activeElement).toBe(toggle);
+    fireEvent.keyDown(toggle,{key:'Tab'});expect(document.activeElement).toBe(close);
     fireEvent.click(close);expect(localStorage.getItem('nlc-v2-effect')).toBe('ripple');
+  });
+
+  it('本人確認前でも互換表示を保存できsettingsContentはmodal内だけに表示する', () => {
+    gpuBackend();vi.mocked(HTMLCanvasElement.prototype.getContext).mockClear();
+    actualRender(<CanvasScene allowNative={false} items={[original]} settingsContent={<button>本人確認fixture</button>}/>);flushFrame(0);
+    expect(screen.queryByRole('button',{name:'本人確認fixture'})).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'設定'}));
+    expect(screen.getByRole('button',{name:'本人確認fixture'}).closest('[role=dialog]')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(30);
+    expect(localStorage.getItem('nlc-v2-manual-dom')).toBe('true');expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'Nativeを試す'}));flushFrame(60);
+    expect(localStorage.getItem('nlc-v2-manual-dom')).toBe('false');expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();
   });
 
   it('allowNative=falseはAPI対応環境でもcontext取得とnative再試行を禁止する', () => {
@@ -887,7 +900,7 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();expect(backendMock.create).not.toHaveBeenCalled();
     expect(host().dataset.sceneRenderer).toBe('dom');expect(host().dataset.sceneFallbackStage).toBe('image-gate');
     expect(screen.getAllByText('画像配信が無効のため互換表示を使用しています').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button',{name:'Nativeを試す'})).toBeNull();expect(screen.queryByRole('button',{name:'DOMに切替'})).toBeNull();
+    expect(screen.getByRole('button',{name:'DOMに切替'})).toBeDefined();
     expect((screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement).disabled).toBe(true);
     expect((screen.getByRole('combobox',{name:'QA描画方式'}) as HTMLSelectElement).disabled).toBe(true);
     fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(20);

@@ -47,6 +47,23 @@ describe('本人限定画像署名認証', () => {
   vi.spyOn(Date,'now').mockReturnValue(now+1799_000);expect(authorizeImageRequest(request)).toBe(true);
   vi.spyOn(Date,'now').mockReturnValue(now+1800_000);expect(authorizeImageRequest(request)).toBe(false);
  });
+ it('pubkey照会はeligibleだけ返し、sessionやchallengeを発行しない',async()=>{
+  const r=await GET(req('GET',undefined,{},`${url}?pubkey=${owner}`));
+  expect(await r.json()).toEqual({available:true,authenticated:false,eligible:true});expect(r.headers.get('set-cookie')).toBeNull();
+  expect(await (await GET(req('GET',undefined,{},`${url}?pubkey=${getPublicKey(other)}`))).json()).toEqual({available:true,authenticated:false,eligible:false});
+  expect(authorizeImageRequest(req('GET',undefined,{},`${url}?pubkey=${owner}`))).toBe(false);
+  vi.stubEnv('CANVAS_IMAGE_PROXY_ENABLED','0');
+  expect(await (await GET(req('GET',undefined,{},`${url}?pubkey=${owner}`))).json()).toEqual({available:false,authenticated:false,eligible:false});
+ });
+ it('eligible照会でも既存sessionの所有者を置換せずoriginを検査する',async()=>{
+  const s=await session();
+  expect(await (await GET(req('GET',undefined,{Cookie:s.cookie},`${url}?pubkey=${getPublicKey(other)}`))).json()).toEqual({available:true,authenticated:true,eligible:false,pubkey:owner,expiresAt:now+1800_000});
+  expect((await GET(req('GET',undefined,{Origin:'https://evil.example'},`${url}?pubkey=${owner}`))).status).toBe(403);
+  expect((await GET(req('GET',undefined,{},`https://evil.example/api/canvas-image/auth?pubkey=${owner}`))).status).toBe(403);
+ });
+ it.each(['?pubkey=','?pubkey=invalid','?pubkey='+ 'A'.repeat(64),'?pubkey='+ 'a'.repeat(64)+'&pubkey='+ 'a'.repeat(64),'?unknown=x','?pubkey='+ 'a'.repeat(64)+'&x=1','?%70ubkey='+ 'a'.repeat(64)])('status不正queryを拒否%s',async query=>{
+  expect((await GET(req('GET',undefined,{},url+query))).status).toBe(400);
+ });
  it.each(['CANVAS_IMAGE_PROXY_ENABLED','CANVAS_IMAGE_PROXY_SCOPE','CANVAS_IMAGE_OWNER_PUBKEYS','CANVAS_IMAGE_AUTH_ORIGIN','CANVAS_IMAGE_AUTH_SECRET'])('設定不足%sは拒否し本文を読まない',async name=>{
   vi.stubEnv(name,undefined);const request=req('POST','{}');const reader=vi.spyOn(request.body!,'getReader');
   expect(getImageAuthConfig()).toBeNull();expect((await POST(request)).status).toBe(503);expect(reader).not.toHaveBeenCalled();

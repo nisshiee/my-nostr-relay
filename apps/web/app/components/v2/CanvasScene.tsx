@@ -13,11 +13,12 @@ import { createRadialRipple, freezeRippleSources, freezeRippleTargets, RIPPLE_EF
 import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, DOMINO_PERSPECTIVE_MAX_OUTSET, type DominoTransform } from "./dominoEffect";
 import { createWebGLSceneRenderer, classifyWebGLSceneError } from "./webglSceneRenderer";
 import { summarizeFrames, type GeometryCanvas, type HtmlTextureGL } from "./webglDomino";
+import { useManualDOMPreference, setManualDOMPreference } from "./manualDOMPreference";
 import { SceneSettingsDialog } from "./SceneSettingsDialog";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
-interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string }
+interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode }
 const EMPTY = new Set<string>();
 // 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
 const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
@@ -52,7 +53,7 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています' }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -75,7 +76,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
   const runtime = useRef<{ refresh: () => void; attach: (node: HTMLDivElement) => void; reset: () => void; chooseEffect: () => void; measure: () => void; camera: Camera } | null>(null);
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
-  const [forcedDOM, setForcedDOM] = useState(false);
+  const forcedDOM = useManualDOMPreference();
   const [qaRenderer, setRenderer] = useState<'webgl' | 'css'>('webgl');
   const renderer = diagnosticsEnabled ? qaRenderer : 'webgl';
   const [domMode, setDomMode] = useState(true);
@@ -587,7 +588,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       </label>
       {(!allowNative || domMode) && <p id="scene-effect-unavailable" className="mb-4 text-xs text-zinc-500">{!allowNative ? nativeUnavailableReason : 'エフェクトはHTML-in-Canvas対応表示で利用できます。選択は保存されています。'}</p>}
       <p className="mb-3 text-xs text-zinc-500">エフェクトはHTML-in-Canvas表示でのみ利用できます。</p>
-      {allowNative && <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-3 py-2">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>}
+      {<button type="button" onClick={() => setManualDOMPreference(!forcedDOM)} className="rounded border px-3 py-2">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>}
+      {settingsContent}
       {diagnosticsEnabled && <details className="mt-5 border-t pt-3 text-xs">
         <summary>描画比較（開発用）</summary>
         <label>比較方式 <select aria-label="QA描画方式" disabled={!allowNative} value={renderer} onChange={event => setRenderer(event.target.value as 'webgl' | 'css')}><option value="webgl">WebGL texture</option><option value="css">Canvas2D + CSS 比較</option></select></label>

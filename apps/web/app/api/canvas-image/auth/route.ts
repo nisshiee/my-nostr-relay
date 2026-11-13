@@ -13,11 +13,17 @@ function response(body: unknown, status = 200, cookies: string[] = []) {
 }
 const error = (status: number) => response({ error: 'Image authorization unavailable' }, status);
 export async function GET(request: Request) {
+  const target = new URL(request.url);
+  // 照会は署名案内の要否だけに使用し、認証・所有者一覧の代替にしない。
+  const query = target.search;
+  const requestedPubkey = query ? /^\?pubkey=([0-9a-f]{64})$/.exec(query)?.[1] : undefined;
+  if (query && !requestedPubkey) return error(400);
   const config = getImageAuthConfig();
-  if (!config) return response({ available: false, authenticated: false });
-  if (request.url !== `${config.origin}${IMAGE_AUTH_PATH}` || !isImageAuthOrigin(request, config)) return error(403);
+  const eligibility = requestedPubkey ? { eligible: !!config?.owners.includes(requestedPubkey) } : {};
+  if (!config) return response({ available: false, authenticated: false, ...eligibility });
+  if (`${target.origin}${target.pathname}` !== `${config.origin}${IMAGE_AUTH_PATH}` || target.hash || !isImageAuthOrigin(request, config)) return error(403);
   const session = getImageSession(request);
-  return response({ available: true, authenticated: !!session, ...(session ? { expiresAt: session.expiresAt, pubkey: session.pubkey } : {}) });
+  return response({ available: true, authenticated: !!session, ...eligibility, ...(session ? { expiresAt: session.expiresAt, pubkey: session.pubkey } : {}) });
 }
 export async function POST(request: Request) {
   const config = getImageAuthConfig();
