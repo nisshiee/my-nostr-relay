@@ -144,7 +144,7 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" 
                 </button>
               </>
             )}
-            {extensionLoading && (
+            {(autoLoading || extensionLoading) && (
               <button
                 type="button"
                 onClick={cancelLogin}

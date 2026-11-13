@@ -11,6 +11,7 @@ import {
 } from "react";
 import { nip19 } from "nostr-tools";
 import {
+  AUTO_LOGIN_TIMEOUT_MS,
   LoginCancelledError,
   LoginCoordinator,
   closeRemoteSignerWidget,
@@ -123,7 +124,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       signal: AbortSignal,
       expectedPubkey?: string,
     ) => {
-      const nextPubkey = await requestPublicKey(provider, { signal });
+      const nextPubkey = await requestPublicKey(provider, {
+        signal,
+        timeoutMs: expectedPubkey ? AUTO_LOGIN_TIMEOUT_MS : undefined,
+      });
+      if (signal.aborted) throw new LoginCancelledError();
       if (!isValidPubkey(nextPubkey)) {
         throw new Error("署名器から不正な公開鍵が返されました");
       }
@@ -254,6 +259,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const cancelLogin = useCallback(() => {
     coordinatorRef.current.cancel();
     closeRemoteSignerWidget();
+    setAutoLoading(false);
     setRemoteLoading(false);
     setExtensionLoading(false);
     setLoginError(null);
