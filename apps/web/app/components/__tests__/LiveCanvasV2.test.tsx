@@ -7,16 +7,17 @@ import { LiveCanvasV2 } from "../LiveCanvasV2";
 import type { NoteCard as Note } from "../../lib/types";
 
 vi.mock("../v2/CanvasScene", () => ({
-  CanvasScene: ({ items, heldIds, allowNative }: {
+  CanvasScene: ({ items, heldIds, allowNative, settingsOpen, settingsContent, onSettingsClose }: {
+    settingsOpen?: boolean; settingsContent?: ReactNode; onSettingsClose?: () => void;
     allowNative: boolean;
     items: { id: string; content: ReactNode }[];
     heldIds: ReadonlySet<string>;
-  }) => <div data-testid="scene" data-allow-native={String(allowNative)}>{items.map(item => (
+  }) => <div data-testid="scene" data-allow-native={String(allowNative)}>{settingsOpen && <div role="dialog">{settingsContent}<button onClick={onSettingsClose}>閉じる</button></div>}{items.map(item => (
     <section key={item.id} data-slot={item.id} data-held={heldIds.has(item.id)}>{item.content}</section>
   ))}</div>,
 }));
 vi.mock("../CanvasHeader", () => ({
-  CanvasHeader: ({ onAddDraft }: { onAddDraft: () => void }) => <button onClick={() => onAddDraft()}>新規投稿</button>,
+  CanvasHeader: ({ onAddDraft, onOpenSettings }: { onAddDraft: () => void; onOpenSettings?: () => void }) => <><button onClick={() => onAddDraft()}>新規投稿</button><button onClick={onOpenSettings}>設定</button></>,
 }));
 vi.mock("../ComposeCard", () => ({
   ComposeCard: ({ slotId, onPublish, onHold }: ComponentProps<typeof import("../ComposeCard").ComposeCard>) => (
@@ -62,6 +63,11 @@ function makeProps(): ComponentProps<typeof LiveCanvasV2> {
 }
 
 describe("LiveCanvasV2 のカード統合", () => {
+  it.each([false,true])("空/処理中でもヘッダーから設定を開閉できる processing=%s", isProcessing => {
+    render(<LiveCanvasV2 {...makeProps()} isProcessing={isProcessing} settingsContent={<span>本人確認fixture</span>} />);
+    fireEvent.click(screen.getByRole('button',{name:'設定'}));expect(screen.getByRole('dialog').textContent).toContain('本人確認fixture');
+    fireEvent.click(screen.getByRole('button',{name:'閉じる'}));expect(screen.queryByRole('dialog')).toBeNull();
+  });
   it("画像gateとnative描画可否を同じ値で連動させる", () => {
     const props = {...makeProps(), notes: [makeNote()]};
     const {rerender} = render(<LiveCanvasV2 {...props} />);

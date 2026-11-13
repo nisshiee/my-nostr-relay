@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { CanvasImageProvider } from "./CanvasAwareImage";
 import { CanvasScene } from "./v2/CanvasScene";
 import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
@@ -63,6 +63,9 @@ interface LiveCanvasProps {
 }
 
 export function LiveCanvasV2({ diagnosticsEnabled = false, nativeImagesEnabled = false, imageAccessReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
   const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
   const [hashtagModalTag, setHashtagModalTag] = useState<string | null>(null);
@@ -370,6 +373,9 @@ export function LiveCanvasV2({ diagnosticsEnabled = false, nativeImagesEnabled =
   return (
     <div className="flex h-dvh min-h-0 flex-col bg-gray-50 dark:bg-gray-950">
       {!isFullscreen && <CanvasHeader
+        onOpenSettings={() => setSettingsOpen(true)}
+        settingsOpen={settingsOpen}
+        settingsTrigger={settingsTrigger}
         status={status}
         npub={npub}
         onAddDraft={addDraft}
@@ -383,10 +389,10 @@ export function LiveCanvasV2({ diagnosticsEnabled = false, nativeImagesEnabled =
         className="fixed right-3 top-3 z-50 rounded-full bg-black/70 px-3 py-1 text-xs text-white"
       >f で戻す</button>}
       <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="V2 Live Canvas">
-        <EmptyState status={status} hasNotes={items.length > 0} isProcessing={isProcessing} />
-        {items.length > 0 && !isProcessing && <CanvasImageProvider enabled={nativeImagesEnabled}><CanvasScene items={items} heldIds={holdSet} diagnosticsEnabled={diagnosticsEnabled} allowNative={nativeImagesEnabled} nativeUnavailableReason={imageAccessReason} settingsContent={settingsContent} /></CanvasImageProvider>}
+        {(items.length === 0 || isProcessing) && <div className="pointer-events-none absolute inset-0 z-10"><EmptyState status={status} hasNotes={items.length > 0} isProcessing={isProcessing} /></div>}
+        <CanvasImageProvider enabled={nativeImagesEnabled}><CanvasScene settingsOpen={settingsOpen} onSettingsClose={closeSettings} settingsTrigger={settingsTrigger} items={isProcessing ? [] : items} heldIds={holdSet} diagnosticsEnabled={diagnosticsEnabled} allowNative={nativeImagesEnabled} nativeUnavailableReason={imageAccessReason} settingsContent={settingsContent} /></CanvasImageProvider>
         {status === "connected" && items.length === 0 && !isProcessing && (
-          <p className="py-16 text-center text-sm text-gray-500 dark:text-gray-400">
+          <p className="pointer-events-none absolute inset-x-0 top-0 py-16 text-center text-sm text-gray-500 dark:text-gray-400">
             表示するノートはまだありません。投稿ボタンから新しいノートを書けます。
           </p>
         )}

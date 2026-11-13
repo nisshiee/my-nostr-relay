@@ -6,7 +6,9 @@ export const IMAGE_AUTH_PATH = '/api/canvas-image/auth';
 export const IMAGE_CHALLENGE_COOKIE = '__Host-nlc-image-challenge';
 export const IMAGE_SESSION_COOKIE = '__Host-nlc-image-session';
 export const IMAGE_CHALLENGE_SECONDS = 120;
-export const IMAGE_SESSION_SECONDS = 1800;
+export const IMAGE_SESSION_SECONDS = 604800;
+// 既発行の30分cookieは元の期限まで受理し、更新や延長はしない。
+const LEGACY_IMAGE_SESSION_SECONDS = 1800;
 export interface ImageAuthConfig { origin: string; owners: readonly string[]; secret: string; binding: string }
 export interface ImageSession { pubkey: string; expiresAt: number }
 type Claim = { purpose: 'challenge' | 'session'; binding: string; iat: number; exp: number; value: string };
@@ -65,7 +67,7 @@ function open(value: string | null, purpose: Claim['purpose'], config: ImageAuth
     const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as Claim;
     if (!data || Object.keys(data).sort().join(',') !== 'binding,exp,iat,purpose,value' || data.purpose !== purpose || data.binding !== config.binding ||
         !Number.isSafeInteger(data.iat) || !Number.isSafeInteger(data.exp) || data.iat > now || data.exp <= now ||
-        data.exp - data.iat !== (purpose === 'challenge' ? IMAGE_CHALLENGE_SECONDS : IMAGE_SESSION_SECONDS) || !hex.test(data.value)) return null;
+        !(purpose === 'challenge' ? [IMAGE_CHALLENGE_SECONDS] : [LEGACY_IMAGE_SESSION_SECONDS, IMAGE_SESSION_SECONDS]).includes(data.exp - data.iat) || !hex.test(data.value)) return null;
     return data;
   } catch { return null; }
 }

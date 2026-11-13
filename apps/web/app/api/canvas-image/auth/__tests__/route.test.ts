@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { finalizeEvent, generateSecretKey, getPublicKey, type EventTemplate } from 'nostr-tools/pure';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('server-only', () => ({}));
@@ -40,12 +40,36 @@ afterEach(() => { vi.restoreAllMocks();vi.unstubAllEnvs(); });
 describe('本人限定画像署名認証', () => {
  it('statusはchallengeを作らず、明示challenge→署名→固定期限sessionにする', async()=>{
   const initial=await GET(req('GET'));expect(await initial.json()).toEqual({available:true,authenticated:false});expect(initial.headers.get('set-cookie')).toBeNull();
-  const s=await session();expect(await s.response.json()).toEqual({authenticated:true,pubkey:owner,expiresAt:now+1800_000});
-  const set=s.response.headers.getSetCookie();expect(set[0]).toContain('Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=1800');expect(set[1]).toContain(`${IMAGE_CHALLENGE_COOKIE}=;`);expect(set[1]).toContain('Max-Age=0');
+  const s=await session();expect(await s.response.json()).toEqual({authenticated:true,pubkey:owner,expiresAt:now+604800_000});
+  const set=s.response.headers.getSetCookie();expect(set[0]).toContain('Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800');expect(set[1]).toContain(`${IMAGE_CHALLENGE_COOKIE}=;`);expect(set[1]).toContain('Max-Age=0');
   const request=req('GET',undefined,{Cookie:s.cookie},`${origin}/api/canvas-image?url=ignored`);
-  expect(authorizeImageRequest(request)).toBe(true);expect(getImageSession(request)?.expiresAt).toBe(now+1800_000);
-  vi.spyOn(Date,'now').mockReturnValue(now+1799_000);expect(authorizeImageRequest(request)).toBe(true);
+  expect(authorizeImageRequest(request)).toBe(true);expect(getImageSession(request)?.expiresAt).toBe(now+604800_000);
+  vi.spyOn(Date,'now').mockReturnValue(now+604799_000);expect(authorizeImageRequest(request)).toBe(true);
+  vi.spyOn(Date,'now').mockReturnValue(now+604800_000);expect(authorizeImageRequest(request)).toBe(false);
+ });
+ it('既発行30分sessionは元の期限まで受理し延長や再発行をしない',async()=>{
+  const config=getImageAuthConfig()!;
+  const payload=Buffer.from(JSON.stringify({purpose:'session',binding:config.binding,iat:now/1000,exp:now/1000+1800,value:owner})).toString('base64url');
+  const mac=createHmac('sha256',config.secret).update(`nlc-image-auth-v1.${payload}`).digest('base64url');
+  const request=req('GET',undefined,{Cookie:`${IMAGE_SESSION_COOKIE}=${payload}.${mac}`});
+  vi.spyOn(Date,'now').mockReturnValue(now+1799_000);
+  const response=await GET(request);
+  expect(await response.json()).toEqual({available:true,authenticated:true,pubkey:owner,expiresAt:now+1800_000});
+  expect(response.headers.get('set-cookie')).toBeNull();
   vi.spyOn(Date,'now').mockReturnValue(now+1800_000);expect(authorizeImageRequest(request)).toBe(false);
+ });
+ it.each([120,1799,1801,86400,604799,604801])('署名済みでも未知session寿命%s秒は拒否',seconds=>{
+  const config=getImageAuthConfig()!;
+  const payload=Buffer.from(JSON.stringify({purpose:'session',binding:config.binding,iat:now/1000,exp:now/1000+seconds,value:owner})).toString('base64url');
+  const mac=createHmac('sha256',config.secret).update(`nlc-image-auth-v1.${payload}`).digest('base64url');
+  expect(authorizeImageRequest(req('GET',undefined,{Cookie:`${IMAGE_SESSION_COOKIE}=${payload}.${mac}`}))).toBe(false);
+ });
+ it('session期限の改ざんは7日期限でも拒否',async()=>{
+  const s=await session(),value=s.cookie.slice(s.cookie.indexOf('=')+1),[encoded,mac]=value.split('.');
+  const claim=JSON.parse(Buffer.from(encoded,'base64url').toString());claim.iat+=1;claim.exp+=1;
+  const forged=Buffer.from(JSON.stringify(claim)).toString('base64url');
+  vi.spyOn(Date,'now').mockReturnValue(now+1000);
+  expect(authorizeImageRequest(req('GET',undefined,{Cookie:`${IMAGE_SESSION_COOKIE}=${forged}.${mac}`}))).toBe(false);
  });
  it('pubkey照会はeligibleだけ返し、sessionやchallengeを発行しない',async()=>{
   const r=await GET(req('GET',undefined,{},`${url}?pubkey=${owner}`));
@@ -57,7 +81,7 @@ describe('本人限定画像署名認証', () => {
  });
  it('eligible照会でも既存sessionの所有者を置換せずoriginを検査する',async()=>{
   const s=await session();
-  expect(await (await GET(req('GET',undefined,{Cookie:s.cookie},`${url}?pubkey=${getPublicKey(other)}`))).json()).toEqual({available:true,authenticated:true,eligible:false,pubkey:owner,expiresAt:now+1800_000});
+  expect(await (await GET(req('GET',undefined,{Cookie:s.cookie},`${url}?pubkey=${getPublicKey(other)}`))).json()).toEqual({available:true,authenticated:true,eligible:false,pubkey:owner,expiresAt:now+604800_000});
   expect((await GET(req('GET',undefined,{Origin:'https://evil.example'},`${url}?pubkey=${owner}`))).status).toBe(403);
   expect((await GET(req('GET',undefined,{},`https://evil.example/api/canvas-image/auth?pubkey=${owner}`))).status).toBe(403);
  });

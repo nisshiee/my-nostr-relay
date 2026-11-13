@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { detectCanvasMode, createSceneLayout, updateSceneLayout, type Camera, type CanvasMode, type DrawableCanvas, type DrawableContext, type SceneBox } from "./scene";
 
@@ -18,7 +18,7 @@ import { SceneSettingsDialog } from "./SceneSettingsDialog";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
-interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode }
+interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode; settingsOpen?: boolean; onSettingsClose?: () => void; settingsTrigger?: RefObject<HTMLButtonElement | null> }
 const EMPTY = new Set<string>();
 // 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
 const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
@@ -53,12 +53,14 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent, settingsOpen: controlledSettingsOpen, onSettingsClose, settingsTrigger: externalSettingsTrigger }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsTrigger = useRef<HTMLButtonElement>(null);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const [localSettingsOpen, setSettingsOpen] = useState(false);
+  const localSettingsTrigger = useRef<HTMLButtonElement>(null);
+  const settingsOpen = controlledSettingsOpen ?? localSettingsOpen;
+  const settingsTrigger = externalSettingsTrigger ?? localSettingsTrigger;
+  const closeSettings = useCallback(() => { setSettingsOpen(false); onSettingsClose?.(); }, [onSettingsClose]);
   const viewport = useRef<HTMLDivElement>(null);
   const canvas = useRef<DrawableCanvas>(null);
   const gpuCanvas = useRef<GeometryCanvas>(null);
@@ -574,12 +576,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
   useLayoutEffect(() => { if (diagnosticsEnabled && qaMeasurementToken > 0) runtime.current?.measure(); }, [qaMeasurementToken, diagnosticsEnabled]);
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="V2 canvas">
-    <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+    {diagnosticsEnabled && <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
       <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>{allowNative ? status : nativeUnavailableReason}</span>
       <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
-      <button ref={settingsTrigger} type="button" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} className="rounded border px-2 py-1">設定</button>
+      {controlledSettingsOpen === undefined && <button ref={localSettingsTrigger} type="button" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} className="rounded border px-2 py-1">設定</button>}
       <span>縦スクロールで移動</span>
-    </div>
+    </div>}
     {settingsOpen && <SceneSettingsDialog onClose={closeSettings} trigger={settingsTrigger}>
       <label className="mb-3 flex items-center justify-between gap-3">新着エフェクト
         <select aria-label="新着エフェクト" disabled={!allowNative || domMode} aria-describedby={!allowNative || domMode ? "scene-effect-unavailable" : undefined} value={effectChoice} onChange={event => setEffectPreference(event.target.value as SceneEffectChoice)} className="rounded border bg-transparent px-2 py-1">

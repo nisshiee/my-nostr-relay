@@ -46,7 +46,7 @@ describe('画像route本人cookieの先行検査',()=>{
   const body=new ReadableStream<Uint8Array>({start(value){controller=value;}});
   const request=new Request(`${origin}/api/canvas-image`,{method:'POST',body,duplex:'half',headers:{Origin:origin,'Content-Type':'application/json',Cookie:c}} as RequestInit);
   const pending=POST(request);
-  vi.spyOn(Date,'now').mockReturnValue(started+1800_000);
+  vi.spyOn(Date,'now').mockReturnValue(started+604800_000);
   controller.enqueue(new TextEncoder().encode(JSON.stringify({data:'data:image/png;base64,aGVsbG8=',width:64})));controller.close();
   expect((await pending).status).toBe(401);expect(fetchInlineImage).not.toHaveBeenCalled();
  });

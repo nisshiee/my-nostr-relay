@@ -6,12 +6,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { CanvasScene } from "../CanvasScene";
+import { CanvasHeader } from "../../CanvasHeader";
 import * as sceneModule from "../scene";
 import { buildInitialLayout, insertCard, reflow } from "../../../lib/layoutEngine";
 import type { Card } from "../../../lib/types";
 
 const backendMock = vi.hoisted(() => ({ create: vi.fn() }));
 vi.mock('../webglSceneRenderer', async importOriginal => ({ ...await importOriginal<typeof import('../webglSceneRenderer')>(), createWebGLSceneRenderer: backendMock.create }));
+function HeaderScene(props: React.ComponentProps<typeof CanvasScene>) {
+  const [open,setOpen]=useState(false);const trigger=useRef<HTMLButtonElement>(null);
+  const close=React.useCallback(()=>setOpen(false),[]);
+  return <><CanvasHeader status="connected" npub={null} onAddDraft={()=>{}} onLogout={()=>{}} showSignerControl={false} onManageSigner={()=>{}} onOpenSettings={()=>setOpen(true)} settingsOpen={open} settingsTrigger={trigger}/><CanvasScene {...props} settingsOpen={open} onSettingsClose={close} settingsTrigger={trigger}/></>;
+}
 // 既存描画回帰では設定を明示的に開いてQA操作を行う。modal自身の回帰はactualRenderを使う。
 function renderUI(ui: React.ReactElement, options?: Parameters<typeof actualRender>[1]) {
   const result = actualRender(ui, options);
@@ -844,8 +850,15 @@ describe('CanvasScene WebGL feed接続', () => {
   const original = {id:'a',content:<InteractiveCard/>};
   const incoming = {id:'new',content:<span>new</span>};
 
+  it('空feedも元ヘッダーから設定を開け診断時も設定triggerを重複させない', () => {
+    actualRender(<HeaderScene diagnosticsEnabled items={[]} allowNative={false} settingsContent={<p>本人確認</p>}/>);flushFrame(0);
+    expect(screen.getAllByRole('button',{name:'設定'})).toHaveLength(1);
+    expect(screen.getByRole('button',{name:'先頭に戻る'})).toBeDefined();
+    fireEvent.click(screen.getByRole('button',{name:'設定'}));
+    expect(screen.getByRole('dialog').textContent).toContain('本人確認');
+  });
   it('設定modalはbody portalに開きEscape・背景・閉じるでtriggerへfocusを戻す', () => {
-    gpuBackend();actualRender(<CanvasScene items={[original]}/>);flushFrame(0);
+    gpuBackend();actualRender(<HeaderScene items={[original]}/>);flushFrame(0);
     expect(screen.queryByRole('dialog')).toBeNull();expect(screen.queryByRole('combobox',{name:'新着エフェクト'})).toBeNull();
     const trigger=screen.getByRole('button',{name:'設定'});act(()=>trigger.focus());fireEvent.click(trigger);
     let dialog=screen.getByRole('dialog',{name:'表示設定'});expect(dialog.getAttribute('aria-modal')).toBe('true');
@@ -857,7 +870,7 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(screen.queryByRole('dialog')).toBeNull();expect(document.activeElement).toBe(trigger);
   });
   it('設定modalのTabは端で循環し閉じるまでカード入力をremountしない', () => {
-    gpuBackend();actualRender(<CanvasScene items={[original]}/>);flushFrame(0);
+    gpuBackend();actualRender(<HeaderScene items={[original]}/>);flushFrame(0);
     const input=screen.getByLabelText('下書き');fireEvent.change(input,{target:{value:'keep settings draft'}});
     fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));
     fireEvent.click(screen.getByRole('button',{name:'設定'}));
@@ -871,7 +884,7 @@ describe('CanvasScene WebGL feed接続', () => {
   });
   it('設定modalはDOMで保存選択と認証理由を表示し閉じるだけでもTab循環する', () => {
     localStorage.setItem('nlc-v2-effect','ripple');
-    actualRender(<CanvasScene allowNative={false} nativeUnavailableReason="画像表示にはログインが必要です" items={[original]}/>);flushFrame(0);
+    actualRender(<HeaderScene allowNative={false} nativeUnavailableReason="画像表示にはログインが必要です" items={[original]}/>);flushFrame(0);
     fireEvent.click(screen.getByRole('button',{name:'設定'}));
     const dialog=screen.getByRole('dialog',{name:'表示設定'}),select=screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement;
     expect(select.disabled).toBe(true);expect(select.value).toBe('ripple');expect(dialog.textContent).toContain('画像表示にはログインが必要です');
@@ -884,7 +897,7 @@ describe('CanvasScene WebGL feed接続', () => {
 
   it('本人確認前でも互換表示を保存できsettingsContentはmodal内だけに表示する', () => {
     gpuBackend();vi.mocked(HTMLCanvasElement.prototype.getContext).mockClear();
-    actualRender(<CanvasScene allowNative={false} items={[original]} settingsContent={<button>本人確認fixture</button>}/>);flushFrame(0);
+    actualRender(<HeaderScene allowNative={false} items={[original]} settingsContent={<button>本人確認fixture</button>}/>);flushFrame(0);
     expect(screen.queryByRole('button',{name:'本人確認fixture'})).toBeNull();
     fireEvent.click(screen.getByRole('button',{name:'設定'}));
     expect(screen.getByRole('button',{name:'本人確認fixture'}).closest('[role=dialog]')).not.toBeNull();
@@ -919,7 +932,7 @@ describe('CanvasScene WebGL feed接続', () => {
   });
   it('allowNative=falseのSSRも互換表示を説明しnative再試行を出さない', () => {
     const html=renderToString(<CanvasScene allowNative={false} items={[original]}/>);
-    expect(html).toContain('画像配信が無効のため互換表示を使用しています');
+    expect(html).not.toContain('画像配信が無効のため互換表示を使用しています');
     expect(html).not.toContain('Nativeを試す');expect(html).not.toContain('DOMに切替');
   });
 
@@ -930,8 +943,10 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(screen.queryByRole('combobox',{name:'QA描画方式'})).toBeNull();
     expect(screen.queryByRole('button',{name:'5秒frame比較'})).toBeNull();
     expect(screen.queryByLabelText('実フィードframe比較結果')).toBeNull();
-    expect(screen.getByText('表示設定')).toBeDefined();
-    expect(screen.getByRole('button',{name:'DOMに切替'}).closest('[role=dialog]')).not.toBeNull();
+    expect(screen.queryByText('表示設定')).toBeNull();
+    expect(screen.queryByRole('button',{name:'設定'})).toBeNull();
+    expect(screen.queryByRole('button',{name:'先頭に戻る'})).toBeNull();
+    expect(screen.queryByRole('status')).toBeNull();
     expect(listen.mock.calls.some(([type,,options])=>['pointerdown','pointerup','click'].includes(type) && typeof options==='object' && options?.passive)).toBe(false);
     rerender(<CanvasScene items={[incoming,original]} qaMeasurementToken={2}/>);flushFrame(100);flushFrame(350);
     expect(seen.at(-1)!.cards.length).toBe(2);
@@ -952,7 +967,7 @@ describe('CanvasScene WebGL feed接続', () => {
     expect((screen.getByLabelText('WebGLライブカード') as HTMLCanvasElement).hidden).toBe(false);
   });
   it('通常DOMではエフェクト選択を無効化して保存済み選択とカード操作を保つ', () => {
-    localStorage.setItem('nlc-v2-effect','ripple');renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    localStorage.setItem('nlc-v2-effect','ripple');renderUI(<HeaderScene items={[original]}/>);flushFrame(0);
     const select=screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement;
     expect(select.disabled).toBe(true);expect(select.value).toBe('ripple');
     expect(screen.getByText('エフェクトはHTML-in-Canvas対応表示で利用できます。選択は保存されています。')).toBeDefined();
