@@ -836,6 +836,29 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(applied()).toEqual(['second']);expect(host().dataset.sceneRippleCards).toBe('1');
   });
 
+  it('連続挿入の波は対象集合と時刻を個別に保ち、共有targetだけで重なる', () => {
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
+    const update=sceneModule.updateSceneLayout;
+    vi.spyOn(sceneModule,'updateSceneLayout').mockImplementation((...args)=>{
+      const result=update(...args), ids=new Set(args[1].map(item=>item.id));
+      if(ids.has('second'))return {...result,insertion:{revision:2,traces:[{sourceId:'second',edges:[{fromId:'second',toId:'b'},{fromId:'b',toId:'shared'}]}]}};
+      if(ids.has('new'))return {...result,insertion:{revision:1,traces:[{sourceId:'new',edges:[{fromId:'new',toId:'a'},{fromId:'a',toId:'shared'}]}]}};
+      return result;
+    });
+    const b={id:'b',content:<span>b</span>}, shared={id:'shared',content:<span>shared</span>}, second={id:'second',content:<span>second</span>};
+    const base=[original,b,shared];const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={base}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,...base]}/>);flushFrame(100);flushFrame(300);
+    rerender(<CanvasScene diagnosticsEnabled items={[second,incoming,...base]}/>);flushFrame(400);flushFrame(600);
+    const waves=(id:string)=>seen.at(-1)!.cards.find(card=>card.id===id)!.ripple?.sources.map(({id,ageMs})=>({id,ageMs}));
+    expect(waves('a')).toEqual([{id:'new',ageMs:500}]);expect(waves('b')).toEqual([{id:'second',ageMs:200}]);
+    expect(waves('shared')).toEqual([{id:'new',ageMs:500},{id:'second',ageMs:200}]);expect(waves('new')).toBeUndefined();expect(waves('second')).toBeUndefined();
+    rerender(<CanvasScene diagnosticsEnabled items={[second,incoming,...base]} heldIds={new Set(['shared'])}/>);flushFrame(700);expect(waves('shared')).toBeUndefined();
+    rerender(<CanvasScene diagnosticsEnabled items={[second,incoming,...base]}/>);flushFrame(800);expect(waves('shared')).toEqual([{id:'new',ageMs:700},{id:'second',ageMs:400}]);
+    flushFrame(1900);expect(waves('a')).toBeUndefined();expect(waves('shared')).toEqual([{id:'second',ageMs:1500}]);
+    fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});flushFrame(1950);
+    fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'ripple'}});flushFrame(2000);expect(waves('shared')).toBeUndefined();
+  });
+
   it('円形波紋の中心は新着目標で固定され移動・高さreflow・scrollに追従しない', async () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
     let refresh:(()=>void)|undefined;
@@ -844,18 +867,21 @@ describe('CanvasScene WebGL feed接続', () => {
     const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(300);
     const ripple=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!.ripple!;
-    const sources=ripple().sources;
+    const centers=()=>ripple().sources.map(({id,x,y})=>({id,x,y}));
+    const sources=centers();
     expect(sources).toHaveLength(1);expect(sources[0]).toMatchObject({id:'new',x:Number(card('new').dataset.sceneTargetX)+180,y:Number(card('new').dataset.sceneTargetY)+60});
     expect(seen.at(-1)!.cards.find(c=>c.id==='new')!.ripple).toBeUndefined();
     expect(host().dataset.sceneRippleCards).toBe('1');
     expect(JSON.parse(host().dataset.sceneRippleSources!)).toEqual(sources.map(({x,y})=>[x,y]));
     expect(Number(host().dataset.sceneRippleRadius)).toBe(200);
     await act(async()=>{await Promise.resolve();});flushFrame(350);expect(seen.at(-1)!.dirtyIds!.size).toBe(0);
-    height=240;act(()=>refresh?.());flushFrame(400);expect(ripple().sources).toEqual(sources);expect(ripple().ageMs).toBe(300);
-    host().scrollTop=90;fireEvent.scroll(host());flushFrame(450);expect(ripple().sources).toEqual(sources);expect(seen.at(-1)!.camera.y).toBe(-90);
-    rerender(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(500);expect(ripple().sources).toEqual(sources);
+    height=240;act(()=>refresh?.());flushFrame(400);expect(centers()).toEqual(sources);expect(ripple().sources[0].ageMs).toBe(300);
+    host().scrollTop=90;fireEvent.scroll(host());flushFrame(450);expect(centers()).toEqual(sources);expect(seen.at(-1)!.camera.y).toBe(-90);
+    rerender(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(500);expect(centers()).toEqual(sources);
     const next={id:'second',content:<span>second</span>};rerender(<CanvasScene diagnosticsEnabled items={[next,original]}/>);flushFrame(600);flushFrame(700);
-    expect(ripple().sources.map(s=>s.id)).toEqual(['second']);expect(ripple().ageMs).toBe(100);
+    expect(ripple().sources.map(s=>s.id)).toEqual(['new','second']);expect(ripple().sources.map(s=>s.ageMs)).toEqual([600,100]);
+    flushFrame(1900);expect(ripple().sources.map(s=>s.id)).toEqual(['second']);expect(ripple().sources[0].ageMs).toBe(1300);
+    flushFrame(2400);expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);expect(host().dataset.scenePushEffect).toBe('idle');
   });
 
   it('波紋はGLでだけ屈折しhold・focus・非focus押下を抑制する', () => {
@@ -863,7 +889,7 @@ describe('CanvasScene WebGL feed接続', () => {
     const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
     const latest=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!;
-    expect(latest().ripple!.amount).toBeGreaterThan(0);expect(latest().tip).toBeUndefined();
+    expect(latest().ripple!.sources[0].amount).toBeGreaterThan(0);expect(latest().tip).toBeUndefined();
     expect(card('a').querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
     expect(card('a').style.padding).toBe('');
     pointer(card('a'),'pointerdown');flushFrame(370);expect(latest().ripple).toBeUndefined();

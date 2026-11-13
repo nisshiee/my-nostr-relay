@@ -9,7 +9,7 @@ import { createSceneMotion, retargetSceneMotion, advanceSceneMotion, sceneMotion
 import type { Card } from "../../lib/types";
 import { createPushPaths, createPushParticles, pushEffectOpacity, PUSH_EFFECT_DURATION_MS, type PushEffectPath, type PushEffectBox } from "./pushEffect";
 
-import { createRadialRipple, freezeRippleSources, freezeRippleTargets, RIPPLE_EFFECT_DURATION_MS, RIPPLE_EFFECT_SPEED_PX_PER_MS, type RadialRipple, type RippleSource } from "./rippleEffect";
+import { appendRippleWaves, pruneRippleWaves, rippleForCard, RIPPLE_EFFECT_SPEED_PX_PER_MS, type RadialRipple, type RippleWave } from "./rippleEffect";
 import { createDominoTransforms, DOMINO_EFFECT_DURATION_MS, type DominoTransform } from "./dominoEffect";
 import { createWebGLSceneRenderer, classifyWebGLSceneError } from "./webglSceneRenderer";
 import { type GeometryCanvas, type HtmlTextureGL } from "./webglGeometry";
@@ -63,8 +63,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
   const layer = useRef<HTMLDivElement>(null);
   const fallback = useRef<HTMLDivElement>(null);
   const savedEffect = useRef({ revision: 0, startedAt: 0, active: false });
-  const savedRippleSources = useRef<readonly RippleSource[]>([]);
-  const savedRippleTargets = useRef<ReadonlySet<string>>(new Set());
+  const savedRippleWaves = useRef<readonly RippleWave[]>([]);
   const nodes = useRef(new Map<string, HTMLDivElement>());
   const savedBoxes = useRef(new Map<string, SceneBox>());
   const savedMotion = useRef<SceneMotionState | null>(null);
@@ -115,7 +114,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
     let effectOpacity = 0;
     let effectAge = 0;
     let dominoTransforms: ReadonlyMap<string, DominoTransform> = new Map();
-    let radialRipple: RadialRipple | undefined;
+    let cardRipples = new Map<string, RadialRipple>();
     let ripplePointer: { pointerId: number; id: string } | null = null;
     let lastFrameTime: number | null = null;
     const media = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -241,7 +240,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
       setDomMode(next === 'dom');
       // DOMでは追加効果を止め、nativeへ戻っても過去のbatchを再生しない。
       if (next === 'dom') {
-        effect.active = false; dominoTransforms = new Map(); radialRipple = undefined; ripplePointer = null; effectPaths = []; effectOpacity = 0;
+        effect.active = false; dominoTransforms = new Map(); cardRipples = new Map(); savedRippleWaves.current = []; ripplePointer = null; effectPaths = []; effectOpacity = 0;
         clearTimeout(pressTimer); pressTimer = undefined; pressed = null;
         gpu?.dispose(); gpu = null;
       }
@@ -312,30 +311,37 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
         extent.current!.style.height = `${bottom}px`;
         host.scrollLeft = 0;
         camera = { x: 0, y: -host.scrollTop, zoom: 1 };
-        // 新着batchだけが効果を開始する。描画modeや通常reflowで寿命を延長しない。
+        // 新着ごとに波を追加し、既に進行中の波の中心・対象・開始時刻は変更しない。
         if (effect.revision !== layout.insertion.revision) {
           effect.revision = layout.insertion.revision;
           effect.startedAt = time;
-          savedRippleSources.current = freezeRippleSources(layout.insertion.traces, targets);
-          savedRippleTargets.current = freezeRippleTargets(layout.insertion.traces, savedRippleSources.current);
-          effect.active = mode !== 'dom' && chosenEffect.current !== 'off' && !reducedMotion && (chosenEffect.current === 'ripple' ? savedRippleSources.current.length > 0 && savedRippleTargets.current.size > 0 : layout.insertion.traces.some(trace => trace.edges.length > 0));
+          if (mode !== 'dom' && chosenEffect.current === 'ripple' && !reducedMotion) {
+            savedRippleWaves.current = appendRippleWaves(savedRippleWaves.current, layout.insertion.traces, targets, time);
+          }
+          effect.active = mode !== 'dom' && chosenEffect.current !== 'off' && !reducedMotion && layout.insertion.traces.some(trace => trace.edges.length > 0);
         }
-        if (mode === 'dom' || reducedMotion || (chosenEffect.current === 'ripple' ? !savedRippleSources.current.length || !savedRippleTargets.current.size : !layout.insertion.traces.length) || time - effect.startedAt >= (chosenEffect.current === 'domino' ? DOMINO_EFFECT_DURATION_MS : chosenEffect.current === 'ripple' ? RIPPLE_EFFECT_DURATION_MS : PUSH_EFFECT_DURATION_MS)) effect.active = false;
+        if (mode === 'dom' || reducedMotion || chosenEffect.current !== 'ripple') savedRippleWaves.current = [];
+        else savedRippleWaves.current = pruneRippleWaves(savedRippleWaves.current, time);
+        if (chosenEffect.current === 'ripple') effect.active = savedRippleWaves.current.length > 0;
+        else if (mode === 'dom' || reducedMotion || !layout.insertion.traces.length || time - effect.startedAt >= (chosenEffect.current === 'domino' ? DOMINO_EFFECT_DURATION_MS : PUSH_EFFECT_DURATION_MS)) effect.active = false;
         effectAge = time - effect.startedAt;
         effectOpacity = effect.active && chosenEffect.current === 'sparkle' ? pushEffectOpacity(effectAge) : 0;
         dominoTransforms = effect.active && chosenEffect.current === 'domino'
           ? createDominoTransforms(layout.insertion.traces, boxes, effectAge, { heldIds: heldNow(), reducedMotion, directionBoxes: targets })
           : new Map();
         if (ripplePointer && !current.current.items.some(item => item.id === ripplePointer!.id)) ripplePointer = null;
-        radialRipple = effect.active && chosenEffect.current === 'ripple'
-          ? createRadialRipple(savedRippleSources.current, effectAge, { reducedMotion })
-          : undefined;
-        if (diagnosticsEnabled) {
+        cardRipples = new Map();
         const rippleHeld = heldNow();
-        host.dataset.sceneRippleCards = String(radialRipple ? current.current.items.filter(item => savedRippleTargets.current.has(item.id) && !rippleHeld.has(item.id) && ripplePointer?.id !== item.id).length : 0);
-        host.dataset.sceneRippleTargets = JSON.stringify(radialRipple ? [...savedRippleTargets.current] : []);
-        host.dataset.sceneRippleSources = JSON.stringify(radialRipple?.sources.map(({ x, y }) => [x, y]) ?? []);
-        host.dataset.sceneRippleRadius = String(radialRipple ? effectAge * RIPPLE_EFFECT_SPEED_PX_PER_MS : 0);
+        if (effect.active && chosenEffect.current === 'ripple') for (const item of current.current.items) {
+          if (rippleHeld.has(item.id) || ripplePointer?.id === item.id) continue;
+          const ripple = rippleForCard(savedRippleWaves.current, item.id, time, { reducedMotion });
+          if (ripple) cardRipples.set(item.id, ripple);
+        }
+        if (diagnosticsEnabled) {
+          host.dataset.sceneRippleCards = String(cardRipples.size);
+          host.dataset.sceneRippleTargets = JSON.stringify([...new Set(savedRippleWaves.current.flatMap(wave => [...wave.targets]))]);
+          host.dataset.sceneRippleSources = JSON.stringify(savedRippleWaves.current.map(({ source }) => [source.x, source.y]));
+          host.dataset.sceneRippleRadius = String(savedRippleWaves.current.length ? (time - savedRippleWaves.current[0].startedAt) * RIPPLE_EFFECT_SPEED_PX_PER_MS : 0);
         }
         if (pressed && !reducedMotion && chosenEffect.current === 'domino') {
           dominoTransforms = new Map(dominoTransforms).set(pressed.id, pressed.transform);
@@ -374,7 +380,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
           const paintHeld = heldNow();
           const cards = drawOrder().flatMap(item => {
             const node = nodes.current.get(item.id), box = boxes.get(item.id);
-            return node && box ? [{ id: item.id, node, box, tip: dominoTransforms.get(item.id), ripple: reducedMotion || chosenEffect.current !== 'ripple' || !savedRippleTargets.current.has(item.id) || paintHeld.has(item.id) || ripplePointer?.id === item.id ? undefined : radialRipple }] : [];
+            return node && box ? [{ id: item.id, node, box, tip: dominoTransforms.get(item.id), ripple: reducedMotion || chosenEffect.current !== 'ripple' || paintHeld.has(item.id) || ripplePointer?.id === item.id ? undefined : cardRipples.get(item.id) }] : [];
           });
           const stats = gpu.render({ cards, camera, viewportWidth: viewWidth, viewportHeight: viewHeight,
             changedElements: (event as Event & { changedElements?: readonly Element[] }).changedElements,
@@ -450,7 +456,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
       revealFocus = !(pressed && pressed.id === id); refresh();
     };
     const blur = () => { localHeld.clear(); refresh(); };
-    runtime.current = { refresh, camera, chooseEffect: () => { releaseRipple(); releasePress(); effect.active = false; dominoTransforms = new Map(); radialRipple = undefined; requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
+    runtime.current = { refresh, camera, chooseEffect: () => { releaseRipple(); releasePress(); effect.active = false; dominoTransforms = new Map(); cardRipples = new Map(); savedRippleWaves.current = []; requestFrame(); }, reset: () => { host.scrollTop = 0; requestFrame(); }, attach: node => {
       if (mode === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
       (mode === 'dom' ? dom : surface).appendChild(node);
       const id = node.dataset.sceneCard; if (id) dirtyIds.add(id);
