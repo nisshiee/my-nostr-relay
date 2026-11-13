@@ -25,7 +25,7 @@ export const OWNER_SCORE_HALF_LIFE = 3600;
 export const SCORE_UPDATE_INTERVAL = 10000;
 
 /** メモリ管理のため保持するノート上限 */
-export const MAX_NOTES = 200;
+export const MAX_NOTES = 100;
 
 /** 初回ノート取得時のlimit */
 export const INITIAL_NOTES_LIMIT = 500;

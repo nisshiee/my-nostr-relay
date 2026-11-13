@@ -1,0 +1,396 @@
+import { describe, expect, it } from 'vitest';
+import type { SceneBox, SceneInsertionTrace } from '../scene';
+import {
+  createDominoTransforms, dominoEffectAmount,
+  DOMINO_EFFECT_RISE_MS, DOMINO_EFFECT_HOLD_MS, DOMINO_EFFECT_FALL_MS,
+  DOMINO_EFFECT_DURATION_MS, DOMINO_EFFECT_MAX_CARDS, DOMINO_EFFECT_MAX_DELAY_MS,
+  DOMINO_EFFECT_MAX_EDGES, DOMINO_EFFECT_MAX_TRACES, DOMINO_EFFECT_PULSE_MS, DOMINO_EFFECT_STEP_MS,
+  DOMINO_PERSPECTIVE_DISTANCE_RATIO, DOMINO_PERSPECTIVE_MAX_ANGLE_DEG, DOMINO_PERSPECTIVE_MAX_OUTSET,
+  type DominoPivotEdge,
+} from '../dominoEffect';
+
+const box = (x: number, y: number): SceneBox => ({ x, y, width: 320, height: 180 });
+const boxes = new Map([
+  ['root', box(16, 16)], ['a', box(16, 208)], ['b', box(16, 400)],
+  ['right', box(352, 208)], ['left', box(-320, 208)], ['unrelated', box(688, 16)],
+]);
+const trace = (sourceId: string, pairs: readonly (readonly [string, string])[]): SceneInsertionTrace => ({
+  sourceId, edges: pairs.map(([fromId, toId]) => ({ fromId, toId })),
+});
+const chain = [trace('root', [['a', 'b'], ['root', 'a']])];
+describe('因果的なカード傾斜', () => {
+  it('全員が同時に起立し、倒伏だけ根からの深さに100msずつ遅延する', () => {
+    for (const age of [1, 50, 100, 199, 200, 250, 280]) {
+      const result = createDominoTransforms(chain, boxes, age);
+      expect([...result.keys()]).toEqual(['root', 'a', 'b']);
+      expect(new Set([...result.values()].map(value => value.amount)).size).toBe(1);
+      expect(result.has('unrelated')).toBe(false);
+    }
+    const falling = createDominoTransforms(chain, boxes, 350);
+    expect(falling.get('root')!.amount).toBeLessThan(1);
+    expect(falling.get('a')!.amount).toBe(1);
+    expect(falling.get('b')!.amount).toBe(1);
+    expect(falling.get('a')!.delayMs).toBe(DOMINO_EFFECT_STEP_MS);
+    expect(falling.get('b')!.delayMs).toBe(200);
+    const later = createDominoTransforms(chain, boxes, 450);
+    expect(later.get('root')!.amount).toBeLessThan(later.get('a')!.amount);
+    expect(later.get('a')!.amount).toBeLessThan(later.get('b')!.amount);
+    expect(createDominoTransforms(chain, boxes, 350).get('root')!.amount).toBeCloseTo(createDominoTransforms(chain, boxes, 450).get('a')!.amount, 12);
+    expect(createDominoTransforms(chain, boxes, 450).get('a')!.amount).toBeCloseTo(createDominoTransforms(chain, boxes, 550).get('b')!.amount, 12);
+  });
+
+  it('同じ親の分岐は同時に始まり、循環・重複・切れた辺を連鎖に足さない', () => {
+    const result = createDominoTransforms([trace('root', [
+      ['a', 'b'], ['a', 'right'], ['root', 'a'], ['root', 'a'],
+      ['b', 'root'], ['a', 'a'], ['unrelated', 'left'],
+    ])], boxes, 250);
+    expect(result.get('b')!.depth).toBe(2);
+    expect(result.get('right')!.depth).toBe(2);
+    expect(result.get('b')!.amount).toBe(result.get('right')!.amount);
+    expect(result.get('root')!.depth).toBe(0);
+    expect(result.has('unrelated')).toBe(false);
+    expect(result.has('left')).toBe(false);
+  });
+
+  it('表示カードが交差しても目標Boxから傾く方向を保ち、現在Boxを支点にする', () => {
+    const moving = new Map(boxes);
+    moving.set('right', box(-700, 208));
+    const result = createDominoTransforms([trace('a', [['a', 'right']])], moving, 296, { directionBoxes: boxes });
+    const matrix = result.get('right')!;
+    expect(matrix.perspective.edge).toBe('left');
+    expect(matrix.perspective.pivotX).toBe(0);
+    expect(matrix.perspective.pivotY).toBe(90);
+  });
+
+  it('hold/focusされたカードは変形せず、後続の因果深さは変えない', () => {
+    const result = createDominoTransforms(chain, boxes, 250, { heldIds: new Set(['root', 'a']) });
+    expect(result.has('root')).toBe(false);
+    expect(result.has('a')).toBe(false);
+    expect(result.get('b')!.depth).toBe(2);
+    expect(result.get('b')!.delayMs).toBe(200);
+  });
+
+  it('hold解除は共通時計の現在姿勢へ参加し、起立を最初から再生しない', () => {
+    const held = createDominoTransforms(chain, boxes, 450, { heldIds: new Set(['a']) });
+    expect(held.has('a')).toBe(false);
+    const released = createDominoTransforms(chain, boxes, 450);
+    expect(released.get('a')!.amount).toBe(dominoEffectAmount(450, 100));
+    expect(released.get('a')!.amount).toBeLessThan(1);
+    expect(released.get('b')!.amount).toBe(1);
+  });
+
+  it('寸法や位置を変えても起立と倒伏の時計は変えない', () => {
+    const changed = new Map([...boxes].map(([id, value]) => [id, { ...value, x: value.x + 20, width: 240, height: value.height + 120 }]));
+    for (const age of [100, 250, 450, 600]) {
+      const before = createDominoTransforms(chain, boxes, age);
+      const after = createDominoTransforms(chain, changed, age, { directionBoxes: boxes });
+      for (const [id, value] of before) {
+        expect(after.get(id)!.amount).toBe(value.amount);
+        expect(after.get(id)!.delayMs).toBe(value.delayMs);
+      }
+    }
+  });
+
+  it('最大深さの最後まで保持してから倒し、1300ms以内で全員終了する', () => {
+    expect(dominoEffectAmount(200, 600)).toBe(1);
+    expect(dominoEffectAmount(879, 600)).toBe(1);
+    expect(dominoEffectAmount(1090, 600)).toBeCloseTo(0.5);
+    expect(dominoEffectAmount(1300, 600)).toBe(0);
+    expect(DOMINO_EFFECT_DURATION_MS).toBe(1300);
+    for (const delay of [NaN, Infinity, -Infinity]) expect(dominoEffectAmount(100, delay)).toBe(0);
+  });
+
+  it('reduced-motionと開始前・終了後・無効な時刻は全て通常のBoxになる', () => {
+    expect(createDominoTransforms(chain, boxes, 250, { reducedMotion: true }).size).toBe(0);
+    for (const age of [-100, 0, DOMINO_EFFECT_DURATION_MS, 1e9, NaN, Infinity, -Infinity]) {
+      expect(createDominoTransforms(chain, boxes, age).size).toBe(0);
+    }
+    expect(createDominoTransforms(chain, boxes, 100 + DOMINO_EFFECT_PULSE_MS).has('a')).toBe(false);
+  });
+
+  it('一回だけ共通起立して順次倒れ、有限な正の透視除数で文字を裏返さない', () => {
+    expect(dominoEffectAmount(DOMINO_EFFECT_RISE_MS)).toBe(1);
+    expect(dominoEffectAmount(DOMINO_EFFECT_RISE_MS + DOMINO_EFFECT_HOLD_MS)).toBe(1);
+    expect(DOMINO_EFFECT_FALL_MS).toBe(420);
+    expect(dominoEffectAmount(50)).toBeLessThan(dominoEffectAmount(150));
+    expect(dominoEffectAmount(250)).toBeGreaterThan(dominoEffectAmount(550));
+    expect(dominoEffectAmount(0.001)).toBeLessThan(1e-8);
+    expect(dominoEffectAmount(699.999)).toBeLessThan(1e-8);
+    for (const value of [-1, 0, 700, NaN, Infinity]) expect(dominoEffectAmount(value)).toBe(0);
+    for (let age = 1; age < DOMINO_EFFECT_DURATION_MS; age += 7) {
+      const result = createDominoTransforms([trace('root', [['root', 'a'], ['a', 'right'], ['right', 'left']])], boxes, age);
+      for (const matrix of result.values()) {
+        for (const point of matrix.perspective.corners) {
+          expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
+          expect(point.w).toBeGreaterThan(0.8);
+        }
+        expect(matrix.amount).toBeGreaterThan(0);
+        expect(matrix.amount).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('burstの根を結ばず、重なるカードは新しい根の一回分だけを使う', () => {
+    const independent = createDominoTransforms([
+      trace('root', [['root', 'a']]), trace('right', [['right', 'b']]),
+    ], boxes, 150);
+    expect(independent.get('root')!.depth).toBe(0);
+    expect(independent.get('right')!.depth).toBe(0);
+    expect(independent.get('a')!.sourceId).toBe('root');
+    expect(independent.get('b')!.sourceId).toBe('right');
+    expect(independent.get('a')!.amount).toBe(independent.get('b')!.amount);
+    const newer = trace('right', [['right', 'a'], ['a', 'b']]);
+    const overlapping = createDominoTransforms([...chain, newer], boxes, 250);
+    expect(overlapping.get('a')).toEqual(createDominoTransforms([newer], boxes, 250).get('a'));
+    expect(overlapping.get('b')!.sourceId).toBe('right');
+  });
+
+  it('新しい根の倒伏待機を古い根の深さで上書きしない', () => {
+    const result = createDominoTransforms([
+      trace('root', [['root', 'b']]), trace('right', [['right', 'a'], ['a', 'b']]),
+    ], boxes, 150);
+    expect(result.get('b')!.sourceId).toBe('right');
+    expect(result.get('b')!.delayMs).toBe(200);
+    expect(result.get('b')!.amount).toBe(result.get('a')!.amount);
+    expect(result.get('a')!.sourceId).toBe('right');
+  });
+
+  it('200枚でも辺数・参加カード数・遅延・寿命を制限する', () => {
+    const many = new Map(Array.from({ length: 200 }, (_, index) => [`card${index}`, box(16, index * 192)]));
+    const pairs = Array.from({ length: 199 }, (_, index): [string, string] => [`card${index}`, `card${index + 1}`]);
+    const traces = [trace('card0', pairs)];
+    const result = createDominoTransforms(traces, many, 650);
+    expect(result.size).toBe(DOMINO_EFFECT_MAX_EDGES + 1);
+    expect(result.size).toBeLessThanOrEqual(DOMINO_EFFECT_MAX_CARDS);
+    expect(Math.max(...[...result.values()].map(value => value.delayMs))).toBe(DOMINO_EFFECT_MAX_DELAY_MS);
+    expect(result.get('card96')!.depth).toBe(96);
+    const tail = createDominoTransforms(traces, many, 1299);
+    expect(tail.get('card6')!.amount).toBeGreaterThan(0);
+    expect(tail.get('card96')!.amount).toBeGreaterThan(0);
+    expect(tail.has('card5')).toBe(false);
+    expect(result.has('card97')).toBe(false);
+    expect(DOMINO_EFFECT_DURATION_MS).toBeLessThanOrEqual(1600);
+    expect(createDominoTransforms(traces, many, DOMINO_EFFECT_DURATION_MS).size).toBe(0);
+  });
+
+  it('多数のburstは新しい4根だけを処理し、それぞれの深さをゼロから始める', () => {
+    const many = new Map<string, SceneBox>();
+    const traces = Array.from({ length: 9 }, (_, index) => {
+      many.set(`root${index}`, box(index * 336, 0));
+      many.set(`child${index}`, box(index * 336, 192));
+      return trace(`root${index}`, [[`root${index}`, `child${index}`]]);
+    });
+    const result = createDominoTransforms(traces, many, 150);
+    expect(result.size).toBe(DOMINO_EFFECT_MAX_TRACES * 2);
+    expect(result.has('root4')).toBe(false);
+    expect(result.get('root5')!.depth).toBe(0);
+    expect(result.get('root8')!.depth).toBe(0);
+  });
+
+  it('未到達・削除済み・不正なBoxと辺だけの根には効果を作らない', () => {
+    const invalid = new Map(boxes);
+    invalid.set('a', { ...boxes.get('a')!, width: NaN });
+    expect(createDominoTransforms(chain, invalid, 250).size).toBe(0);
+    expect(createDominoTransforms([trace('missing', [['a', 'b']])], boxes, 250).size).toBe(0);
+    expect(createDominoTransforms([trace('root', [])], boxes, 250).size).toBe(0);
+    for (const bad of [0, -1, Infinity]) {
+      invalid.set('a', { ...boxes.get('a')!, height: bad });
+      expect(createDominoTransforms(chain, invalid, 250).size).toBe(0);
+    }
+    const overlapped = new Map([['root', box(16, 16)], ['a', box(16, 16)]]);
+    const result = createDominoTransforms([trace('root', [['root', 'a']])], overlapped, 250);
+    expect(result.size).toBe(2);
+    expect(result.get('a')!.perspective.edge).toBe('top');
+  });
+
+  it('Box・trace・hold入力を変更せず、表示座標を平行移動しても傾きは同じ', () => {
+    const snapshot = JSON.stringify([...boxes]);
+    const traceSnapshot = JSON.stringify(chain);
+    const held = new Set(['unrelated']);
+    const original = createDominoTransforms(chain, boxes, 250, { heldIds: held });
+    const translated = new Map([...boxes].map(([id, current]) => [id, { ...current, x: current.x + 900, y: current.y - 800 }]));
+    const moved = createDominoTransforms(chain, translated, 250, { heldIds: held });
+    for (const [id, matrix] of original) {
+      const next = moved.get(id)!;
+      expect(next.perspective).toEqual(matrix.perspective);
+    }
+    expect(JSON.stringify([...boxes])).toBe(snapshot);
+    expect(JSON.stringify(chain)).toBe(traceSnapshot);
+    expect([...held]).toEqual(['unrelated']);
+  });
+});
+
+describe('手前へ倒れる透視投影データ', () => {
+  const target = box(16, 16);
+  const directions = [
+    { source: box(16, -300), edge: 'top', axis: 'x', sign: 1, hinge: [0, 1] },
+    { source: box(16, 300), edge: 'bottom', axis: 'x', sign: -1, hinge: [2, 3] },
+    { source: box(-400, 16), edge: 'left', axis: 'y', sign: -1, hinge: [0, 3] },
+    { source: box(400, 16), edge: 'right', axis: 'y', sign: 1, hinge: [1, 2] },
+  ] as const;
+  const corners = [
+    { x: 0, y: 0 }, { x: target.width, y: 0 },
+    { x: target.width, y: target.height }, { x: 0, y: target.height },
+  ];
+  const perspective = (source: SceneBox, age = 296, current = target) => createDominoTransforms(
+    [trace('source', [['source', 'target']])], new Map([['source', source], ['target', current]]), age,
+  ).get('target')!.perspective;
+
+  it.each(directions)('$edgeの辺を固定し、反対辺が手前へ広がる台形を作る', ({ source, edge, axis, sign, hinge }) => {
+    const projection = perspective(source);
+    expect(projection.edge).toBe(edge);
+    expect(projection.axis).toBe(axis);
+    expect(projection.angleDeg).toBe(sign * DOMINO_PERSPECTIVE_MAX_ANGLE_DEG);
+
+    for (const [index, point] of projection.corners.entries()) {
+      expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
+      expect(point.x).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+      expect(point.x).toBeLessThanOrEqual(target.width + DOMINO_PERSPECTIVE_MAX_OUTSET);
+      expect(point.y).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+      expect(point.y).toBeLessThanOrEqual(target.height + DOMINO_PERSPECTIVE_MAX_OUTSET);
+      if ((hinge as readonly number[]).includes(index)) {
+        expect(point).toEqual({ ...corners[index], z: 0, w: 1 });
+      } else {
+        expect(point.z).toBeGreaterThan(0);
+        expect(point.w).toBeLessThan(1);
+      }
+    }
+    const far = projection.corners.filter((_, index) => !(hinge as readonly number[]).includes(index));
+    const farLength = Math.hypot(far[1].x - far[0].x, far[1].y - far[0].y);
+    const hingeLength = axis === 'x' ? target.width : target.height;
+    expect(farLength).toBeGreaterThan(hingeLength * 1.1);
+    expect(farLength).toBeLessThan(hingeLength * 1.2);
+    expect(farLength).toBeCloseTo(hingeLength / far[0].w, 10);
+  });
+
+  it('全時刻・全方向の張出しを64px以内に保ち、正のwで遠近除算する', () => {
+    for (const { source } of directions) {
+      for (let age = 101; age < 800; age += 7) {
+        const projection = perspective(source, age);
+        expect(Math.abs(projection.angleDeg)).toBeLessThanOrEqual(DOMINO_PERSPECTIVE_MAX_ANGLE_DEG);
+        for (const point of projection.corners) {
+          expect(point.x).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.x).toBeLessThanOrEqual(target.width + DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeLessThanOrEqual(target.height + DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.z).toBeGreaterThanOrEqual(0);
+          expect(point.w).toBeGreaterThan(0.8);
+          expect(point.w).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
+  it('透視除算がCSSのperspective後rotate行列の適用順序と一致する', () => {
+    for (const { source } of directions) {
+      const projection = perspective(source);
+      const radians = projection.angleDeg * Math.PI / 180;
+      for (const [index, original] of corners.entries()) {
+        const x = original.x - projection.pivotX;
+        const y = original.y - projection.pivotY;
+        const rotatedX = projection.axis === 'y' ? x * Math.cos(radians) : x;
+        const rotatedY = projection.axis === 'x' ? y * Math.cos(radians) : y;
+        const rotatedZ = projection.axis === 'x' ? y * Math.sin(radians) : -x * Math.sin(radians);
+        const w = 1 - rotatedZ / projection.perspectivePx;
+        expect(projection.corners[index].x).toBeCloseTo(projection.pivotX + rotatedX / w, 12);
+        expect(projection.corners[index].y).toBeCloseTo(projection.pivotY + rotatedY / w, 12);
+        expect(projection.corners[index].w).toBe(w);
+      }
+    }
+  });
+
+  it('幅・高さに合わせて透視距離が変わり、相似のカードは相似の台形になる', () => {
+    for (const { source, axis } of directions) {
+      const original = perspective(source);
+      const doubled = perspective({ ...source, x: source.x * 2, y: source.y * 2, width: 640, height: 360 }, 296,
+        { x: target.x * 2, y: target.y * 2, width: 640, height: 360 });
+      expect(original.perspectivePx).toBe((axis === 'x' ? target.height : target.width) * DOMINO_PERSPECTIVE_DISTANCE_RATIO);
+      expect(doubled.perspectivePx).toBe(original.perspectivePx * 2);
+      for (const [index, point] of original.corners.entries()) {
+        expect(doubled.corners[index].x).toBeCloseTo(point.x * 2, 10);
+        expect(doubled.corners[index].y).toBeCloseTo(point.y * 2, 10);
+        expect(doubled.corners[index].w).toBe(point.w);
+      }
+    }
+  });
+
+  it('有限だが極端な寸法でも透視距離・投影点に無限大を作らない', () => {
+    for (const { source, axis } of directions) {
+      for (const dimension of [Number.MAX_VALUE, 1e100, 1e14, Number.MIN_VALUE]) {
+        const current = {
+          x: 0, y: 0,
+          width: axis === 'y' ? dimension : target.width,
+          height: axis === 'x' ? dimension : target.height,
+        };
+        const result = createDominoTransforms(
+          [trace('source', [['source', 'target']])], new Map([['source', source], ['target', current]]), 296,
+          { directionBoxes: new Map([['source', source], ['target', target]]) },
+        );
+        const projection = result.get('target')!.perspective;
+        expect(Number.isFinite(projection.perspectivePx)).toBe(true);
+        expect(projection.perspectivePx).toBeGreaterThan(0);
+        for (const point of projection.corners) {
+          expect([point.x, point.y, point.z, point.w].every(Number.isFinite)).toBe(true);
+          expect(point.w).toBeGreaterThan(0.8);
+          expect(point.w).toBeLessThanOrEqual(1);
+          expect(point.x).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.x).toBeLessThanOrEqual(current.width + DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeGreaterThanOrEqual(-DOMINO_PERSPECTIVE_MAX_OUTSET);
+          expect(point.y).toBeLessThanOrEqual(current.height + DOMINO_PERSPECTIVE_MAX_OUTSET);
+        }
+      }
+    }
+  });
+
+  it('斜めの押出は支配的な方向の辺へ倒し、移動中の座標には引きずられない', () => {
+    const cases: readonly [SceneBox, DominoPivotEdge][] = [
+      [box(-400, -100), 'left'], [box(400, 100), 'right'],
+      [box(-40, -400), 'top'], [box(40, 400), 'bottom'],
+    ];
+    for (const [source, edge] of cases) expect(perspective(source).edge).toBe(edge);
+    const current = new Map([['source', box(-400, 16)], ['target', box(-900, 16)]]);
+    const directionBoxes = new Map([['source', box(-400, 16)], ['target', target]]);
+    const result = createDominoTransforms([trace('source', [['source', 'target']])], current, 296, { directionBoxes });
+    expect(result.get('target')!.perspective.edge).toBe('left');
+  });
+
+  it('パルスの端では台形が連続的に消え、同じ終了時刻でデータもなくなる', () => {
+    for (const age of [0.001, 799.999]) {
+      const projection = perspective(directions[0].source, age);
+      expect(Math.abs(projection.angleDeg)).toBeLessThan(1e-6);
+      for (const [index, point] of projection.corners.entries()) {
+        expect(point.x).toBeCloseTo(corners[index].x, 6);
+        expect(point.y).toBeCloseTo(corners[index].y, 6);
+        expect(point.w).toBeCloseTo(1, 8);
+      }
+    }
+    expect(createDominoTransforms(chain, boxes, DOMINO_EFFECT_DURATION_MS).size).toBe(0);
+  });
+
+  it('巨大な本文の全pulseでも進行方向を含む全辺の張出しを64px以内に抑える', () => {
+    for (const width of [1, 320, 1000, 100000, 1e12]) {
+      for (const height of [1, 180, 4000, 100000, 1e12]) {
+        for (const { source } of directions) {
+          const current = { x: 0, y: 0, width, height };
+          for (let age = 101; age < 800; age += 11) {
+            const projection = createDominoTransforms([trace('source', [['source', 'target']])],
+              new Map([['source', source], ['target', current]]), age,
+              { directionBoxes: new Map([['source', source], ['target', target]]) }).get('target')!.perspective;
+            for (const value of Object.values(projection.outsets)) {
+              expect(Number.isFinite(value)).toBe(true);
+              expect(value).toBeGreaterThanOrEqual(0);
+              expect(value).toBeLessThanOrEqual(DOMINO_PERSPECTIVE_MAX_OUTSET + 0.001);
+            }
+            for (const point of projection.corners) {
+              expect(point.x).toBeGreaterThanOrEqual(-projection.outsets.left);
+              expect(point.x).toBeLessThanOrEqual(width + projection.outsets.right);
+              expect(point.y).toBeGreaterThanOrEqual(-projection.outsets.top);
+              expect(point.y).toBeLessThanOrEqual(height + projection.outsets.bottom);
+            }
+          }
+        }
+      }
+    }
+  });
+
+});

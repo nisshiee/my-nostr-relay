@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
-import Image from "next/image";
+import Image from "./CanvasAwareImage";
 import type { NostrProfile } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
 import { useImageUpload } from "../hooks/useImageUpload";

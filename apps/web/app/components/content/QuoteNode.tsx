@@ -1,6 +1,6 @@
 "use client";
 
-import Image from "next/image";
+import Image from "../CanvasAwareImage";
 import { useQuotedEvent } from "../../hooks/useQuotedEvent";
 import type { EventCache } from "../../hooks/useEventCache";
 import type { NostrProfile } from "../../lib/types";

@@ -11,6 +11,12 @@ import { GRAVITY_WEIGHT } from "./constants";
 import { DEBUG } from "./debug";
 import { gravityCost } from "./gravity";
 
+/** 実際に押し出したカード間の因果関係。高さ補正やhold迂回は辺に含めない。 */
+export interface DisplacementEdge {
+  readonly fromId: string;
+  readonly toId: string;
+}
+
 // ── 内部型（エクスポートしない） ──
 
 /** 押し出し候補。placeCard 内部のステップ1〜3で使用。 */
@@ -224,6 +230,7 @@ export function placeCard(
   holdSet: ReadonlySet<string>,
   allCards: readonly Card[],
   redirectedHolds: Set<string> = new Set(),
+  displacementTrace?: DisplacementEdge[],
 ): void {
   const cardHeight = heightMap.get(cardId) ?? DEFAULT_CARD_HEIGHT;
 
@@ -246,7 +253,7 @@ export function placeCard(
         if (slot.id === cardId) return bottom;
         return Math.max(bottom, slot.y + (heightMap.get(slot.id) ?? DEFAULT_CARD_HEIGHT) + GAP);
       }, 0);
-      placeCard(grid, columns, cardId, targetCol, tailY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
+      placeCard(grid, columns, cardId, targetCol, tailY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds, displacementTrace);
       return;
     }
     redirectedHolds.add(victimId);
@@ -258,7 +265,7 @@ export function placeCard(
     if (isBottomOfColumn) {
       // ホールドカードは動かない。cardId をその下に配置
       const newY = victimY + victimHeight + GAP;
-      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds, displacementTrace);
       return;
     }
 
@@ -269,12 +276,12 @@ export function placeCard(
     if (!target) {
       // 候補がない → victim の下に cardId を配置
       const newY = victimY + victimHeight + GAP;
-      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
+      placeCard(grid, columns, cardId, targetCol, newY, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds, displacementTrace);
       return;
     }
 
     // cardId を target の位置にリダイレクト（連鎖は続く）
-    placeCard(grid, columns, cardId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds);
+    placeCard(grid, columns, cardId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards, redirectedHolds, displacementTrace);
     return;
   }
 
@@ -301,6 +308,8 @@ export function placeCard(
   const victimId = victim.id;
   const victimY = victim.y;
   const victimHeight = heightMap.get(victimId) ?? DEFAULT_CARD_HEIGHT;
+  // 配置判定には使わない任意の診断出力。holdの分岐を通過した実際の相手だけを記録する。
+  displacementTrace?.push({ fromId: cardId, toId: victimId });
 
   // --- ステップ0: 列の一番下のカードなら最後尾に配置して終了 ---
   const sameColOthers = columns[targetCol].filter((c) => c.id !== victimId);
@@ -332,7 +341,7 @@ export function placeCard(
   }
 
   // 押し出されるカードを target の位置に配置 → target が次に押し出される
-  placeCard(grid, columns, victimId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards);
+  placeCard(grid, columns, victimId, target.col, target.y, heightMap, scoreMap, columnCount, chain, holdSet, allCards, undefined, displacementTrace);
 }
 
 // ── 公開API ──
@@ -411,6 +420,7 @@ export function insertCard(
   columnCount: number,
   heightMap: ReadonlyMap<string, number>,
   holdSet: ReadonlySet<string>,
+  displacementTrace?: DisplacementEdge[],
 ): LayoutResult {
   // prevGrid を clone してから内部関数に渡す
   const grid = new Map(prevGrid);
@@ -443,7 +453,7 @@ export function insertCard(
   }
 
   const chain = { movedIds: new Set<string>(), chainOrder: new Map<string, number>() };
-  placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain, holdSet, allNotes);
+  placeCard(grid, columns, note.slotId, bestCol, 0, heightMap, scoreMap, columnCount, chain, holdSet, allNotes, undefined, displacementTrace);
 
   // 押し出しは同じtop位置を対象にするため、高さ差で残る重なりを補正する。
   // ホールド領域を予約し、他のカードだけを現在位置以降の空き領域へ下げる。

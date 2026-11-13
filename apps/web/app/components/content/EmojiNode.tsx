@@ -1,3 +1,5 @@
+
+import { MediaImage } from "../CanvasAwareImage";
 /** カスタム絵文字ノードコンポーネント */
 
 interface EmojiNodeProps {
@@ -8,7 +10,7 @@ interface EmojiNodeProps {
 /** NIP-30 カスタム絵文字をインライン画像として表示する */
 export function EmojiNode({ shortcode, url }: EmojiNodeProps) {
   return (
-    <img
+    <MediaImage imageSize={64}
       src={url}
       alt={`:${shortcode}:`}
       title={`:${shortcode}:`}

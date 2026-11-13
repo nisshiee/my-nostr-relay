@@ -1,5 +1,7 @@
 "use client";
 
+import { MediaImage } from "../CanvasAwareImage";
+
 import { useEffect, useState } from "react";
 import { LinkNode } from "./LinkNode";
 
@@ -80,7 +82,7 @@ export function LinkPreviewNode({ url, text }: LinkPreviewNodeProps) {
       className="block my-2 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
     >
       {data.image && (
-        <img
+        <MediaImage imageSize={640}
           src={data.image}
           alt=""
           loading="lazy"

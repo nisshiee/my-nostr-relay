@@ -1,5 +1,7 @@
 "use client";
 
+import { MediaImage } from "./CanvasAwareImage";
+
 import { useRef, useEffect, useState, useCallback } from "react";
 import type {
   ThreadCard as ThreadCardType,
@@ -543,7 +545,7 @@ function ThreadNoteItem({
                     }`}
                   >
                     {imageUrl ? (
-                      <img
+                      <MediaImage imageSize={64}
                         src={imageUrl}
                         alt={emoji}
                         className="inline-block h-3.5 w-3.5"

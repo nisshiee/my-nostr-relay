@@ -1,0 +1,384 @@
+# HTML-in-Canvas V2 実験記録（履歴）
+
+> この文書は開発中の判断・検証を時系列で残した記録です。古い入口、比較実装、数値は当時の状態で、現行仕様ではありません。現行の構成と不変条件は [Live Canvas の契約](../architecture/live-canvas-contracts.md) を参照してください。現行版は `/` に統一し、旧 `/v2` はブックマーク互換のリダイレクトのみ残します。ラボと比較用rendererは撤去しています。
+
+## 入口と安全性
+
+- `/`: 既存 V1。`LiveCanvas.tsx` / `useCardLayout.ts` / `layoutEngine.ts` は変更しない。
+- `/v2`: 同じ認証・購読・署名・投稿を新しい描画エンジンへ接続する。投稿やリアクションは**実リレーへ送信される**。
+- `/v2/lab`: 固定カードを使う隔離した描画確認画面。AuthProviderを起動せず、署名・リレー接続・投稿を行わない。
+- V1/V2間の移動は画面を作り直す。**未送信の下書きは移動前に処理する**。同じV2内のnative/DOM切替はカードのDOMとReact stateを維持する。
+
+これは描画・配置を入れ替えるV2の最初の縦切り実装。認証、Nostr購読、スレッド構築、署名、カードの内容部品は再利用する。旧配置・Framer Motion依存の描画はV2から切り離した。全機能の作り直し・性能改善の実測・本番移行完了ではない。
+
+## 新しい分離
+
+1. `Home`: V1/V2共通の接続境界。
+2. `LiveCanvasV2`: スコア、下書き、楽観的投稿、返信のslotId統合。署名権限は従来通り。
+3. `v2/scene.ts`: CSS pxの配置とカメラ。既存順序を維持し、新着は末尾の短い列へ追加。V1の引力・dominoとは意図的に別仕様。
+4. `v2/CanvasScene.tsx`: 直接のcanvas子要素をHTMLで組み、paintで`drawElementImage`。DOMの複製やhtml2canvasは使わない。ViewportサイズのbitmapをDPR対応で確保し、カメラで移動・拡大する。
+5. SSRと初回hydrationではportalを出さず、hydration完了後に接続する。カードは安定したportal先を持つ。nativeが失敗したら同じDOMを通常表示へ移すため、入力やカードstateを再生成しない。
+
+## 対応検出
+
+`requestPaint` と `drawElementImage` が両方あることを確認する。`content` がある世代は `content="drawable"` と子の `drawable`、旧世代は `layoutsubtree` を使う。旧世代だけ戻り値のDOMMatrixをtransformに反映する。modernでは自動geometry更新に任せる。
+
+能力検出だけでnative成功とは表示しない。最初のdrawが成功してからnativeバッジを表示する。APIなし、draw例外、最初のpaintが期限内に来ない場合はDOMへ戻す。手動切替も可能。
+
+Chrome公式記事では157で正式搭載。旧Chromeや他エンジンの対応はバージョン文字列で断定せず、実際の能力を調べる。Chromeフラグや利用者のブラウザ設定は変更しない。
+
+- https://developer.chrome.com/blog/html-in-canvas
+- https://developer.chrome.com/blog/html-in-canvas-ot-changes
+- https://developer.chrome.com/docs/web-platform/html-in-canvas/concepts
+- https://developer.chrome.com/docs/web-platform/html-in-canvas/2d
+- https://wicg.github.io/html-in-canvas/
+
+## 操作・制約
+
+余白ドラッグ、ホイール移動、Ctrl/Meta+ホイールズーム、縮小/拡大ボタン、原点ボタン。ズームボタンは画面中央を基準に35〜200%の範囲で操作できる。領域にフォーカスして上下キー/Homeも使用できる。入力欄のホイールは奪わない。リンク・ボタン・入力をnative DOMとして残し、座標だけの独自クリック配送はしない。
+
+- 新着や高さ変化はResizeObserverで測定し、rAFで配置、paintで描画する。常時animation loopを回さない。
+- 操作中のカードはholdし、非holdカードの重なりを押し下げる。複数holdカード同士の成長による衝突解消は未対応。
+- 現段階では全カードを描画し、カリングはしない。既存購読側の上限は維持するが、巨大スレッド/画像/動画の性能実測はこれから。
+- cross-origin画像を含むbitmapのPNG出力は実装しない。
+- アニメーション、タッチpinch、V1引力レイアウトの再現は未実装。
+
+## 確認手順
+
+```sh
+cd apps/web
+npm ci
+npm run lint
+npm test
+npx tsc --noEmit --incremental false
+npm run build
+npm run dev
+```
+
+最初は `/v2/lab` を開く。nativeバッジ、実際の描画、ボタンの当たり判定、Tab、入力、DOM切替前後の入力保持、スクロールとズーム、原点、追加・削除、ウィンドウサイズ変更、DPR 1/2を確認する。nativeのモックテストはブラウザでの確認の代わりではない。
+
+実データの署名・投稿は `docs/testing/local-nip46-e2e.md` の隔離リレーと使い捨て鍵で行う。本アカウントへのテスト投稿は禁止。
+
+## 実ブラウザ確認とhydration修正
+
+lakcheのChrome 157.0.8103.51からVercel Previewの `/v2/lab` を確認した。
+
+- native modernで6枚のカードが目視でき、実際の画面座標クリックでボタンのカウントが増加した。
+- 日本語のtextarea入力、選択範囲4〜9、段落のドラッグ選択を確認した。
+- native→DOM→nativeの往復後も入力値とクリック数を維持した。
+- 余白ドラッグでカメラを移動した後も別カードの画面座標クリックが正しく動作した。通常ホイールの移動と原点復帰も確認した。
+- 7枚目の追加・削除、Tabでtextboxからリンクへの移動を確認した。
+- `/v2` は未認証ログイン画面のみ確認し、ログイン・署名・実リレー送信は行っていない。
+
+同時に初回読込でReact hydrationエラー #418 を確認した。serverでは空、clientではportalを即時描画する差を `useSyncExternalStore` のserver snapshotで解消する。SSR→hydrateRootの回帰テストは修正前にエラーを再現し、修正後は回復可能エラーなしで入力フォーカスとボタン操作まで確認する。portal接続はカードのautofocusより先に完了する。追加した縮小/拡大ボタンは中心座標維持・範囲制限・原点復帰を単体テストする。
+
+## この変更で未検証のもの
+
+hydration修正23004d4はChrome157で再確認し、#418なし、125%拡大後のクリック、100%復帰を確認済み。DPR切替、モバイル、巨大スレッド/メディア負荷、実リレーE2Eも未検証。モックnative APIのテストは実ブラウザ検証とは区別する。クラウドの独立Chromium起動はOSのsocket権限で制限されたため、上記の目視確認はlakcheで行った。Draft PRとして扱い、本番採用判断は残る検証後に行う。
+
+
+## 同一origin画像配信: 本命基盤（既定で無効）
+
+前段の5host標準optimizer試作4fa38daでは、Chrome157のimmutable Previewで画像読み込み・native描画・125%クリック・pan/原点復帰を確認した。認証済み実feedでもavatar表示とconsole errorなしを確認した。これらは以下の新routeの実機検証ではない。
+
+V2の画像wrapperは `/api/canvas-image` へ統一し、配信元hostの固定allowlistを撤去する。V1の画像表示は変更しない。カード・画像・テキストはnative canvas内に残し、DOM画像overlayは使わない。Next optimizerのremotePatternsは空にして取得境界の迂回を防ぐ。
+
+### 有効化ゲート
+
+routeは既定で503を返し、DNS解決も外部取得もしない。有効化には `CANVAS_IMAGE_PROXY_ENABLED=1` と `CANVAS_IMAGE_PROXY_SCOPE=protected-preview` の両方が必要。`VERCEL_ENV` / `VERCEL_TARGET_ENV` のどちらかがproductionまたは未知の値なら拒否する。platform環境変数がない場合、Preview専用scope設定を信頼境界とする。この場合はコードだけでdeploymentのproduction判定を証明できないため、2変数をproductionへ設定しないことが必須であり、「常にproductionを独立検出して拒否」とは主張しない。
+
+E2E中に限定許可を受け、上記2つの非secret設定をVercel target=preview、gitBranch=experiment/html-in-canvas-v2だけへ追加した。projectのSSO保護（全Preview）は維持し、予約system変数の上書き・全project設定変更・新credentialsは行わない。request query/header/cookieはgateの根拠に使わない。QA後はフラグとscopeを無効値へ戻す。既存immutable deploymentには環境snapshotが残るため、復旧後の設定変更だけで既存URLを停止したことにはならない。
+
+一般公開や本番有効化は別の判断であり、この実装だけで完了としない。既定ではV2の外部画像はplaceholderとなる。前段の成功版immutable Previewは比較用に残る。
+
+### 取得・画像境界
+
+- 公開HTTPS標準portのhostnameのみ。userinfo、未許可query/fragment、IP literal、SVGを拒否する。host制限撤去は認証付き画像やsigned URLの対応を意味しない。
+- Node runtimeでDNSの全候補を検査し、検査済みIPだけを接続lookupに固定する。TLS hostnameとSNIは元hostnameを維持し、redirectごとに検査する。
+- DNSを含む10秒deadline、redirect最大2回、stream入力5MiB上限を設ける。上流cookie/Authorization/Refererは送らず、上流headerを応答へ転送しない。
+- JPEG/PNG/WebP/静止AVIFのMIMEと実体を確認し（application/octet-streamはJPEG/PNG/WebPの3形式だけに限定して判定し）、Sharpの1600万画素・1frame・協調的処理時間制限を通して固定幅（32/64/128/640/1280）・quality75のWebPに再エンコードし、出力2MiB上限を設ける。出力byte検査前にnative側でbufferが確保され得るため、この値だけでprocess memory上限を保証しない。SVG・アニメーション等の非対応画像は拒否する。
+- 取得・変換失敗時に外部URLへfallbackしない。ファイル選択で自前生成したblobプレビューと自前iconは従来通り。
+
+### 濫用・コスト制約
+
+routeにはprocess内の同時実行制限、token bucket、容量制限付きTTL cache、inflight dedupeを設ける。Sharpのtimeoutは協調的で、native処理の即時停止・強制CPU隔離は保証しない。native decode中のdeadline超過では未終了処理の可能性があるためslotを保持し、2slotが残存した場合そのprocessの新規取得は停止する。通常の取得拒否とDNS/HTTP段階のtimeoutはslotを解放する。ただしserverless複数instance全体のquotaではなく、総費用上限を保証しない。任意URLの量産やinstance増加への分散制御は残る。Nostr pubkeyの提示、Origin/Referer、匿名署名だけを認証・濫用防止と扱わない。
+
+このため一般公開を有効にする前に、分散quotaまたは検証済みの入口制限等を別途整備する必要がある。新権限・資源・設定が必要になれば追加判断を求める。画像URL・bytesはアプリ基盤を経由するためprivacyと課金の評価も必要。新routeの大量feed性能、Vercel上のdecode資源境界、実ブラウザ画像描画は未検証。
+
+### 検証の区別
+
+単体テストではdefault-off、URL検査、DNS/IP固定、redirect、timeout、byte/MIME/decode境界、cache/同時数、V1維持、V2 srcとエラーplaceholderを検証する。mock HTTP/DNSによる境界テストは本番ネットワークの実証ではない。限定Previewの保護と有効化が確認できない場合は新routeの実機QAを行わず、local/test結果のみを報告する。
+
+### 多数画像と実フィード検証
+
+`/v2/lab` の成功は部品検証であり、認証済み実フィードのE2E成功を意味しない。off復旧版で画像がplaceholderになるのはgateの期待動作。これとは別に、旧UIでは同時2件を超えた429も初回onErrorで永久placeholderとなる欠陥があった。
+
+V2専用のsame-origin fetch queue（max2）、同一URLdedupe、bounded retry/cooldown、未使用blobに32件/16MiB/30秒の制限を持つcacheを追加する。表示中blobは参照がある間保持するため、この値は全体memory上限ではない。429はRetry-Afterに従い専用再試行8回まで、通常失敗は追加1回まで、503は停止する。元の外部URLへのfallbackはしない。成功画像bytesのblob URLは同一originとして扱うが、native描画の実機確認を別途行う。V1は変更しない。
+
+serverは同時2件を維持し、process bucketをburst60・毎秒4補充へ調整する。これは保護Preview内の補助制限であり、一般公開の費用保証ではない。実feedの多数画像、pan、profile表示、非対応query/formatによる欠落と一時制限による欠落を分けて確認するまでE2E完了とはしない。
+
+### 実フィードのMIME不整合
+
+認証済み実フィードでavatar/本文写真・pan後の増分画像・profile開閉を確認した。残失敗の1例は通常imgで表示できる画像がVercel取得時に `application/octet-stream` を返すことが固定分類ログで判明した。拡張子を信用せず、octet-streamだけは入力上限内でbytesを読み、JPEG/PNG/WebP magicと完全decodeを通ったもののみWebPへ再encodeする。HTML/SVG/GIF/未知形式は通さず、標準MIMEとmagicの不一致も拒否する。query/認証/ネットワーク制限は変更しない。
+
+### 静止AVIFと観測済みquery
+
+実feedの残失敗1件を単独routeと固定MIMEログでAVIFと特定した。AVIFはISOBMFF ftyp brand/box構造を検査し、avis/moov等のsequence・未知brandを拒否する。SharpのHEIF形式・AV1圧縮・pages1検査と既存画素/byte/deadlineを通してWebPへ変換する。octet-streamのAVIFはまだ対象外。
+
+queryはclientとserver共通の狭い許可ルールを使う。実feedで正常表示される0.gravatar.comの /avatar/32桁または64桁hex に限り、唯一のsize=整数1..2048を許可する。公開X metadataで確認したpbs.twimg.com/media/安全なfilenameに限り、format=webpとname=largeの2組だけを許可する。未知key・重複・認証/署名値・別host/pathへは広げない。redirectも同じ検査を通す。
+
+これらは公開サイズ/形式指定でありsecretを含む任意queryは受け付けない。許可された画像URL自体はVercelのリクエスト/キャッシュへ渡るが、アプリはURL全文や上流headerをログしない。Kojiraのv queryは用途未確定で、追加取得403後は調査を止め未許可とした。HTTP画像はTLS制約のため引き続き拒否する。
+
+### 埋込みrasterと追加の公開変換query
+
+実フィードの代替表示6箇所を調査した。1件はHTTPではなくdata:image/png;base64（437x437）、3件は2.gravatar.comのsize/d、1件はXの動画thumbnail、1件はBASEの画像変換queryだった。表示文言だけからHTTPや取得失敗と断定しない。
+
+埋込み画像はclientで厳密なbase64とJPEG/PNG/WebP/AVIFラベルを検査し、decoded 2MiB以内だけを同一origin POST /api/canvas-imageへ送る。URIをURL queryへ入れず、JSON本文はstream 3MiB・5秒・同時読取2件に制限する。serverはbase64/実体/animation/pixel/deadlineを独立検査し既存Sharp変換を共有する。GETとPOSTは同じgate、同時decode枠、token予算を使う。cache keyはdigestであり、raw dataをログしない。SVG/GIFや任意data MIMEは許可しない。client入力構文チェックだけをdecoder安全性とは扱わない。
+
+Gravatarは実際に観測した0.gravatar.comと2.gravatar.comのavatar hex pathに限り、size整数1..2048と任意のd=initialsだけを許可する。Gravatar公式はdに外部URLも認めるため、その一般仕様を丸ごと許可しない。Xは同じ固定format=webp/name=largeに対して、観測したamplify_video_thumb/数字/img/安全なfilenameパスを追加する。Xのこのパスを公式保証としては扱わない。
+
+BASEはbaseec-img-mng.akamaized.netの/images/item/origin/32hex画像だけ、観測済みimformat=generic、q=90、im=Resize,width=1200,type=normalの3組を許可する。Akamaiのimは一般には複雑な変換DSLなので、任意構文・Composite・外部URL・未知の数値指定は許可しない。qの一般仕様を検証済みとはせず観測値だけに固定する。初回公開page読取と既受信metadataのDOM確認を根拠とし、追加取得のHTTP拒否後に別取得経路で回避はしていない。
+
+資料: https://docs.gravatar.com/sdk/images/ 、 https://techdocs.akamai.com/ivm/docs/imquery 。新しいdata/追加queryの実フィードE2Eは公開後に別途実施する。従来ded8413aでは認証済み実フィードの225画像、AVIF/Gravatar/X画像のnative表示、pan/zoom/profile/新着を確認済みだが、新経路の成功とは区別する。保護されたbranch Previewはユーザーの継続確認用に有効のまま維持し、設定削除・本番有効化は行わない。
+
+POSTにはJSON読取前のprocess token bucket（burst10・毎秒1補充）も追加する。無効なJSONも予算を消費し、枯渇時は本文を読む前に429を返す。これもinstance内の補助制限であり、分散課金上限・強制CPU停止の保証ではない。
+
+実機でdata PNGがまだ拒否された原因は、base64 payload内のASCII SPACE 197文字だった（空白除去後は4の倍数で正常）。許可MIME・raw長上限を維持し、payloadからASCIIのHT/LF/FF/CR/SPACEだけを除去した後、従来の厳密base64/byte/decode検査を行う。clientの共有取得identityとserver cache digestも正規化後へ統一する。Unicode空白、percent encoding、URL-safe alphabet、欠けたpadding、不正末尾bitの補修はしない。参考: https://infra.spec.whatwg.org/#forgiving-base64-decode 。これは空白処理だけの採用で、forgiving decode全体を許可する変更ではない。
+
+## V2の新着入場とドミノ移動（重力継承前の実装履歴）
+
+従来V2は既存カード優先で新着を末尾へ追加し、位置変更も即時だった。新着を列の上部に差し込み、その列で実際に押されたカードだけに連鎖順を付ける配置へ変更する。既存slotの列と列内順序は維持し、スコアの定期更新だけで再ソートしない。列数/幅変更時は配置し直す。V1のgravityによる列間移動やスコア依存の押出し候補探索を全面移植する変更ではない。
+
+V1と同じ100msの連鎖差、stiffness300/damping30の減衰ばねを使い、長い列でも開始待機は最大600msに制限する。初期大量ロードは即配置し、それ以降の新規slotだけは目標より上から入場する。既知slotのカード内容・画像高さ変更は入場を再実行せず現在位置/速度から目標を変更する。連続新着でも進行中の待機を最初から延ばし直さない。休止タブから復帰したときの1frame差分は64msへ制限し、収束したらrAFを停止する。
+
+layout再計測はitems/hold/ResizeObserver/画像load等が変わった時だけ行い、cameraだけのpan/zoomは描画のみ。native drawElementImageとDOM fallbackは同じ現在座標を使用し、hit geometryもnative描画位置に追従させる。操作中/focusカードは目標ではなく実表示位置で固定し、手動DOM/native切替でも現在位置・速度・待機・目標を保持する。reduced-motionでは即配置し、設定変更イベントにも応答する。
+
+実機観察用のDOM属性: 各[data-scene-card]のdata-scene-x/yは現在ワールド座標、data-scene-target-x/yは目標、data-scene-phaseはwaiting/moving/settled/held、data-scene-delayは残待機ms。viewportのdata-scene-motionはanimating/settled/reduced。これらは同一描画フレームの値で、画面座標はcameraのpan/zoomを別途合成する。native描画・座標クリック・新着の連鎖は、署名や投稿をせず認証済み実フィードの自然到着で確認する。単体/mockやlabのみで実フィードE2E完了とは扱わない。
+
+## 縦スクロールのみの操作へ整理
+
+ユーザーの希望に合わせV2のアプリ内拡大縮小・自由panを撤去する。倍率は1、横cameraは0に固定し、ズームボタン・Ctrl/Meta wheelによるアプリ拡大・余白drag・独自方向キー移動を削除する。ブラウザ自体のアクセシビリティ用ページzoomは妨げない。
+
+viewportを通常のoverflow-y:auto/overflow-x:hiddenへ変更し、ホイール・touch・キーボード・スクロールバーの縦移動をブラウザへ任せる。current/target両方の最下端をextent高さに反映し、その内側のviewport高さのsticky描画layerへnative canvasとDOMfallbackを置く。layerはoverflow:clipとして独立したscroll containerにせず、focus時の二重offsetを防ぐ。cameraY=-scrollTopを一度だけ合成し、scrollイベントは再描画だけを要求する。scroll anchoringを無効化し、focus revealも必要最小限の縦移動だけにする。先頭ボタンはscrollTopを0に戻す。
+
+ドミノのworld座標・spring・hold・reduced-motionは維持。labも同じ操作仕様と案内に揃える。従来節のpan/zoomは過去版の検証履歴で、現在の機能ではない。今回のsticky/native scrollの実フィード検証は接続環境復旧後に行い、jsdomテストのみで実機完了とは扱わない。
+
+
+## V1の重力とスコア初期配置の継承
+
+実フィードのCanvasSceneItemへslotIdだけでなく、同じscoredCardsのCard全体を渡す。V1の純粋なbuildInitialLayout / insertCard / reflowをV2 adapterから直接利用し、初期配置はスコア降順入力を逆順に各列の先頭スコアで振り分ける方式へ変更する。新着は同一pubkeyに対するgravityCostで列を選び、scoreとgravityを用いる列間押出し・隣列上優先・hold循環回避・高さ補正も同じ関数を通す。スコアだけの定期更新では既存カードを並べ直さない。
+
+エンジンの論理gridをアニメーション現在位置・表示hold座標から分離して保存する。新着burstはscoredCards順に逐次挿入し、chainOrderはV1と同じ上書き順で統合する。高さ変更/削除/hold変更はreflow、列数変更は初期配置の再構築。DOM/native切替でも論理gridを保持する。labのCard情報を持たないfixtureにも入力順スコアと独立pubkeyを与え、同じadapterを通す。
+
+V1との意図的な残差: 横幅360上限・水平間隔16・viewportからの列数計算・外余白16はV2のまま。重力の距離係数はV1のCOLUMN_WIDTH320を変更せず、縦間隔12と未測定高さ120を継承する。初期ロード即配置、新着の上方入場、待機600ms上限、操作中の実表示位置holdは従来V2を維持する。列数変更時も実表示holdを残すため、狭い画面へのresize中にheldカードが画面外に残る既知の差は今回対象外。V1完全同等と表現せず、重力と初期配置の判断が共通であることを検証する。
+
+表示holdは実座標を残す一方、論理gridはV1同様にreflowするため、その差がある間は一時的に表示カードが重なる可能性がある。hold/display差の完全な統一はこの変更に含めない。
+
+比較回帰はV1関数の出力との一致を確認する。実フィードでの重力の列選択・列間押出しと操作は新Preview公開後に確認し、単体テストやlabを実フィードE2Eとは呼ばない。
+
+
+## V2だけの即時上詰め試作（収束待ち方式の履歴）
+
+新着の重力押出し・ドミノ移動をまず見せ、そのばねが収束した直後に一度だけreflowして空隙を詰める。10秒score tickや次の入力を待たないが、押出し途中に最終座標を変えて列間移動を消すことは避ける。上詰めは追加のドミノ待機を付けずspringで移動する。reduced-motionでは同じ処理を即配置する。
+
+挿入時だけpendingを立て、通常の高さ/score/hold変更によるreflowや初期配置で消費する。新着burstは最新の押出しが収束するまで待つため、連続して到着する間は上詰めが延期され得る。上詰めはpendingを必ず消費し、holdで目に見える隙間が残っても再試行ループしない。操作中カードは既存の実位置holdを維持し、解除時の通常reflowへ委ねる。毎frameの再計算や収束後の無限rAFは行わない。
+
+V1には変更を加えない。V2は次の新着が早期に詰めたgridを使うため、以後のgravity候補がV1の次tick前と異なる場合がある。V1と同じreflow結果へ早く進める試作であり、完全な時系列一致ではない。観察用viewport属性data-scene-compactionはpending/idle。実フィードでの見え方は新Previewで確認する。
+
+
+## 新着時に詰めた最終配置へ直接移動
+
+収束後の二段目上詰めを撤去する。新着burstをgravityで逐次挿入し、削除済みslotを除いた結果に一度だけreflowを適用して最終目標にする。挿入で決まった列と列内順序、chainOrderは維持し、詰めた位置までドミノ状に移動する。上詰めを別の移動として待たず、現在位置・速度・残待機を引き継ぐ。毎frameの配置再計算は行わない。data-scene-compaction属性は不要となり撤去する。
+
+重力の中間押出し座標は表示されないため、従来の下がってから上がる動きは減る。動く途中のカード同士の交差や実位置holdによる一時的な重なりは既存の制約として残る。V1には変更を加えない。reduced-motionは最終位置へ即配置。実フィードの見え方は新Previewで別途確認する。
+
+
+## 押出しの因果関係を短時間示す線（背面の控えめな版の履歴）
+
+移動量が多い列やchainOrder順を推測で結ばず、placeCardで実際にcardIdがvictimIdを押し出した親子関係だけをoptional traceで記録する。終端の移動も含めるが、heldカードへの迂回試行や後段の高さ補正は因果edgeに含めない。burstは新着rootごとに独立したtraceで扱う。V1はtrace未指定のままで、trace有無によるgrid/chainの同値回帰を行う。
+
+V2は現在表示中のカード間を淡い曲線で結び、左右を含む押出し関係を示す。移動してきた歴史的軌跡の残像ではない。カード背後に描き、同列は左側の余白、別列は相手側の縁を接点にする。nativeはcanvas上でカード描画前に描き、DOM fallbackだけ同じ曲線のaria-hidden/pointer-events-none SVGを使う。本文とクリック領域を覆わず、描画や移動の目標は変更しない。
+
+最新4root・最大96edgeに限定し、画面外の曲線を除外する。新着batchのrevisionだけで起動し、最大1400msで終了する。score/高さ更新やDOM/native切替は効果を再開始しない。列数変更時は消し、reduced-motionでは抑制する。ぼかしfilterやshadowは使わず、細い線を二重描画するだけ。効果と移動が終わればrAFを止める。大量新着時は最新batchに置き換え、過去の線を蓄積しない。カード背後に隠れる区間やheld時の一時的重なりは実機確認が必要で、全押出しを常に可視化できる保証ではない。
+
+
+実フィードで線が薄く経路を追いにくかったため、色を#0284c7、芯を2px/最大alpha0.6、周囲を4.5px/0.14へ調整する。nativeとDOM fallbackは同じ定数を使用する。寿命1400ms・fade・カード背面の描画順・因果経路は変えず、blur/shadowも追加しない。長いカードに隠れる区間がある制限は残る。
+
+
+## 魔法の杖のような前面の軌跡を試す
+
+ユーザーの希望で控えめな背面線を置き換え、カード中心を通る明るい軌跡と星・粒を前面へ出す。紫/ピンクの太い外側と白金色の芯を重ね、粒は実際の押出しedgeの曲線上を時間に応じて進む。因果関係・layout・ドミノ・同時上詰めは変えない。移動の過去座標を蓄積する残像ではなく、現在のカード間の因果経路を魔法風に見せる試作。
+
+nativeはdrawElementImageでカードを描いた後に同じcanvasへ描画。DOM fallbackはカードstacking contextより前面のaria-hidden/pointer-events-none SVGを使用する。文字に重なる見え方は今回明示的に許可された実験だが、クリックや入力のhit領域は変更しない。reduced-motionでは効果を抑制し、途中で設定を変更しても即停止する。
+
+最大2200ms、最新4root/96edge・粒子48個に制限する。粒子はedge識別子と経過時間から決まるため毎frameの乱数やタイマーを持たない。native/SVGは同じ曲線・粒形・色・透明度を共有し、mode切替で寿命をリセットしない。blurやshadowfilterを追加せず複数の通常strokeで光を表現する。静止後はrAFを止める。実機での見え方・前面効果中の操作はPreviewで別途確認する。
+
+## 線を描かない金色の星屑へ変更
+
+上のリボン状の軌跡はユーザーのイメージと異なるため撤去する。因果edgeの曲線は非表示の粒子配置ガイドにだけ使い、金色・白の細かい光点と少数の大きな星を、横方向にも不規則に散らす。参考画像をアセットとして取り込まず、決定的な手続き描画で表現する。native/SVGとも連続線や中心線を一切strokeせず、独立した粒のfillと一部の局所的な光だけを描く。
+
+主粒子は最大240個。大きさ・位相・横方向の広がりを変え、等間隔の数珠状には配置しない。最新4root/96edge、2200msの寿命、reduced-motion抑制、前面描画と操作透過は維持する。因果関係・配置・同時上詰めには変更を加えない。多数edgeでは粒子数の上限により密度が下がり、実フィードでの見え方は改めて確認する。DOMのクリックテストは実座標hitの代替ではない。
+
+白いカード上で淡い光点が見えにくかったため、星と砂の外側を濃く彩度の高い金色にし、小さい白黄色の芯を重ねる。連続線は戻さない。画面を横切る長いedgeでは、曲線の可視区間を有界な処理で求めて粒子を配分し、画面外の長さで可視粒子の密度が薄まるのを抑える。native/SVGへ同じworld viewportを渡し、色・芯・粒子位置を共有する。主粒子240個の上限は維持し、SVGのノードは粒ごとの局所光・本体・芯を合わせ最大720個。実フィードでの見え方は再確認する。
+
+## 選択式エフェクトと疑似立体ドミノ
+
+新着エフェクトをOFF・キラキラ・ドミノ（試作）から選択でき、同じoriginのlocalStorageへ保存する。既定は従来のキラキラ。保存できない環境でも同じタブでは選択できる。切替時に進行中の効果を止め、過去の新着を再生しない。OFFは配置と通常のドミノ移動を止めず、追加の視覚効果だけを抑制する。
+
+ドミノは透視投影の3Dではなく、カード下辺を基準にした短縮・傾きを2Dアフィン行列で表す試作。実際の押出しtraceでつながるカードへ因果順の時間差を付け、現在の配置モーションに重ねて傾いて戻す。nativeは各drawElementImage直前のCTMへ行列を適用し、カードを原点から描く。DOMは同じ行列をCSS matrixで適用する。DPRはnativeだけに適用し、world座標と縦scrollを二重に加えない。キラキラの粒子実装や配置計算は変えない。
+
+focus/hold中のカードは変形させず、reduced-motionでは追加効果を抑制する。行列は裏返しや特異状態を避ける。nativeのhit領域はdrawElementImageによるgeometry同期に任せ、独自の矩形hit判定は加えない。これはAPI仕様に基づく設計で、実機の変形中クリック・入力・mode往復は別途確認が必要。cloudのmockやlabは実フィードE2Eの代替ではない。
+
+変形中のpointerdown後にfocusが入ると、focus holdがidentityへ戻してclick前に対象が移動する経路があるため、押下中は最後に描いた矩形・変形を固定する。nativeは最後のpaint、DOMは最後に適用したCSSのsnapshotを使い、未描画の次frame値を使わない。primary/左ボタンのpointerIdを照合し、pointerup後もclick処理が終わるまで保つ。clickが発生しない場合はpointerupから700msで解除し、cancel・window blur・カード削除・mode/選択変更・reduced-motion・unmountでも解除する。押下による同カードのfocusでは未変形座標に基づく自動scrollも抑制する。通常のkeyboard focusは従来どおり。実機で観測したクリック失敗の原因がこの経路と確定したわけではなく、pointerdown前の移動競合も別途確認が必要。
+
+## 台形の透視変形を内側のDOMで確認
+
+2D CTMだけでは台形の透視投影は作れない。外側のdrawableは通常の平行移動描画のまま、非drawableの内側へCSS perspective/rotateXと影を適用する静止probeをlabに用意する。外側自身のCSS transformはsnapshotの外にあるため使わない。静止した台形の上・中・下のボタン、入力、DOM/native切替で画素とhitの対応を確認してから実フィードのドミノへ採用を判断する。これは部品検証であり実フィードE2Eではない。現時点で従来のアフィン型ドミノを置き換えたことを意味しない。
+
+## 内側の面の透視投影を実フィードへ適用
+
+ceeeaca5の静止probeをChrome157のnative modernで確認し、明瞭な台形・厚み・影、上/中/下の実座標クリック、入力とTab、DOM/native往復時の値保持が成立したため、ドミノの面をCSS透視投影へ切り替える。静止probeの結果を動的な実フィードの操作保証とは扱わない。
+
+外側のdrawableは通常の平行移動と元の幅・高さを維持し、非drawableの内側だけをperspectiveとrotateX/rotateYで倒す。因果関係の押される方向に応じて上下左右の辺を支点とし、反対側を奥へ倒す。最大52度。影は元の矩形内に置く下敷きと面内の明暗に限定し、外側へはみ出す影のために描画領域やカード間隔を変更しない。キラキラ/OFF、配置・ばね・待機・縦スクロールは変更しない。
+
+押下中は最後に描いた面の姿勢と矩形を保持し、focusによるidentity化や自動scrollでclick対象が逃げるのを防ぐ。効果終了・OFF・reduced-motionでは面と装飾を戻す。DOM fallbackでも同じ内側のCSSを使用する。動的な変形中のクリック、scroll、DPR変更、画像による高さ変更の見え方は公開後に実フィードで確認する。
+
+旧layoutsubtree APIでの内側透視とhitの対応は今回未検証のため、ドミノ選択時はDOM fallbackへ切り替える。modern nativeを無理に擬装しない。装飾はaria-hidden/pointer-events:noneで、カードの入力状態は同じportal内に維持する。
+
+## 手前へ倒れて広がるドミノへ変更
+
+奥側の辺が縮む見え方ではなく、押される方向の反対辺を支点に保ち、進行側を手前へ倒す。下方向なら上辺を固定して下辺を広げ、左右方向も同じ考え方でrotateYの支点を選ぶ。極端に大きくせず、透視距離をカード寸法に応じて調整する。配置・移動先・因果順序は変えない。
+
+面が元の矩形外へ出るため、logicalなカード寸法と描画用の透明な余白を分離する。余白を含めたdrawableを通常のdrawElementImageで一回描き、DOM fallbackも同じ構造と座標を使用する。未検証のsource-outsets overloadには依存しない。高さは変形しない内側の面から測定し、余白が配置の高さや間隔を変えないようにする。透明余白と陰影は操作を受けず、実際の面だけが操作対象になる。押下時は最後に描いた姿勢と捕捉領域を維持する。
+
+拡大した面が近隣カードに重なる見え方は、この前面方向の変更による意図的な差。描画順とhit順を同じに保ち、独自の矩形hit判定は追加しない。実フィードでの越境部分の画素・クリック、押下固定、scroll、OFF復元を新Previewで確認する。
+
+透視距離は少なくとも進行方向の長さの5倍とし、最大角52度でも手前辺の倍率は約1.19まで。長大なカードでは全pulseの縦横の越境を各辺64px以下に抑えるためさらに距離を増やす。描画余白はAA分を含め各辺66pxで効果中固定し、毎frameのpadding増減による測定ループを避ける。効果がない時は余白を戻す。
+
+## 一斉に起立し、倒れる部分だけを連鎖させる
+
+各カードの起立開始を深さでずらす方式を変更する。同じ新着batchの実際の因果連鎖に含まれるカードは、共通の200msで同時に起き、80ms保持する。その後だけ深さごとの100ms差（最大600ms）を付け、420msで平面へ戻す。最長寿命は1300msのまま。配置のばねや移動待機は別であり、この変更は追加の傾き効果だけに適用する。
+
+hold中のカードは起立から除外し、解除後は現在のbatch時刻に合流して過去を再生しない。押下中の描画姿勢固定は従来どおり。新しいbatchが来た場合は最新の因果関係へ置き換え、古い効果を蓄積しない。reduced-motion/OFFやmode切替の寿命管理、キラキラ、透視投影と捕捉余白は変更しない。連続新着による起立のやり直しは既存のbatch置換方針に従うため、途切れない連続演出の保証ではない。
+
+## 動的クリックの受動診断
+
+動くカードのDOM座標を読んだ後の実クリックでプロフィールが開かない例を切り分けるため、viewportに直近のpointerdown・pointerup・clickの受動診断を保持する。対象の要素種別、既存のカードID、button内かどうか、イベント順、描画番号、数値座標と姿勢だけを扱い、本文・表示名・URL・イベントオブジェクトは保存しない。各種類の最新1件だけを上書きし、履歴や外部ログへ蓄積しない。
+
+診断はイベントをキャンセルせず、focusや状態変更・追加描画を起こさない。イベント内で矩形を再測定して再現条件を変えることも避ける。読み取った座標と実pointerdownの対象が異なるのか、down後にup/clickの対象が変わるのかを実機で比較するための情報であり、原因が既に確定したことを意味しない。
+
+viewportのdata-scene-last-pointer-down/up/clickが各最新のJSON、data-scene-paint-serialとdata-scene-geometry-serialが描画/姿勢適用番号。down診断は既存press処理より前のcaptureなのでpressed:nullでも正常であり、その後のup/clickと比較する。drawnは最後に描いたカード位置・傾き、pendingは現在の計算値。実クリック対象のcard/buttonが読取時と違えばdown前の移動を疑い、同じ対象でdown/up/clickが分かれれば押下後の変化を調べる。mode変更時は診断を初期化する。
+
+## エフェクトをnative限定にし、WebGL投影を部品検証
+
+DOM fallbackではキラキラ・ドミノを描かない。保存済みの選択は維持するが、DOMへの退避で進行中の追加効果を止め、nativeへ戻っても過去のbatchを再生しない。通常の配置モーションとは別の制約である。
+
+CSS3Dを毎frame snapshotへ反映する方式と、平面HTML textureをWebGLで透視投影する方式を同じfixtureで比較する独立probeを追加する。WebGLではtexElementSubImage2DでHTMLを取り込み、描画と同じ射影をupdateElementGeometryに渡す。2Dのaffine拡縮へ戻して台形と呼ぶことはしない。API存在・画素・操作位置・DPR/scrollが実Chromeで確認できるまで実フィードへ採用しない。
+
+比較はUIから開始する短時間のframe間隔・描画回数・texture更新回数で行う。CPUやタスクマネージャは測定しない。1枚のprobeでの改善は、数百枚の実フィード性能の証明ではない。textureの更新漏れ、入力・画像・font・hover/focus、容量・context lossなどを別途検証する必要がある。
+
+frame診断はrequestAnimationFrame callbackの間隔であり、GPUの実行時間や正確な落ちframe数ではない。33.4ms超の回数は固定しきい値の参考値として表示し、画面のrefresh rateやバックグラウンド化の影響を含む。同じ端末・viewport・fixture・測定時間で比較する。
+
+## WebGLを実フィードへ接続する段階
+
+71a8ab89のChrome実機probeでは、DPR2で上下・alpha・台形、四隅クリック、入力更新、Tab、scroll後クリックが成立した。5秒の1枚比較はWebGLが300 intervals/p95 17.5ms/upload1、CSS版が301 intervals/p95 17.2ms/upload301で、frame間隔の改善は確認できない一方、角度変更だけのtexture再取得が減ることを確認した。これを多数カードの速度改善の証明とはしない。
+
+実フィードでは平面HTML textureを再利用し、角度・位置・陰影をGPU側で描画する。キラキラも同じWebGL canvasのカード前面に粒として描き、HTMLのhit geometryはカードだけに設定する。旧CSS＋Canvas2D版は通常のエフェクト選択とは別のQA比較に残す。DOM fallbackではどちらの追加効果も描かない。
+
+textureは可視領域を優先し、削除・失効・容量制限に応じて解放する。管理するtexture bytesの上限は、ブラウザdriverやframebufferを含むGPUメモリ全体の上限ではない。画像・入力・font・focus/hover等の変更は再取得し、changedElementsが利用できなければ正しさを優先して可視textureを更新する。対応できないサイズやcontext lossは無言の画像欠落にせず、状態を保つ平面DOMへ退避する。
+
+比較用の固定40枚fixtureと有限の追加・高さ変更sequenceを用意し、同じ入力でQA計測を繰り返せるようにする。実フィードの自然新着は異なるイベントになるため、数値を同条件のA/B実験とは扱わない。実フィードの画素・操作と、再現fixtureの比較結果を分けて報告する。
+
+現在のtexture制限は単体32MiB・追跡合計128MiBで、MAX_TEXTURE_SIZEも確認する。可視領域と64px余裕内を優先し、画面外の非操作カードからLRUで解放する。focus/押下中は既存textureをpinする。削除時と失敗時はmanual geometryを解除する。画面外のカードは正しい画面外geometryを保ち、Tabによるfocus→scroll reveal→再取得を可能にする。
+
+QAの固定入力は初期40枚から、1秒で1枚追加、2秒でcard1の高さを160px増加、3秒で2枚追加、4秒で高さ復元と末尾削除、5秒で終了。初期化後に同じrenderer/effect/viewportを選んで実行する。再生ボタンと計測tokenは同じ更新で開始し、計測起点は次のrAFのため約1frameの差がある。単発結果を性能保証にせず複数回の比較と実フィードの操作確認を行う。
+
+## 実フィードWebGL初期化の修正
+
+f5177777の実Chromeでは単体probeが動く一方、実フィードのWebGLがDOMへ退避した。実フィード専用shaderの共有uniform cardSizeについてvertexとfragmentのprecisionが一致せず、ローカルの実Mesa GLESコンパイラでlink失敗を再現した。mockのLINK_STATUS成功固定では検出できなかった不整合であり、shaderのprecisionを明示的に統一する。
+
+退避理由は初期化・描画・watchdog等を固定分類したDOM属性に残す。上流の任意例外文字列・本文・URLを表示やログへ出さない。shaderの実リンク検査とChromeでの実フィード再確認は別の検証であり、この修正だけで多数カードの速度改善や操作成功を主張しない。
+
+## 第三の選択肢: 波紋（WebGL限定）
+
+キラキラ・ドミノ・OFFを残し、波紋を追加する。実際の押出し因果traceを各新着rootから辿り、カード内を通る小さな屈折と柔らかい光を深さ順に伝える。横方向の押出しも親子の目標位置から方向を決め、無関係な列全体へ波を広げたり接続線を描いたりしない。
+
+外形・配置・manual hit geometryは変更せず、既存の平面HTML textureをfragment shaderで読む位置だけ最大1.5 CSSpxずらす。外周では変位をゼロにし、focus・押下・hold中はそのカードの波紋を止める。文字や写真が動くため、見た目の読みやすさと操作は実フィードで確認する必要がある。角度や屈折の時間変化だけではtextureを再取得しない。
+
+1枚の通過時間は700ms、因果深さごとの100ms差は最大600ms、全体1300msで終了する。最大4root/96edgeに限定し、新しいbatchは従来どおり最新へ置き換える。reduced-motionでは停止、DOM fallbackと旧CSS比較では波紋を描かず、WebGLへ戻っても過去のbatchを再生しない。選択は既存の設定と同様に保存する。
+
+内部画素は最大1.5pxだけ元のDOM hit位置からずれる意図的な差がある。新しい独自hit領域を作らず、押下が届いたカードでは即抑制するが、これを完全な画素単位hit一致とは呼ばない。公開後に波紋中の実座標クリックと入力を確認する。
+
+### 波紋の視認性を強める調整
+
+初版ac45e611は実フィードで控えめすぎるというフィードバックがあったため、屈折の上限を1.5から6 CSSpxへ変更し、幅広いシアンの明部と柔らかな暗部が通過する波へ調整する。中盤の強さを保ち、白いカードでも光だけが背景に溶けないようにする。700ms通過＋因果深さの最大600ms差、外周の変位ゼロ、操作中抑制、native WebGL限定は維持する。
+
+外形とDOM hit位置は引き続き固定で、内部画素との最大差は今回6pxになる。読みやすさと波紋中クリックは強調後の実フィードで再確認する。texture取得回数やサンプル数を増やさず、他のエフェクトには変更しない。
+
+調整値は帯のvariance 0.025、シアン混合最大32%、後方の陰影混合最大15%。時間強度は中央70%で1を保ち、両端は連続的に0へ戻す。波形を200001点走査した最大変位は約5.487 CSSpx（境界・時間の係数を1として評価）で、設定上限6px以下。これは数式の走査であり、実画面の視認性やクリック精度の測定ではない。
+
+### 波紋がpadding付近で止まる見え方の修正
+
+dcc8ba9cでは4辺それぞれのUV 8%をsmoothstepで減衰させ、同じ係数を屈折・明部・暗部へ掛けていた。幅360pxなら約29px、高さ1000pxなら80pxの減衰域となる。CSS padding自体を除外していたのではなく、この相対幅のmaskが広い静止枠として見えていた。
+
+明部・暗部は元のカード面全体へ通し、屈折の境界保護だけをCSSpx基準へ分離する。カードが長くても保護域を広げず、外側geometry、最大変位6px、操作中抑制、寿命は変更しない。透明な角に色を足さず、他のカードをsampleすることもない。実画面ではblank padding部分の光の連続性と丸角の輪郭を別々に確認する。
+
+境界ガードは実際の4辺からの最短距離を6 CSSpxで割り、1以下に制限する。変位の大きさが残りの境界距離を越えず、6px以上内側は減衰しない。光と暗部はこのガードと独立してpaddingを含む面全体へ進む。
+
+元UVのalphaを維持するため、波紋中だけ元UVと変位UVの2sampleを使う。両方がほぼ不透明なところで屈折色を混ぜ、透明な丸角やアンチエイリアス輪郭は元のcoverageを保つ。通常カードは従来の1sample、texture uploadは増えない。追加sampleの実機性能影響は未測定で、以前の「sample数を増やさない」方針から輪郭の正確さを優先した変更である。
+
+## 挿入位置を中心とする紫の同心円
+
+方向別に各カードを通過していた波紋を、挿入カードの中心から広がるワールド座標の同心円へ変更する。色はアプリのpublic/icon.svgで背景・カード内線に使う #7C3AED を基準にする。UIにはTailwind purple系も使われているが、今回はアイコンの固定値を採る。
+
+新着batchの開始時に、挿入カードの最終配置の中心を発生源として固定する。入場中のカードの表示中心ではなく、着地する位置を起点にするため、ばね移動や画像の高さ更新で波の中心が追いかけて揺れない。スクロールも発生源や時刻を変えず、各カードの現在ワールド位置から同じ円をsampleする。カード間の空白そのものには描画しないが、同じワールド座標なら同じ波の位相になる。
+
+因果traceから最新4発生源と、その実押出し辺のtoIdだけをbatch開始時に固定する。挿入root自身は暗黙に対象へ入れず、別の実押出し辺のtargetになった場合だけ含む。heldへの迂回試行や高さ補正は元traceに含まれず、後のgravity/reflow/resizeだけで動くカードも追加しない。対象面同士は同じworld波をsampleし、depthごとの時刻差は付けない。操作中のheld/focus/pressはその面だけ抑制する。対象集合は各traceの全targetを重複排除し、途中の辺数で切らない。キラキラ・ドミノの因果順序は変更しない。最大4発生源、新しいbatchへの置換、有限寿命、操作中抑制、DOM/CSS比較での停止は維持する。
+
+波の速度は1000 CSSpx/秒、先頭と200px後ろの2本の同心円、帯の幅パラメータ70px、全体1800msで終了する。複数発生源が重なる箇所では最も強い一波を採り、変位を加算しないため最大6pxを維持する。波の中心が後から削除されても開始済みの円は寿命まで残し、次の新着batchで置き換える。各面の境界6pxガードとalpha保護は維持するため、カードの際では屈折だけ弱くなるが、光の位相は共通である。
+
+対象は選択されたtraceのtarget集合の和集合であり、対象カードには全発生源共通の波を渡す。各source固有の子孫だけにそのsourceの円を割り当てる方式ではない。QAのdata-scene-ripple-targetsはこの固定対象ID集合、data-scene-ripple-cardsは現在存在し操作中でない対象面数で、実際に円の帯と交差している面数ではない。
+
+## 本番入口の整理（本番有効化・mergeは別判断）
+
+通常入口 `/` はV2のUIへ統一し、旧 `/v2` は `/` へredirectする。未使用のV1 LiveCanvas・useCardLayoutと専用テストを撤去し、共有の配置エンジン・カードUI・回帰テストは維持する。障害時の復帰先は検証した以前のdeploymentであり、自動的にV1へ遷移する実装ではない。非対応環境では同じV2のDOM互換表示を使い、追加エフェクトのみ停止する。
+
+QA UI・計測・詳細pointer診断は既定off。専用のCANVAS_DIAGNOSTICS_ENABLED=1とCANVAS_DIAGNOSTICS_SCOPE=protected-previewが両方あるserver環境だけに許可する。既知のproduction/未知platform値は拒否し、system env未提供時はPreview限定設定の正しさを信頼境界とする。このflagは認証ではなく、deployment保護は別途必要。今回のコード変更では環境変数やSSOを変更しない。labはserver側で判定し、無効時notFoundする。リンク非表示だけで公開labを残す方式ではない。
+
+匿名画像routeの有効条件は既存のprotected-preview専用から緩めない。本人認証付きの別modeについては後述する。取得時のIP固定・redirect/byte/decode検査、process-local予算・cacheは維持するが、これは一般公開全体のquotaではない。公開本番でnative画像を有効にするには、検証済みの入口保護または分散予算・費用制御の選択と、その設定への別承認が必要。停止はCANVAS_IMAGE_PROXY_ENABLEDを1以外へ変更して対応deploymentを再作成する。既存immutable deploymentには以前の設定が残るため、変更だけで過去deploymentも停止したとは扱わない。
+
+画像gate無効のdeploymentでは、rootがserverで同じgateを評価し、V2をDOM互換表示＋既存の通常画像経路へ同時に切り替える。nativeだけ有効で外部画像が透明になる混在を作らない。新公開proxyを開かず画像を表示できるが、これは本番native完成ではなく意図的な縮退である。保護Previewの既存画像gate有効時は従来どおりnativeを使う。通常画像はブラウザから配信元へ直接要求する既存方式で、proxy経由とはプライバシー/対応形式が異なる。
+
+## 本人限定の画像配信認証（Preview設定済み、実署名は未実施）
+
+匿名公開proxyではなくowner-auth modeを追加する。必要なserver設定はCANVAS_IMAGE_PROXY_ENABLED=1、CANVAS_IMAGE_PROXY_SCOPE=owner-auth、CANVAS_IMAGE_OWNER_PUBKEYS（64桁hex公開鍵のカンマ区切り）、CANVAS_IMAGE_AUTH_ORIGIN（正規HTTPS originのみ）、CANVAS_IMAGE_AUTH_SECRET（32byte以上の十分な乱数secret）。secretをNEXT_PUBLICへ置かず、allowlistもclientへ配布しない。本人承認後に指定Preview branchだけへ設定済み。本番設定は未実施で、secret値は出力しない。
+
+初期・非owner・未確認・期限切れはDOM＋通常画像。明示ボタンだけが既存署名器へNIP-98 kind27235を依頼する。リレー投稿ではなく正規originの画像認証専用。GET statusは署名不要。challengeは120秒、検証POST実本文hash・u・method・owner・時刻・signatureとHttpOnly challenge cookieを検証する。署名eventはAuthorization headerで送りURLへ載せない。challenge/sessionは別purposeのHMACでorigin/allowlist構成にbind。cookieは__Host-名、Secure、HttpOnly、SameSite=Strict、Path=/。
+
+sessionは本人承認により7日（604800秒）固定で自動延長なし。各画像の本文・cache・DNS/decode前と応答前に検証。失効・401/403・kill時はDOMへ戻し、Blobと旧認証の通信応答を次sessionへ再利用しない。認証済みでもAPI非対応ならDOM。通常エフェクト設定はDOM時無効で保存値維持。毎画像署名はせず、ログイン連動の一回試行は後述する。
+
+statelessのため盗まれたcookieの個別即時失効やchallengeの厳密single-useは保証しない。challenge cookieと署名の両方を持つ者は短い有効期間に再送可能。sessionは期限、secret変更、allowlist/origin変更、kill switchで拒否。設定変更は既存immutable deploymentへ遡及しない。process内budgetは分散quota/費用総額の保証ではなく、ownerのみ高価な画像取得処理へ入れる仕組み。
+
+protected-preview modeは別条件で維持し既知production拒否。owner-authは全設定必須でPreview例外を流用しない。既存PRとPreviewへのコード反映までを対象とし、本番設定投入、実署名、Nostr投稿、merge・本番deployは対象外。採用前にorigin/owner/secretの設定・保管・rotationと実認証→画像→期限切れ→解除を別途確認する。
+
+同じ画面で解除を押した場合はnativeを即停止し、送信済みverify応答を待ってからDELETEして遅延Set-Cookieとの順序をそろえる。解除待ち中の別アカウント再認証も拒否する。ページ破棄・別タブ間までの厳密な要求直列化は保証せず、他タブの既存表示は次の認証拒否または期限タイマーまで残り得る。cookie削除は保存token本体の失効ではない。
+
+通常の表示設定はPC向けモーダルへまとめ、効果/OFF・DOM互換表示を選べる。Escape・背景・閉じる操作とTab循環、起点ボタンへのfocus復帰を備える。DOMでは選択済み効果を保持して無効化し、本人確認待ちとブラウザ非対応を区別する。QA用比較設定は引き続き診断gate内だけに置く。
+
+## ログインに連動する画像認証
+
+常設の追加本人確認ボタンをなくし、対応APIを持つブラウザでのログイン/復元後に画像sessionを確認する。有効なcookieは署名なしで再利用し、本人allowlist対象・native対応・手動DOM未選択の場合だけ初回の確認署名へ進む。能力検出は描画用とは別のcanvasで行い、署名・画像通信より前に完了する。公開鍵のeligible照会は不要な署名案内を避けるだけで、画像routeの本人署名検証を省略しない。
+
+署名器の承認UIは署名器側の権限によって現れ得るため、完全な無操作ログインを保証しない。署名はNIP-98画像認証のみでrelay投稿ではない。拒否・失敗・期限切れで自動再署名を繰り返さず、DOM通常画像のまま利用でき、再試行は通常設定内に置く。session期間は7日固定で、自動延長はしない。
+
+試行済み印はaccountごとにsessionStorageへ保存し、同じタブではreloadや再loginでも自動要求を再開しない。別タブにはlocalStorageの30分cooldownを使い、Web Locks対応時は署名処理を直列化しlock内でもcookieを再照会する。非対応時の120秒leaseはbest-effortであり全タブの厳密排他ではない。保存不可時は自動署名を止め、設定内の明示retryだけを許す。これらの印は認証資格情報ではなく、改変してもサーバー認証を回避できない。
+
+この変更のPreviewへ本人ログイン済みタブを再読込すると、条件を満たす場合に署名器の承認要求が出る。自動テストはmock署名器のみを使い、エージェントによる実本人署名は行わない。実機認証確認は本人操作への引継ぎが必要。
+
+## 7日sessionと通常ヘッダーへの整理
+
+新規発行するsessionのみ7日へ変更し、旧30分cookieは記載された元のexpiryまで受理する。古いcookieの有効期限を後から延ばさず、challengeは120秒のまま。署名拒否後の別タブcooldown30分はprompt抑制用であり、session寿命とは別で据え置く。
+
+通常画面の追加toolbar（renderer技術表示・先頭に戻る・設定）を撤去し、設定ボタンだけを元のCanvasHeaderへ統合する。効果選択、互換表示、画像認証理由/再試行は設定modal内に集約し、空feed・読込中も開ける。開発用比較・計測は診断gate内だけに残す。
+
+7日化は再確認の頻度を減らす一方、盗まれたsession cookieの利用可能期間も延ばす。statelessで個別即時失効はなく、既存のsecret rotation・allowlist/origin変更・kill switchの制約は変わらない。

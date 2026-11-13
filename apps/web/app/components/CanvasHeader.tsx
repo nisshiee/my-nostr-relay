@@ -11,6 +11,9 @@ interface CanvasHeaderProps {
   onLogout: () => void;
   showSignerControl: boolean;
   onManageSigner: () => void;
+  onOpenSettings?: () => void;
+  settingsOpen?: boolean;
+  settingsTrigger?: React.RefObject<HTMLButtonElement | null>;
 }
 
 /** npubを省略表示する */
@@ -20,7 +23,7 @@ function truncateNpub(npub: string): string {
 }
 
 /** キャンバスのヘッダー（タイトル、ステータス、投稿ボタン、npub表示、ログアウトボタン） */
-export function CanvasHeader({ status, npub, onAddDraft, onLogout, showSignerControl, onManageSigner }: CanvasHeaderProps): React.ReactNode {
+export function CanvasHeader({ status, npub, onAddDraft, onLogout, showSignerControl, onManageSigner, onOpenSettings, settingsOpen, settingsTrigger }: CanvasHeaderProps): React.ReactNode {
   return (
     <header className="flex shrink-0 items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-3 sm:px-6 dark:border-gray-800 dark:bg-gray-900">
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
@@ -47,6 +50,7 @@ export function CanvasHeader({ status, npub, onAddDraft, onLogout, showSignerCon
             {truncateNpub(npub)}
           </span>
         )}
+        {onOpenSettings && <button ref={settingsTrigger} type="button" onClick={onOpenSettings} aria-haspopup="dialog" aria-expanded={settingsOpen} className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs dark:border-gray-600">設定</button>}
         {showSignerControl && (
           <button
             type="button"

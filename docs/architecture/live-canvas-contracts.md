@@ -4,15 +4,23 @@
 
 ## 最初に読む場所
 
-- `app/page.tsx`: 認証、リレー、スレッド構築、画面の接続点。
+- `app/page.tsx`: 標準画面の入口。`app/components/Home.tsx` が認証、リレー、スレッド構築、画面を接続する。
 - `app/hooks/useNostrRelay.ts`: 接続・ノート・プロフィール・リアクション・キャッシュを組み合わせる。署名済みイベントの publish は1リレー以上の成功で成功とする。
 - `app/hooks/useNostrConnection.ts`: pool の所有者。アカウント変更・ログアウト・unmountで破棄する。
 - `app/hooks/useNostrNotes.ts`: kind:1/6 の購読、初期バッファ、リポストの取得、表示ノートの上限。
 - `app/hooks/useNostrReactions.ts`: kind:7 の集計、重複排除、30秒ごとの対象更新。
 - `app/hooks/useEventCache.ts`: 不変なイベントのIDキャッシュと進行中の取得共有。
 - `app/components/LiveCanvas.tsx`: スコア再計算、下書き・投稿・スレッドの統合、holdの操作。
-- `app/hooks/useCardLayout.ts`: 測定した高さ、配置状態、hold時の表示座標、アニメーション遅延。
+- `app/components/canvas/scene.ts`: 配置状態とhold時の表示座標。`sceneMotion.ts` が移動と連鎖遅延を管理する。
+- `app/components/canvas/CanvasScene.tsx`: 高さ測定、focus・押下中の保持、native描画とDOM互換表示。
 - `app/lib/layoutEngine.ts`: Reactに依存しない初期配置・挿入・reflow。
+
+## 描画方式と互換性
+
+現行画面は `LiveCanvas` と `components/canvas/` の一系統だけを使う。HTML-in-Canvas の WebGL texture API を検出し、未対応・初期化失敗・描画失敗・context loss・画像認証未成立時は同じカードDOMへ退避する。旧V1へ戻る経路ではない。Canvas2D＋CSS比較rendererとラボ/probeは撤去済み。
+
+エフェクトとDOM選択の保存キー `nlc-v2-effect` / `nlc-v2-manual-dom` は既存ユーザー設定を引き継ぐため変更しない。`/v2` のリダイレクトも旧ブックマーク互換のため残す。診断設定は残すが、通常は無効で、比較rendererを再び有効にするものではない。
+
 
 ## 接続と購読の寿命
 
@@ -31,7 +39,7 @@ pool・リレー・フォロー・アカウントなど購読条件が変わっ�
 ## ノートとリポスト
 
 - 初期EOSEまでは kind:1 と kind:6 をバッファする。初期処理は購読1世代につき1回だけ。
-- kind:1は `eventId` で重複排除し、スコア順で最大200件を残す。以後の追加時も上限を守る。REQの `limit:500` と表示上限は別物。
+- kind:1は `eventId` で重複排除し、スコア順で最大100件を残す。以後の追加時も上限を守る。REQの `limit:500` と表示上限は別物。
 - kind:6は最後の有効な `e` タグを元ノートIDとして使う。元のkind:1をキャッシュ経由で取得する。元イベントが見つからない場合、リポストだけの空カードを作らない。
 - 同じ元ノートのリポストは1枚に統合し、`created_at` がより新しいリポスト情報を採用する。同時刻は先に反映した情報を維持する。
 - 初期リポスト取得を待っている間もライブノートを受け取る。取得結果は**現在のstateへの追加・更新**にし、await前の配列でstateを置き換えない。すでにある `slotId` と新しいリポスト情報を保持する。
@@ -73,9 +81,9 @@ pool・リレー・フォロー・アカウントなど購読条件が変わっ�
 - 押し出し: 同列の直下、左右列の重なるカードを候補に、スコアと引力を使って移動先を選ぶ。holdの迂回先が循環したら現在列末尾へ退避し、必ず終了する。
 - 高さ差の補正: 挿入後、holdの位置を保持し、それ以外を下方向へ移動して重なりを解消する。可動カード同士の列内順序は維持するが、holdカードの下へ回り込む場合がある。hold同士は入力時点で重ならないこと。
 - reflow: 列割当と前回y順を維持し、現在の高さで積み直す。削除カードは除去し、未配置カードは追加しない。スコア変化でソートし直さない。
-- 移動連鎖の順序は `chainOrder`。hookはこれを0.1秒倍して遅延へ変換する。高さ変更／削除時は直前の遅延を保持し、列数変更ではリセットする。
+- 移動連鎖の順序は `chainOrder`。現行版は新着を全て挿入し削除を反映した後、一度だけreflowして空隙を詰めた最終位置へ動かす。`sceneMotion.ts` は連鎖順を100ms倍、最大600msの遅延へ変換する。進行中の移動では速度と残りの待機時間を引き継ぐ。
 
-`useCardLayout` の **cardLayout（エンジン座標）** と **displayLayout（holdで固定した表示座標）** は異なる。hold中は高さ変化などでエンジンがreflowしても表示位置を固定し、解除で追従する。列数変更ではフリーズを解除する。この固定表示は周辺カードと一時的に重なり得る。`insertCard` の非重複保証を、全てのアニメーション途中やhold中のdisplayLayoutまで保証するものと解釈しない。
+現行版の **grid（エンジン座標）** と **boxes（holdで固定した表示座標を含む）** は異なる。hold中は高さ変化などでエンジンがreflowしても現在の表示位置と幅を固定し、解除で追従する。列数変更でも表示の固定を維持するため、一時的な重なりや画面外への残留があり得る。`insertCard` の非重複保証を、全てのアニメーション途中やhold中の表示まで保証するものと解釈しない。
 
 下書き→投稿済みカードは `publishedSlotMapRef` の同じslotIdを使い、測定高さや配置を引き継ぐ。eventIdが変わったことを理由にslotIdを作り直すと、新規挿入や不要なアニメーションになる。
 
@@ -101,7 +109,7 @@ npm run build
 | Filter整合、取得共有、pool変更、失敗再試行 | `hooks/__tests__/useEventCache.test.ts` |
 | 実SimplePoolの再接続・複数リレー重複 | `hooks/__tests__/nostrPoolCompatibility.test.ts` |
 | hold循環、可変高さ、入力不変性、連続挿入 | `lib/__tests__/layoutEngine.test.ts` |
-| hold表示、解除・resize、同じslotId、削除＋挿入 | `hooks/__tests__/useCardLayout.test.ts` |
+| hold表示、解除・resize、同じslotId、削除＋挿入 | `components/canvas/__tests__/scene.test.ts`、`components/canvas/__tests__/sceneMotion.test.ts`、`components/canvas/__tests__/CanvasScene.test.tsx` |
 
 hookテストは制御可能なpoolと遅延Promiseで競合順序を固定する。ネットワーク速度や `sleep` に依存して再現しない。まず失敗テストを書き、関係する契約を読み、対象hook／純粋関数を小さく修正する。関数分割は契約を置く場所が必要になったときに行い、テスト追加と無関係な全面分割はしない。
 
@@ -110,3 +118,11 @@ hookテストは制御可能なpoolと遅延Promiseで競合順序を固定す�
 ## 今回固定しない範囲
 
 スレッド構築・プロフィール・カスタム絵文字など全hookの寿命を網羅した仕様ではない。hold表示の重なり解消、再接続状態の詳細表示、キャッシュ容量上限、同時フォロー更新の競合、全リレー失敗時のUXは別の設計課題として扱う。これらを変更するときは、その責務で再現テストと契約を追加する。
+
+## 波紋の寿命と対象
+
+波紋は挿入ごとに、挿入時の目標中心・開始時刻・その挿入traceの `toId` 集合を固定する。後続の挿入で進行中の波を置き換えず、それぞれ1,800msで終了する。再配置・scroll・画像の高さ変更は波の中心や寿命を更新しない。各カードには、そのカードを実際に押した波だけを渡す。異なる挿入の対象集合をまとめて別の波まで表示してはいけない。
+
+同時保持は最大16波。期限切れを除去してから新規波を受け入れ、満杯時は新しい波の演出だけを省略する。既存波を途中で打ち切ったり、省略した波を後から再生したりしない。各波は2本の同心円で、重なりは最も強い波の屈折を選び、変位を加算せず最大6 CSS pxを維持する。最大32リングの評価となり、textureの再uploadは増やさないが、この上限での実ブラウザ性能は別途確認する。
+
+hold・focus・押下中は当該カードの波紋だけを抑制し、解除時は元の時刻に追従する。OFF、別エフェクト、DOM互換表示、reduced-motionへの切替では保持波を消し、戻しても古い波を再生しない。

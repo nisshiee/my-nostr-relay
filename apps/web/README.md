@@ -8,7 +8,7 @@ Nostrのノート・リポスト・リアクションをライブ表示するNex
 2. [購読・配置の契約](../../docs/architecture/live-canvas-contracts.md)で責務と不変条件を確認する。
 3. 変更対象の `app/**/__tests__/` で現状を確認し、回帰テストから始める。
 
-認証と画面をつなぐのは `app/page.tsx`、購読の組合せは `useNostrRelay.ts`。配置の純粋関数は `layoutEngine.ts`、Reactの状態とhold表示は `useCardLayout.ts` が担当する。
+入口は `app/page.tsx`、認証・購読と画面をつなぐのは `app/components/Home.tsx`、購読の組合せは `useNostrRelay.ts`。`LiveCanvas.tsx` がカードを統合し、配置の純粋関数 `layoutEngine.ts` を `components/canvas/scene.ts` が呼び出す。測定・hold表示・描画は `CanvasScene.tsx`、移動アニメーションは `sceneMotion.ts` が担当する。
 
 ## 開発・検証
 

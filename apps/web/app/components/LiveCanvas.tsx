@@ -1,25 +1,18 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { CanvasImageProvider } from "./CanvasAwareImage";
+import { CanvasScene } from "./canvas/CanvasScene";
 import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
 import {
-  COLUMN_WIDTH,
   SCORE_UPDATE_INTERVAL,
-  COLUMN_GAP,
   SCORE_HALF_LIFE,
   OWNER_SCORE_HALF_LIFE,
-  DEFAULT_CARD_HEIGHT,
 } from "../lib/constants";
-import { DEBUG } from "../lib/debug";
-import { computeAllGravityPairs } from "../lib/gravity";
 import { calcFreshnessScore, sortByScore } from "../lib/scoring";
 import { useDraftNotes } from "../hooks/useDraftNotes";
 import { useReplyDrafts } from "../hooks/useReplyDrafts";
 
-/** isProcessing中にuseCardLayoutに渡す空配列（参照を安定させて無限ループ防止） */
-const EMPTY_CARDS: Card[] = [];
-import { useCardLayout } from "../hooks/useCardLayout";
 import { NoteCard } from "./NoteCard";
 import { ThreadCard } from "./ThreadCard";
 import { ComposeCard } from "./ComposeCard";
@@ -34,6 +27,10 @@ import { UserProfileModal } from "./UserProfileModal";
 import { HashtagModal } from "./HashtagModal";
 
 interface LiveCanvasProps {
+  diagnosticsEnabled?: boolean;
+  nativeImagesEnabled?: boolean;
+  imageAccessReason?: string;
+  settingsContent?: React.ReactNode;
   notes: NoteCardType[];
   threadCards: ThreadCardType[];
   profiles: Map<string, NostrProfile>;
@@ -65,12 +62,10 @@ interface LiveCanvasProps {
   unfollow: (targetPubkey: string) => Promise<void>;
 }
 
-function calcColumnCount(width: number): number {
-  return Math.max(1, Math.floor(width / COLUMN_WIDTH));
-}
-
-export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
-  const [columnCount, setColumnCount] = useState(1);
+export function LiveCanvas({ diagnosticsEnabled = false, nativeImagesEnabled = false, imageAccessReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
   const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
   const [hashtagModalTag, setHashtagModalTag] = useState<string | null>(null);
@@ -102,13 +97,6 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
   const [nowEpoch, setNowEpoch] = useState(() =>
     Math.floor(Date.now() / 1000),
   );
-
-  useEffect(() => {
-    const update = () => setColumnCount(calcColumnCount(window.innerWidth));
-    update();
-    window.addEventListener("resize", update);
-    return () => window.removeEventListener("resize", update);
-  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -257,355 +245,157 @@ export function LiveCanvas({ notes, threadCards, profiles, reactions, status, pu
     });
 
     return sortByScore([...scoredDrafts, ...updatedNotes, ...scoredThreads, ...dedupedFakeThreads]);
-  }, [notes, publishedNotes, draftNotes, threadCards, pendingNoteReplies, pendingThreadReplies, nowEpoch, holdSet, pubkey]);
+  }, [notes, publishedNotes, draftNotes, threadCards, pendingNoteReplies, pendingThreadReplies, nowEpoch, pubkey]);
 
-  // レイアウト計算
-  // isProcessing中は空配列を渡してレイアウトエンジンを停止する
-  // 参照を安定させるため、モジュールスコープの定数を使用
-  const layoutCards = isProcessing ? EMPTY_CARDS : scoredCards;
-
-  const {
-    handleHeightChange,
-    displayLayout,
-    delayMap,
-    computeColumnHeight,
-    heightMap,
-  } = useCardLayout(layoutCards, columnCount, holdSet);
-
-  // フルスクリーンモードの状態管理
+  // サイズ測定と座標は描画シーンが所有する。既存カードの通知は使用しない。
+  const handleHeightChange = useCallback(() => {}, []);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  // フルスクリーン時のバッジ表示タイマー
-  const fullscreenBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [showFullscreenBadge, setShowFullscreenBadge] = useState(false);
-
-  // フルスクリーントグル用キーボードショートカット（f のみ）
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // input/textarea フォーカス中は無視
-      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
-      if (tag === "input" || tag === "textarea") return;
-
-      if (e.key === "f") {
-        e.preventDefault();
-        setIsFullscreen((prev) => {
-          const next = !prev;
-          if (next) {
-            // フルスクリーン開始時: バッジを表示し、3秒後に消す
-            setShowFullscreenBadge(true);
-            if (fullscreenBadgeTimerRef.current) clearTimeout(fullscreenBadgeTimerRef.current);
-            fullscreenBadgeTimerRef.current = setTimeout(() => {
-              setShowFullscreenBadge(false);
-            }, 3000);
-          } else {
-            // フルスクリーン解除時: バッジを即座に非表示
-            setShowFullscreenBadge(false);
-            if (fullscreenBadgeTimerRef.current) clearTimeout(fullscreenBadgeTimerRef.current);
-          }
-          return next;
-        });
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey ||
+          target?.closest("input, textarea, select, [contenteditable=true], [role=dialog]")) return;
+      if (event.key === "f") {
+        event.preventDefault();
+        setIsFullscreen(value => !value);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  // 前回レンダーに存在したslotIdを追跡（既知カードの initial アニメーションをスキップするため）
-  const prevSlotIdsRef = useRef<Set<string>>(new Set());
-  const knownSlotIds = prevSlotIdsRef.current;
-  useEffect(() => {
-    prevSlotIdsRef.current = new Set(scoredCards.map((c) => c.slotId));
-  });
+  const items = scoredCards.map(note => ({
+    id: note.slotId,
+    card: note,
+    content: (
+      note.type === "compose" ? (
+        <ComposeCard
+          slotId={note.slotId}
+          pubkey={note.pubkey}
+          profile={profiles.get(note.pubkey)}
+          onHeightChange={handleHeightChange}
+          onPublish={(slotId, event) => { releaseCard(slotId); handleDraftPublish(slotId, event); }}
+          onInput={handleDraftInput}
+          onClose={(slotId) => { releaseCard(slotId); handleDraftClose(slotId); }}
+          publishEvent={publishEvent}
+          onHold={holdCard}
+          onRelease={releaseCard}
+          autoFocus
+          quotedEvent={note.quotedEvent}
+          cache={cache}
+          profiles={profiles}
+        />
+      ) : note.type === "thread" ? (
+        <ThreadCard
+          thread={note}
+          profiles={profiles}
+          reactions={reactions}
+          myPubkey={pubkey}
+          recentEmojis={recentEmojis}
+          emojiSets={emojiSets}
+          looseEmojis={looseEmojis}
+          fetchProfiles={fetchProfiles}
+          onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
+          onHashtagClick={openHashtagModal}
+          onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
+            sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
+          }}
+          onHeightChange={handleHeightChange}
+          onHold={() => holdCard(note.slotId)}
+          onRelease={() => releaseCard(note.slotId)}
+          cache={cache}
+          onReplyPublish={(signedEvent, noteCard, threadSlotId) => {
+            addThreadReply(signedEvent, noteCard, threadSlotId);
+          }}
+          publishEvent={publishEvent}
+          myProfile={profiles.get(pubkey)}
+          onQuote={(eventId, quotePubkey) => {
+            addDraft({
+              quotedEvent: {
+                eventId,
+                pubkey: quotePubkey,
+              },
+            });
+          }}
+        />
+      ) : (
+        <NoteCard
+          note={note}
+          profile={profiles.get(note.pubkey)}
+          recentEmojis={recentEmojis}
+          emojiSets={emojiSets}
+          looseEmojis={looseEmojis}
+          fetchProfiles={fetchProfiles}
+          onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
+          onHashtagClick={openHashtagModal}
+          reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
+          reactions={reactions.get(note.eventId)}
+          myPubkey={pubkey}
+          onReaction={(emoji, imageUrl) => {
+            sendReaction(note.eventId, note.pubkey, emoji, imageUrl).catch(console.error);
+          }}
+          onQuote={() => {
+            addDraft({
+              quotedEvent: {
+                eventId: note.eventId,
+                pubkey: note.pubkey,
+                sig: note.sig,
+              },
+            });
+          }}
+          onRepost={() => {
+            const originalEvent: NostrEvent = {
+              kind: 1,
+              content: note.content,
+              tags: note.tags,
+              created_at: note.created_at,
+              pubkey: note.pubkey,
+              id: note.eventId,
+              sig: note.sig,
+            };
+            sendRepost(note.eventId, note.pubkey, originalEvent).catch(console.error);
+          }}
+          cache={cache}
+          profiles={profiles}
+          onHeightChange={handleHeightChange}
+          onHold={() => holdCard(note.slotId)}
+          onRelease={() => releaseCard(note.slotId)}
+          onReplyPublish={(signedEvent, noteCard, originalNote) => {
+            addNoteReply(signedEvent, noteCard, originalNote);
+          }}
+          publishEvent={publishEvent}
+          myProfile={profiles.get(pubkey)}
+        />
+      )
+    ),
+  }));
 
   return (
-    <div className="flex h-screen flex-col bg-gray-50 dark:bg-gray-950">
-      {/* フルスクリーン時はヘッダーを非表示 */}
-      <AnimatePresence>
-        {!isFullscreen && (
-          <motion.div
-            key="header"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <CanvasHeader
-              status={status}
-              npub={npub}
-              onAddDraft={addDraft}
-              onLogout={onLogout}
-              showSignerControl={showSignerControl}
-              onManageSigner={onManageSigner}
-            />
-          </motion.div>
+    <div className="flex h-dvh min-h-0 flex-col bg-gray-50 dark:bg-gray-950">
+      {!isFullscreen && <CanvasHeader
+        onOpenSettings={() => setSettingsOpen(true)}
+        settingsOpen={settingsOpen}
+        settingsTrigger={settingsTrigger}
+        status={status}
+        npub={npub}
+        onAddDraft={addDraft}
+        onLogout={onLogout}
+        showSignerControl={showSignerControl}
+        onManageSigner={onManageSigner}
+      />}
+      {isFullscreen && <button
+        type="button"
+        onClick={() => setIsFullscreen(false)}
+        className="fixed right-3 top-3 z-50 rounded-full bg-black/70 px-3 py-1 text-xs text-white"
+      >f で戻す</button>}
+      <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="Live Canvas">
+        {(items.length === 0 || isProcessing) && <div className="pointer-events-none absolute inset-0 z-10"><EmptyState status={status} hasNotes={items.length > 0} isProcessing={isProcessing} /></div>}
+        <CanvasImageProvider enabled={nativeImagesEnabled}><CanvasScene settingsOpen={settingsOpen} onSettingsClose={closeSettings} settingsTrigger={settingsTrigger} items={isProcessing ? [] : items} heldIds={holdSet} diagnosticsEnabled={diagnosticsEnabled} allowNative={nativeImagesEnabled} nativeUnavailableReason={imageAccessReason} settingsContent={settingsContent} /></CanvasImageProvider>
+        {status === "connected" && items.length === 0 && !isProcessing && (
+          <p className="pointer-events-none absolute inset-x-0 top-0 py-16 text-center text-sm text-gray-500 dark:text-gray-400">
+            表示するノートはまだありません。投稿ボタンから新しいノートを書けます。
+          </p>
         )}
-      </AnimatePresence>
-
-      {/* フルスクリーン時のオーバーレイインジケーター（一定時間後に消える） */}
-      <AnimatePresence>
-        {isFullscreen && showFullscreenBadge && (
-          <motion.div
-            key="fullscreen-indicator"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            style={{ zIndex: 9999 }}
-            className="pointer-events-none fixed right-4 top-4"
-          >
-            <div className="rounded-full bg-black/40 px-3 py-1.5 text-xs font-medium text-white/80 backdrop-blur-sm">
-              f で戻す
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <main className="flex-1 overflow-y-auto p-4">
-        <EmptyState status={status} hasNotes={notes.length > 0} isProcessing={isProcessing} />
-
-        {/* eslint-disable-next-line react-hooks/refs -- knownSlotIds is captured from ref before JSX intentionally */}
-        {scoredCards.length > 0 && !isProcessing && (() => {
-          const containerHeight = Math.max(
-            ...Array.from({ length: columnCount }, (_, i) => computeColumnHeight(i)),
-            0,
-          );
-          return (
-            <div className="flex justify-center">
-              <div
-                className="relative"
-                style={{
-                  width: columnCount * COLUMN_WIDTH + (columnCount - 1) * COLUMN_GAP,
-                  height: containerHeight,
-                }}
-              >
-                {/* デバッグ: 引力のあるカード間に破線を描画（エンジンと同じ計算を使用） */}
-                {DEBUG.gravity && (() => {
-                  const pairs = computeAllGravityPairs(scoredCards, displayLayout);
-                  if (pairs.length === 0) return null;
-                  const minPull = Math.min(...pairs.map((p) => p.pull));
-                  const maxPull = Math.max(...pairs.map((p) => p.pull));
-                  const range = maxPull - minPull;
-                  return (
-                    <svg
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: "100%",
-                        pointerEvents: "none",
-                        zIndex: 9999,
-                      }}
-                    >
-                      {pairs.map((p) => {
-                        const pA = displayLayout.get(p.aSlotId);
-                        const pB = displayLayout.get(p.bSlotId);
-                        if (!pA || !pB) return null;
-                        const ax = pA.col * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
-                        const ay = pA.y + (heightMap.get(p.aSlotId) ?? DEFAULT_CARD_HEIGHT) / 2;
-                        const bx = pB.col * (COLUMN_WIDTH + COLUMN_GAP) + COLUMN_WIDTH / 2;
-                        const by = pB.y + (heightMap.get(p.bSlotId) ?? DEFAULT_CARD_HEIGHT) / 2;
-                        // min〜maxを0〜1に正規化（全ペア同値なら0.5）
-                        const norm = range > 0 ? (p.pull - minPull) / range : 0.5;
-                        const opacity = 0.15 + norm * 0.65;
-                        const width = 1 + norm * 3.5;
-                        return (
-                          <line
-                            key={`gravity-${p.aSlotId}-${p.bSlotId}`}
-                            x1={ax}
-                            y1={ay}
-                            x2={bx}
-                            y2={by}
-                            stroke={`rgba(255, 100, 100, ${opacity})`}
-                            strokeWidth={width}
-                            strokeDasharray="4 4"
-                          />
-                        );
-                      })}
-                    </svg>
-                  );
-                })()}
-                <AnimatePresence>
-                  {scoredCards
-                    .filter((n) => displayLayout.has(n.slotId))
-                    .map((note, idx, arr) => {
-                      const placement = displayLayout.get(note.slotId)!;
-                      const x = placement.col * (COLUMN_WIDTH + COLUMN_GAP);
-                      const y = placement.y;
-                      const delay = delayMap.get(note.slotId) ?? 0;
-                      const zIndex = holdSet.has(note.slotId)
-                        ? arr.length + 1000 // ホールド中は最前面
-                        : arr.length - idx;
-                      // 前回レンダーに存在していたslotIdはinitialアニメーションをスキップ
-                      // （NoteCard→ThreadCard変化やリプライ追加時のズームを防止）
-                      const isKnownCard = knownSlotIds.has(note.slotId);
-                      return (
-                        <motion.div
-                          key={note.slotId}
-                          layout={false}
-                          initial={isKnownCard ? false : { opacity: 0, scale: 0.8, x, y }}
-                          animate={{
-                            opacity: 1,
-                            scale: 1,
-                            x,
-                            y,
-                          }}
-                          exit={{ opacity: 0, scale: 0.8 }}
-                          transition={{
-                            x: {
-                              type: "spring",
-                              stiffness: 300,
-                              damping: 30,
-                              delay,
-                            },
-                            y: {
-                              type: "spring",
-                              stiffness: 300,
-                              damping: 30,
-                              delay,
-                            },
-                            opacity: {
-                              duration: 0.4,
-                            },
-                            scale: {
-                              duration: 0.3,
-                            },
-                          }}
-                          style={{
-                            position: "absolute",
-                            top: 0,
-                            left: 0,
-                            width: COLUMN_WIDTH,
-                            zIndex,
-                          }}
-                        >
-                          {/* デバッグ: スコア値オーバーレイ */}
-                          {DEBUG.scoring && (
-                            <div
-                              style={{
-                                position: "absolute",
-                                top: -18,
-                                right: 4,
-                                fontSize: 11,
-                                fontFamily: "monospace",
-                                color: "#fff",
-                                backgroundColor: "rgba(0, 0, 0, 0.7)",
-                                padding: "1px 5px",
-                                borderRadius: 4,
-                                zIndex: 10000,
-                                pointerEvents: "none",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              score: {note.score.toFixed(4)}
-                            </div>
-                          )}
-                          {note.type === "compose" ? (
-                            <ComposeCard
-                              slotId={note.slotId}
-                              pubkey={note.pubkey}
-                              profile={profiles.get(note.pubkey)}
-                              onHeightChange={handleHeightChange}
-                              onPublish={(slotId, event) => { releaseCard(slotId); handleDraftPublish(slotId, event); }}
-                              onInput={handleDraftInput}
-                              onClose={(slotId) => { releaseCard(slotId); handleDraftClose(slotId); }}
-                              publishEvent={publishEvent}
-                              onHold={holdCard}
-                              onRelease={releaseCard}
-                              autoFocus
-                              quotedEvent={note.quotedEvent}
-                              cache={cache}
-                              profiles={profiles}
-                            />
-                          ) : note.type === "thread" ? (
-                            <ThreadCard
-                              thread={note}
-                              profiles={profiles}
-                              reactions={reactions}
-                              myPubkey={pubkey}
-                              recentEmojis={recentEmojis}
-                              emojiSets={emojiSets}
-                              looseEmojis={looseEmojis}
-                              fetchProfiles={fetchProfiles}
-                              onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
-                              onHashtagClick={openHashtagModal}
-                              onReaction={(targetEventId, targetPubkey, emoji, imageUrl) => {
-                                sendReaction(targetEventId, targetPubkey, emoji, imageUrl).catch(console.error);
-                              }}
-                              onHeightChange={handleHeightChange}
-                              onHold={() => holdCard(note.slotId)}
-                              onRelease={() => releaseCard(note.slotId)}
-                              cache={cache}
-                              onReplyPublish={(signedEvent, noteCard, threadSlotId) => {
-                                addThreadReply(signedEvent, noteCard, threadSlotId);
-                              }}
-                              publishEvent={publishEvent}
-                              myProfile={profiles.get(pubkey)}
-                              onQuote={(eventId, quotePubkey) => {
-                                addDraft({
-                                  quotedEvent: {
-                                    eventId,
-                                    pubkey: quotePubkey,
-                                  },
-                                });
-                              }}
-                            />
-                          ) : (
-                            <NoteCard
-                              note={note}
-                              profile={profiles.get(note.pubkey)}
-                              recentEmojis={recentEmojis}
-                              emojiSets={emojiSets}
-                              looseEmojis={looseEmojis}
-                              fetchProfiles={fetchProfiles}
-                              onProfileClick={(targetPubkey) => setProfileModalPubkey(targetPubkey)}
-                              onHashtagClick={openHashtagModal}
-                              reposterProfile={note.repostInfo ? profiles.get(note.repostInfo.reposterPubkey) : undefined}
-                              reactions={reactions.get(note.eventId)}
-                              myPubkey={pubkey}
-                              onReaction={(emoji, imageUrl) => {
-                                sendReaction(note.eventId, note.pubkey, emoji, imageUrl).catch(console.error);
-                              }}
-                              onQuote={() => {
-                                addDraft({
-                                  quotedEvent: {
-                                    eventId: note.eventId,
-                                    pubkey: note.pubkey,
-                                    sig: note.sig,
-                                  },
-                                });
-                              }}
-                              onRepost={() => {
-                                const originalEvent: NostrEvent = {
-                                  kind: 1,
-                                  content: note.content,
-                                  tags: note.tags,
-                                  created_at: note.created_at,
-                                  pubkey: note.pubkey,
-                                  id: note.eventId,
-                                  sig: note.sig,
-                                };
-                                sendRepost(note.eventId, note.pubkey, originalEvent).catch(console.error);
-                              }}
-                              cache={cache}
-                              profiles={profiles}
-                              onHeightChange={handleHeightChange}
-                              onHold={() => holdCard(note.slotId)}
-                              onRelease={() => releaseCard(note.slotId)}
-                              onReplyPublish={(signedEvent, noteCard, originalNote) => {
-                                addNoteReply(signedEvent, noteCard, originalNote);
-                              }}
-                              publishEvent={publishEvent}
-                              myProfile={profiles.get(pubkey)}
-                            />
-                          )}
-                        </motion.div>
-                      );
-                    })}
-                </AnimatePresence>
-              </div>
-            </div>
-          );
-        })()}
       </main>
 
       {profileModalPubkey && (

@@ -1,5 +1,7 @@
 "use client";
 
+import { MediaImage } from "./CanvasAwareImage";
+
 import { useRef, useEffect, useState, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { EmojiPicker } from "frimousse";
@@ -48,7 +50,7 @@ function CustomEmojiButton({
       title={`:${shortcode}:`}
       className="flex items-center justify-center w-8 h-8 rounded hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
     >
-      <img
+      <MediaImage imageSize={64}
         src={url}
         alt={`:${shortcode}:`}
         className="w-5 h-5 object-contain"

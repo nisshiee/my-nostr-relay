@@ -1,0 +1,135 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { classifyWebGLSceneError, createWebGLSceneRenderer, particleVertices, sceneCardMatrix, sceneCardVisible, type WebGLSceneCard, type WebGLSceneFrame } from '../webglSceneRenderer';
+import { RIPPLE_EFFECT_RING_SPACING_PX,RIPPLE_EFFECT_RING_WIDTH_PX } from '../rippleEffect';
+import { createDominoTransforms } from '../dominoEffect';
+import { projectPoint, type GeometryCanvas, type HtmlTextureGL } from '../webglGeometry';
+import { createPushParticles, createPushPaths } from '../pushEffect';
+const camera={x:0 as const,y:0,zoom:1 as const};
+function card(id:string,y=0):WebGLSceneCard {return{id,node:document.createElement('div'),box:{x:16,y,width:100,height:100}};}
+function setup(limits?:{totalBytes?:number;singleBytes?:number}) {
+  const calls:string[]=[],gl=fakeGL(calls);
+  const surface={width:1200,height:800,getElementImageDefaultSize:vi.fn(()=>({width:100,height:100})),updateElementGeometry:vi.fn(()=>calls.push('geometry')),clearElementGeometry:vi.fn()} as unknown as GeometryCanvas;
+  return{gl,surface,calls,renderer:createWebGLSceneRenderer(gl,surface,limits)};
+}
+function frame(cards:WebGLSceneCard[],extra:Partial<WebGLSceneFrame>={}):WebGLSceneFrame{return{cards,camera,viewportWidth:600,viewportHeight:400,changedElements:[],...extra};}
+beforeEach(()=>vi.stubGlobal('DOMMatrix',class{constructor(public values:number[]) {}}));afterEach(()=>vi.unstubAllGlobals());
+describe('feed WebGLの同一射影・有界texture・前面粒子',()=>{
+  it('全shaderでfloat/int精度を明示一致し共有uniformのlink差を防ぐ',()=>{
+    const {gl,renderer}=setup();
+    const sources=vi.mocked(gl.shaderSource).mock.calls.map(call=>call[1]);
+    expect(sources).toHaveLength(4);
+    for(const source of sources) {
+      expect(source).toContain('precision highp float;');
+      expect(source).toContain('precision highp int;');
+      expect(source).not.toContain('precision mediump');
+    }
+    renderer.dispose();
+  });
+  it('失敗を固定分類しGLログや任意文字列を漏らさず初期化資源を解放',()=>{
+    const gl=fakeGL([]),surface={updateElementGeometry:vi.fn(),clearElementGeometry:vi.fn(),getElementImageDefaultSize:vi.fn()} as unknown as GeometryCanvas;
+    vi.mocked(gl.getProgramParameter).mockReturnValue(false);
+    let error:unknown;try{createWebGLSceneRenderer(gl,surface);}catch(e){error=e;}
+    expect(classifyWebGLSceneError(error)).toBe('program-link');
+    expect(gl.deleteProgram).toHaveBeenCalledTimes(1);expect(gl.deleteShader).toHaveBeenCalledTimes(2);
+    expect(classifyWebGLSceneError(new Error('secret arbitrary log'))).toBe('unknown');
+    expect(classifyWebGLSceneError(new Error('constructor'))).toBe('unknown');
+    expect(classifyWebGLSceneError('Program failed')).toBe('unknown');
+  });
+  it('四方向のDOM/CSS投影と同じ点をcamera変換し、DPRを含めない',()=>{
+    for(const [x,y] of [[400,0],[-400,0],[0,400],[0,-400]]) {
+      const root={x:500,y:500,width:320,height:180},target={...root,x:500+x,y:500+y};
+      const boxes=new Map([['r',root],['t',target]]),tip=createDominoTransforms([{sourceId:'r',edges:[{fromId:'r',toId:'t'}]}],boxes,220).get('t')!;
+      const m=sceneCardMatrix(target,{x:0,y:-90,zoom:1},tip);
+      for(const [i,[px,py]] of [[0,0],[320,0],[320,180],[0,180]].entries()) {
+        const p=projectPoint(m,px,py),expected=tip.perspective.corners[i];expect(p.x).toBeCloseTo(expected.x+target.x,8);expect(p.y).toBeCloseTo(expected.y+target.y-90,8);
+      }
+    }
+  });
+  it('可視判定は投影boundsと余白を使う',()=>{const box={x:0,y:500,width:100,height:100};expect(sceneCardVisible(sceneCardMatrix(box,camera),box,600,400)).toBe(false);expect(sceneCardVisible(sceneCardMatrix(box,{...camera,y:-100}),box,600,400)).toBe(true);});
+  it('textureを再利用しdirty/input/差分通知なしだけ再upload',()=>{
+    const {renderer,gl,surface}=setup(),a=card('a'),child=document.createElement('input');a.node.append(child);
+    expect(renderer.render(frame([a])).uploads).toBe(1);expect(renderer.render(frame([a],{camera:{...camera,y:-20}})).uploads).toBe(0);
+    expect(renderer.render(frame([a],{changedElements:[child]})).uploads).toBe(1);expect(renderer.render(frame([a],{dirtyIds:new Set(['a'])})).uploads).toBe(1);expect(renderer.render(frame([a],{changedElements:undefined})).uploads).toBe(1);
+    expect(gl.texImage2D).toHaveBeenCalledTimes(1);expect(surface.updateElementGeometry).toHaveBeenCalledTimes(5);expect(gl.viewport).toHaveBeenLastCalledWith(0,0,1200,800);
+    renderer.dispose();renderer.dispose();expect(gl.deleteTexture).toHaveBeenCalledTimes(1);
+  });
+  it('画面外変更を覚え再表示時だけupload',()=>{const {renderer}=setup(),a=card('a');renderer.render(frame([a]));a.box={...a.box,y:1000};expect(renderer.render(frame([a],{dirtyIds:new Set(['a'])})).uploads).toBe(0);a.box={...a.box,y:0};expect(renderer.render(frame([a])).uploads).toBe(1);});
+  it('可視だけtextureを持ち非可視geometryはTab用に更新',()=>{const {renderer,surface}=setup(),a=card('a'),b=card('b',2000);const r=renderer.render(frame([a,b]));expect(r.drawnIds).toEqual(['a']);expect(r.textureCount).toBe(1);expect(r.geometryUpdates).toBe(2);renderer.render(frame([a]));expect(surface.clearElementGeometry).toHaveBeenCalledWith(b.node);});
+  it('予算内でoffscreen LRUを解放しpinnedは追い出さない',()=>{
+    const {renderer,gl,surface}=setup({totalBytes:40000}),a=card('a');renderer.render(frame([a]));a.box={...a.box,y:2000};const b=card('b');
+    expect(renderer.render(frame([a,b])).textureBytes).toBe(40000);expect(gl.deleteTexture).toHaveBeenCalledTimes(1);
+    b.box={...b.box,y:2000};a.box={...a.box,y:0};expect(()=>renderer.render(frame([a,b],{pinnedIds:new Set(['b'])}))).toThrow('budget');expect(surface.clearElementGeometry).toHaveBeenCalled();renderer.dispose();
+  });
+  it('DPR相当サイズ変更は旧textureを先に破棄し上限を守る',()=>{
+    const {renderer,surface,gl}=setup({totalBytes:160000}),a=card('a');renderer.render(frame([a]));vi.mocked(surface.getElementImageDefaultSize!).mockReturnValue({width:200,height:200});expect(renderer.render(frame([a])).textureBytes).toBe(160000);expect(gl.deleteTexture).toHaveBeenCalledTimes(1);
+    vi.mocked(surface.getElementImageDefaultSize!).mockReturnValue({width:10000,height:10000});expect(()=>renderer.render(frame([a]))).toThrow('size');
+  });
+  it('同idのDOM置換と削除でgeometry/textureを解放',()=>{const {renderer,surface,gl}=setup(),a=card('a');renderer.render(frame([a]));const replacement=card('a');expect(renderer.render(frame([replacement])).uploads).toBe(1);expect(surface.clearElementGeometry).toHaveBeenCalledWith(a.node);renderer.render(frame([]));expect(gl.deleteTexture).toHaveBeenCalledTimes(2);renderer.dispose();});
+  it('前面粒子を最後に描き次frameはquad属性へ戻す',()=>{
+    const {renderer,gl,calls}=setup(),a=card('a'),b=card('b',200),paths=createPushPaths([{sourceId:'a',edges:[{fromId:'a',toId:'b'}]}],new Map([['a',a.box],['b',b.box]])),particles=createPushParticles(paths,300);
+    expect(renderer.render(frame([a,b],{particles,particleOpacity:1})).draws).toBe(3);expect(calls.slice(-1)).toEqual(['draw']);expect(gl.drawArrays).toHaveBeenLastCalledWith(gl.TRIANGLES,0,expect.any(Number));renderer.render(frame([a]));expect(gl.vertexAttribPointer).toHaveBeenLastCalledWith(0,2,gl.FLOAT,false,0,0);expect(gl.drawArrays).toHaveBeenLastCalledWith(gl.TRIANGLE_STRIP,0,4);
+    expect(particleVertices([...particles,...particles,...particles],1,camera).length).toBeLessThanOrEqual(240*3*16*3*6);
+  });
+  it('GPU陰影を元矩形の後に透視面へ描き、GL上限問合せは一回だけ',()=>{
+    const {renderer,gl}=setup(),a=card('a'),b=card('b',200),boxes=new Map([['a',a.box],['b',b.box]]);
+    a.tip=createDominoTransforms([{sourceId:'a',edges:[{fromId:'a',toId:'b'}]}],boxes,220).get('a');
+    const result=renderer.render(frame([a]));expect(result.draws).toBe(2);
+    expect(vi.mocked(gl.uniform1i).mock.calls.filter(c=>c[0]==='footprint').map(c=>c[1])).toEqual([1,0]);
+    expect(gl.uniform1f).toHaveBeenCalledWith('amount',1);renderer.render(frame([a]));expect(gl.getParameter).toHaveBeenCalledTimes(1);
+  });
+  it('波紋はuniformだけ更新しgeometry・texture再取得を変えず次cardで解除する',()=>{
+    const {renderer,gl,surface}=setup(),a=card('a'),b=card('b',200);
+    renderer.render(frame([a,b]));vi.mocked(gl.uniform1f).mockClear();vi.mocked(gl.uniform1i).mockClear();vi.mocked(gl.texElementSubImage2D).mockClear();
+    a.ripple={sources:[{id:'a',x:100,y:50,ageMs:500,amount:1},{id:'other',x:300,y:70,ageMs:200,amount:.5}]};
+    const result=renderer.render(frame([a,b]));expect(result.uploads).toBe(0);expect(gl.texElementSubImage2D).not.toHaveBeenCalled();
+    expect(vi.mocked(gl.uniform1i).mock.calls.filter(c=>c[0]==='rippleCount').map(c=>c[1])).toEqual([2,0]);
+    expect(gl.uniform2f).toHaveBeenCalledWith('rippleSources[0]',100,50);expect(gl.uniform2f).toHaveBeenCalledWith('ripplePhases[0]',500,1);expect(gl.uniform2f).toHaveBeenCalledWith('ripplePhases[1]',200,.5);expect(gl.uniform2f).toHaveBeenCalledWith('ripplePhases[15]',0,0);expect(gl.uniform2f).toHaveBeenCalledWith('cardOrigin',a.box.x,a.box.y);
+    expect(surface.updateElementGeometry).toHaveBeenCalledWith(a.node,{canvasTransform:expect.objectContaining({values:sceneCardMatrix(a.box,camera)})});
+    const fragment=vi.mocked(gl.shaderSource).mock.calls[1][1];
+    expect(fragment).not.toContain('smoothstep(0.,.08,uv.x)');expect(fragment).toContain('min(edgePx.x,edgePx.y))/6.0');expect(fragment).toContain('wave*6.0/max(cardSize');
+    expect(fragment).toContain('worldPoint=cardOrigin+uv*cardSize');expect(fragment).toContain('strength*.4');expect(fragment).toContain('ringWeight*.18');expect(fragment).toContain('vec3(124.,58.,237.)/255.*c.a');expect(fragment).toContain('source<16');expect(fragment).toContain('ring<2');expect(fragment).toContain(`float(ring)*${RIPPLE_EFFECT_RING_SPACING_PX}.`);expect(fragment).toContain(`d/${RIPPLE_EFFECT_RING_WIDTH_PX}.`);expect(fragment).toContain(`abs(d)>${RIPPLE_EFFECT_RING_WIDTH_PX*3}.`);
+    expect(fragment.match(/texture\(image,/g)).toHaveLength(2);expect(fragment).toContain('vec4 c=texture(image,uv)');expect(fragment).toContain('shifted.rgb*(c.a/max(shifted.a,.0001))');expect(fragment).toContain('light=strength*.4');expect(fragment).not.toContain('light=strength*guard');
+  });
+  it('6CSSpx境界guardは縦横サイズによらず外へsamplingせず広い静止枠を作らない',()=>{
+    for(const width of [1,10,100,1000])for(const height of [1,10,100,10000]) {
+      for(const u of [0,.0001,.01,.04,.1,.5,.9,.99,1])for(const v of [0,.01,.5,.99,1]) {
+        const distance=Math.min(u*width,(1-u)*width,v*height,(1-v)*height),guard=Math.min(1,Math.max(0,distance)/6);
+        for(let angle=0;angle<16;angle++)for(const wave of [-1,-.5,0,.5,1]) {
+          const x=Math.cos(angle*Math.PI/8)*wave*guard*6,y=Math.sin(angle*Math.PI/8)*wave*guard*6;
+          expect(u+x/width).toBeGreaterThanOrEqual(-1e-12);expect(u+x/width).toBeLessThanOrEqual(1+1e-12);
+          expect(v+y/height).toBeGreaterThanOrEqual(-1e-12);expect(v+y/height).toBeLessThanOrEqual(1+1e-12);
+          expect(Math.hypot(x,y)).toBeLessThanOrEqual(6+1e-12);
+        }
+      }
+    }
+    // 8%の帯ではなく、どれだけ長いカードでも6px内側では抑制なし。
+    for(const height of [100,1000,10000])expect(Math.min(1,Math.min(50,6,50,height-6)/6)).toBe(1);
+  });
+  it('屈折色を元alphaへ正規化し透明角を埋めずpremultiplied上限を保つ',()=>{
+    const smooth=(a:number)=>{const t=Math.max(0,Math.min(1,(a-.95)/.05));return t*t*(3-2*t);};
+    for(const alpha of [0,.01,.5,.95,.97,1])for(const shiftedAlpha of [0,.01,.5,.97,1]) {
+      const original=[.8,.5,.2].map(c=>c*alpha),shifted=[.3,.7,1].map(c=>c*shiftedAlpha);
+      const coverage=smooth(alpha)*smooth(shiftedAlpha);
+      const result=original.map((c,i)=>{
+        const refracted=shifted[i]*(alpha/Math.max(shiftedAlpha,.0001));
+        const mixed=c*(1-coverage)+refracted*coverage;
+        const dark=mixed*(1-.18)+mixed*.55*.18;
+        return dark*(1-.4)+[124/255,58/255,237/255][i]*alpha*.4;
+      });
+      for(const c of result){expect(c).toBeGreaterThanOrEqual(0);expect(c).toBeLessThanOrEqual(alpha+1e-12);}
+      if(alpha===0)expect(result).toEqual([0,0,0]);
+    }
+  });
+  it('context lossでも既存geometryを消して停止',()=>{
+    const {renderer,gl,surface}=setup(),a=card('a');renderer.render(frame([a]));vi.mocked(gl.isContextLost).mockReturnValue(true);
+    expect(()=>renderer.render(frame([a]))).toThrow('unavailable');expect(surface.clearElementGeometry).toHaveBeenCalledWith(a.node);renderer.dispose();
+  });
+  it('upload失敗を偽らずgeometry解放しdisposeできる',()=>{const {renderer,gl,surface}=setup(),a=card('a');renderer.render(frame([a]));vi.mocked(gl.getError).mockReturnValue(999);expect(()=>renderer.render(frame([a],{dirtyIds:new Set(['a'])}))).toThrow('upload');expect(surface.clearElementGeometry).toHaveBeenCalledWith(a.node);renderer.dispose();expect(gl.deleteProgram).toHaveBeenCalledTimes(2);expect(gl.deleteBuffer).toHaveBeenCalledTimes(2);expect(()=>renderer.render(frame([a]))).toThrow('unavailable');});
+});
+function fakeGL(calls:string[]) {
+  const gl:Record<string,unknown>={};
+  for(const name of ['VERTEX_SHADER','FRAGMENT_SHADER','COMPILE_STATUS','LINK_STATUS','ARRAY_BUFFER','STATIC_DRAW','DYNAMIC_DRAW','FLOAT','TEXTURE0','TEXTURE_2D','TEXTURE_MIN_FILTER','TEXTURE_MAG_FILTER','LINEAR','TEXTURE_WRAP_S','TEXTURE_WRAP_T','CLAMP_TO_EDGE','UNPACK_FLIP_Y_WEBGL','UNPACK_PREMULTIPLY_ALPHA_WEBGL','BLEND','ONE','ONE_MINUS_SRC_ALPHA','DEPTH_TEST','MAX_TEXTURE_SIZE','RGBA8','RGBA','UNSIGNED_BYTE','COLOR_BUFFER_BIT','TRIANGLE_STRIP','TRIANGLES'])gl[name]=Object.keys(gl).length+1;
+  for(const name of ['shaderSource','compileShader','attachShader','linkProgram','useProgram','bindBuffer','bufferData','enableVertexAttribArray','disableVertexAttribArray','vertexAttribPointer','activeTexture','bindTexture','texParameteri','pixelStorei','enable','blendFunc','disable','uniform1i','uniform1f','texImage2D','texElementSubImage2D','viewport','clearColor','clear','uniformMatrix4fv','uniform2f','deleteTexture','deleteBuffer','deleteProgram','deleteShader'])gl[name]=vi.fn();
+  for(const name of ['createShader','createProgram','createBuffer','createTexture'])gl[name]=vi.fn(()=>({}));gl.getShaderParameter=vi.fn(()=>true);gl.getProgramParameter=vi.fn(()=>true);gl.getAttribLocation=vi.fn((_p,n)=>n==='tint'?1:0);gl.getUniformLocation=vi.fn((_p,n)=>n);gl.getParameter=vi.fn(()=>4096);gl.getError=vi.fn(()=>0);gl.isContextLost=vi.fn(()=>false);gl.NO_ERROR=0;gl.drawArrays=vi.fn(()=>calls.push('draw'));return gl as unknown as HtmlTextureGL;
+}
