@@ -7,10 +7,11 @@ import { LiveCanvasV2 } from "../LiveCanvasV2";
 import type { NoteCard as Note } from "../../lib/types";
 
 vi.mock("../v2/CanvasScene", () => ({
-  CanvasScene: ({ items, heldIds }: {
+  CanvasScene: ({ items, heldIds, allowNative }: {
+    allowNative: boolean;
     items: { id: string; content: ReactNode }[];
     heldIds: ReadonlySet<string>;
-  }) => <div data-testid="scene">{items.map(item => (
+  }) => <div data-testid="scene" data-allow-native={String(allowNative)}>{items.map(item => (
     <section key={item.id} data-slot={item.id} data-held={heldIds.has(item.id)}>{item.content}</section>
   ))}</div>,
 }));
@@ -61,6 +62,13 @@ function makeProps(): ComponentProps<typeof LiveCanvasV2> {
 }
 
 describe("LiveCanvasV2 のカード統合", () => {
+  it("画像gateとnative描画可否を同じ値で連動させる", () => {
+    const props = {...makeProps(), notes: [makeNote()]};
+    const {rerender} = render(<LiveCanvasV2 {...props} />);
+    expect(screen.getByTestId('scene').dataset.allowNative).toBe('false');
+    rerender(<LiveCanvasV2 {...props} nativeImagesEnabled />);
+    expect(screen.getByTestId('scene').dataset.allowNative).toBe('true');
+  });
   it("空フィードでも下書きを作成し、公開時にslotIdを引き継いで固定を解除する", () => {
     const props = makeProps();
     const { container } = render(<LiveCanvasV2 {...props} />);

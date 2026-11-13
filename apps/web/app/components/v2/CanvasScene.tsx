@@ -16,12 +16,12 @@ import { summarizeFrames, type GeometryCanvas, type HtmlTextureGL } from "./webg
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
-interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number }
+interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; qaMeasurementToken?: number; diagnosticsEnabled?: boolean; allowNative?: boolean }
 const EMPTY = new Set<string>();
 // 投影の越境上限64pxとアンチエイリアスの余白。効果中は固定し毎frame寸法を変えない。
 const DOMINO_CAPTURE_PADDING = DOMINO_PERSPECTIVE_MAX_OUTSET + 2;
 
-type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'legacy-effect';
+type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'legacy-effect' | 'image-gate';
 interface CardRootProps { item: CanvasSceneItem; register: (id: string, node: HTMLDivElement | null) => void }
 const subscribeHydration = () => () => {};
 const clientSnapshot = () => true;
@@ -51,7 +51,7 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0 }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementToken = 0, diagnosticsEnabled = false, allowNative = true }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
   const viewport = useRef<HTMLDivElement>(null);
@@ -72,7 +72,9 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
   const current = useRef({ items, heldIds });
   const [status, setStatus] = useState('DOM fallback · 初期化中');
   const [forcedDOM, setForcedDOM] = useState(false);
-  const [renderer, setRenderer] = useState<'webgl' | 'css'>('webgl');
+  const [qaRenderer, setRenderer] = useState<'webgl' | 'css'>('webgl');
+  const renderer = diagnosticsEnabled ? qaRenderer : 'webgl';
+  const [domMode, setDomMode] = useState(true);
   const [metrics, setMetrics] = useState('未計測。rAF間隔でありCPU/GPU時間ではありません。');
   const [register] = useState(() => (id: string, node: HTMLDivElement | null) => {
     const old = nodes.current.get(id);
@@ -94,15 +96,15 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     let ctx: DrawableContext | null = null;
     let gpu: ReturnType<typeof createWebGLSceneRenderer> | null = null;
     let supported: CanvasMode = 'dom';
-    let fallbackStage: FallbackStage = forcedDOM ? 'manual' : 'init';
-    let fallbackReason = forcedDOM ? 'requested' : 'api-unavailable';
-    if (!forcedDOM) try {
+    let fallbackStage: FallbackStage = !allowNative ? 'image-gate' : forcedDOM ? 'manual' : 'init';
+    let fallbackReason = !allowNative ? 'disabled' : forcedDOM ? 'requested' : 'api-unavailable';
+    if (allowNative && !forcedDOM) try {
       if (renderer === 'webgl') {
         const gl = gpuSurface.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true }) as HtmlTextureGL | null;
         if (gl && gpuSurface.requestPaint && 'content' in gpuSurface) { gpu = createWebGLSceneRenderer(gl, gpuSurface); supported = 'modern'; }
       } else { ctx = cssSurface.getContext('2d') as DrawableContext | null; supported = detectCanvasMode(cssSurface, ctx); }
-    } catch (error) { supported = 'dom'; fallbackReason = classifyWebGLSceneError(error); }
-    let mode: CanvasMode = forcedDOM || supported === 'legacy' && chosenEffect.current === 'domino' ? 'dom' : supported;
+    } catch (error) { supported = 'dom'; fallbackReason = diagnosticsEnabled ? classifyWebGLSceneError(error) : 'unavailable'; }
+    let mode: CanvasMode = !allowNative || forcedDOM || supported === 'legacy' && chosenEffect.current === 'domino' ? 'dom' : supported;
     if (mode !== 'dom') { fallbackStage = 'none'; fallbackReason = 'none'; }
     else if (!forcedDOM && supported === 'legacy') { fallbackStage = 'legacy-effect'; fallbackReason = 'unsupported'; }
     let boxes = savedBoxes.current;
@@ -142,7 +144,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     const nextSerial = (value: number) => value >= Number.MAX_SAFE_INTEGER ? 1 : value + 1;
     const finite = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
     const shortId = (value: string | undefined) => value?.slice(0, 128) ?? null;
-    const diagnosticTags = new Set(['BUTTON', 'IMG', 'INPUT', 'TEXTAREA', 'A', 'DIV', 'SPAN', 'CANVAS', 'SVG', 'PATH']);
+    const diagnosticTags = diagnosticsEnabled ? new Set(['BUTTON', 'IMG', 'INPUT', 'TEXTAREA', 'A', 'DIV', 'SPAN', 'CANVAS', 'SVG', 'PATH']) : null;
     const recordPointer = (kind: 'Down' | 'Up' | 'Click', event: MouseEvent | PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       const within = target !== null && host.contains(target);
@@ -159,7 +161,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       diagnosticSeq = nextSerial(diagnosticSeq);
       host.dataset[`sceneLastPointer${kind}`] = JSON.stringify({
         seq: diagnosticSeq, at: finite(event.timeStamp), mode, paint: paintSeq, geometry: geometrySeq,
-        within, targetTag: target ? diagnosticTags.has(target.tagName.toUpperCase()) ? target.tagName.toUpperCase() : 'OTHER' : 'NONE',
+        within, targetTag: target ? diagnosticTags?.has(target.tagName.toUpperCase()) ? target.tagName.toUpperCase() : 'OTHER' : 'NONE',
         card: shortId(id), button: button !== null, buttonIndex,
         pointerId: 'pointerId' in event ? finite(event.pointerId) : null,
         x: finite(event.clientX), y: finite(event.clientY), pressed: shortId(pressed?.id),
@@ -186,7 +188,8 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       diagnosticGesture = null;
     };
     const clearDiagnosticGesture = () => { diagnosticGesture = null; };
-    for (const key of ['sceneLastPointerDown', 'sceneLastPointerUp', 'sceneLastPointerClick', 'scenePaintSerial', 'sceneGeometrySerial']) delete host.dataset[key];
+    for (const key of ['sceneLastPointerDown', 'sceneLastPointerUp', 'sceneLastPointerClick', 'scenePaintSerial', 'sceneGeometrySerial', 'sceneFallbackStage', 'sceneFallbackReason', 'sceneRenderer', 'sceneRippleCards', 'sceneRippleTargets', 'sceneRippleSources', 'sceneRippleRadius', 'sceneEffect', 'scenePushEffect', 'sceneMotion', 'sceneUploads', 'sceneDraws', 'sceneTextureBytes']) delete host.dataset[key];
+    if (!diagnosticsEnabled) for (const node of nodes.current.values()) for (const key of ['sceneX', 'sceneY', 'sceneTargetX', 'sceneTargetY', 'scenePhase', 'sceneDelay', 'sceneTip']) delete node.dataset[key];
     let pressTimer: ReturnType<typeof setTimeout> | undefined;
     const heldNow = () => new Set([...current.current.heldIds, ...localHeld, ...(pressed ? [pressed.id] : [])]);
     let revealFocus = false;
@@ -221,7 +224,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       setStyle(shade, 'boxShadow', visualTip?.perspective.shade.edgeShadow ?? '');
     };
     const geometry = () => {
-      geometrySeq = nextSerial(geometrySeq); host.dataset.sceneGeometrySerial = String(geometrySeq);
+      if (diagnosticsEnabled) { geometrySeq = nextSerial(geometrySeq); host.dataset.sceneGeometrySerial = String(geometrySeq); }
       const order = new Map(drawOrder().map((item, index) => [item.id, index]));
       for (const [id, node] of nodes.current) {
         const box = boxes.get(id);
@@ -231,14 +234,16 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         setStyle(node, 'height', renderer === 'webgl' && mode !== 'dom' ? `${box.height}px` : pressed?.id === id ? `${pressed.box.height}px` : '');
         setStyle(node, 'overflow', pressed?.id === id ? 'clip' : '');
         setStyle(node, 'zIndex', String(order.get(id) ?? 0));
+        if (diagnosticsEnabled) {
         const card = motion.cards.get(id);
         const target = targets.get(id) ?? box;
         node.dataset.sceneX = box.x.toFixed(2); node.dataset.sceneY = box.y.toFixed(2);
         node.dataset.sceneTargetX = target.x.toFixed(2); node.dataset.sceneTargetY = target.y.toFixed(2);
         node.dataset.scenePhase = card?.phase ?? 'settled';
         node.dataset.sceneDelay = String(Math.round(card?.delayMs ?? 0));
+        node.dataset.sceneTip = String(dominoTransforms.get(id)?.amount ?? 0);
+        }
         const tip = dominoTransforms.get(id);
-        node.dataset.sceneTip = String(tip?.amount ?? 0);
         applyPose(node, box, tip);
         if (mode === 'dom') {
           const padding = tip ? DOMINO_CAPTURE_PADDING : 0;
@@ -250,12 +255,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     const changeMode = (next: CanvasMode, stage?: FallbackStage, reason?: string) => {
       if (stage) { fallbackStage = stage; fallbackReason = reason ?? 'unknown'; }
       if (next !== 'dom') { fallbackStage = 'none'; fallbackReason = 'none'; }
-      host.dataset.sceneFallbackStage = fallbackStage;
-      host.dataset.sceneFallbackReason = fallbackReason;
+      if (diagnosticsEnabled) { host.dataset.sceneFallbackStage = fallbackStage; host.dataset.sceneFallbackReason = fallbackReason; }
       const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const selection = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? [active.selectionStart, active.selectionEnd] : null;
       mode = next; displayed.clear();
-      host.dataset.sceneRenderer = next === 'dom' ? 'dom' : renderer;
+      if (diagnosticsEnabled) host.dataset.sceneRenderer = next === 'dom' ? 'dom' : renderer;
+      setDomMode(next === 'dom');
       // DOMでは追加効果を止め、nativeへ戻っても過去のbatchを再生しない。
       if (next === 'dom') {
         effect.active = false; dominoTransforms = new Map(); radialRipple = undefined; ripplePointer = null; effectPaths = []; effectOpacity = 0;
@@ -273,7 +278,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         if (next === 'modern') node.setAttribute('drawable', ''); else node.removeAttribute('drawable');
         (next === 'dom' ? dom : surface).appendChild(node);
       }
-      setStatus(next === 'dom' ? (forcedDOM ? 'DOM fallback · 手動' : `DOM fallback · ${fallbackStage}/${fallbackReason}`) : 'HTML-in-Canvas · 最初の描画を確認中');
+      setStatus(next === 'dom' ? (diagnosticsEnabled ? (forcedDOM ? 'DOM fallback · 手動' : `DOM fallback · ${fallbackStage}/${fallbackReason}`) : '通常表示（エフェクトなし）') : 'HTML-in-Canvas · 最初の描画を確認中');
       geometry();
       if (active && surface.contains(active) || active && dom.contains(active)) {
         active!.focus({ preventScroll: true });
@@ -359,19 +364,23 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
         radialRipple = effect.active && chosenEffect.current === 'ripple' && renderer === 'webgl'
           ? createRadialRipple(savedRippleSources.current, effectAge, { reducedMotion })
           : undefined;
+        if (diagnosticsEnabled) {
         const rippleHeld = heldNow();
         host.dataset.sceneRippleCards = String(radialRipple ? current.current.items.filter(item => savedRippleTargets.current.has(item.id) && !rippleHeld.has(item.id) && ripplePointer?.id !== item.id).length : 0);
         host.dataset.sceneRippleTargets = JSON.stringify(radialRipple ? [...savedRippleTargets.current] : []);
         host.dataset.sceneRippleSources = JSON.stringify(radialRipple?.sources.map(({ x, y }) => [x, y]) ?? []);
         host.dataset.sceneRippleRadius = String(radialRipple ? effectAge * RIPPLE_EFFECT_SPEED_PX_PER_MS : 0);
+        }
         if (pressed && !reducedMotion && chosenEffect.current === 'domino') {
           dominoTransforms = new Map(dominoTransforms).set(pressed.id, pressed.transform);
         }
         effectViewport = { x: 0, y: host.scrollTop, width: viewportWidth, height: viewportHeight };
         effectPaths = effect.active && chosenEffect.current === 'sparkle' ? createPushPaths(layout.insertion.traces, boxes, effectViewport) : [];
+        if (diagnosticsEnabled) {
         host.dataset.sceneEffect = chosenEffect.current;
         host.dataset.scenePushEffect = reducedMotion ? 'reduced' : effect.active ? 'active' : 'idle';
         host.dataset.sceneMotion = reducedMotion ? 'reduced' : motion.active ? 'animating' : 'settled';
+        }
         if (revealFocus) { revealFocus = false; reveal(document.activeElement); }
         savedBoxes.current = boxes;
         savedMotion.current = motion; savedTargets.current = targets; savedLayout.current = layout;
@@ -404,7 +413,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
           const stats = gpu.render({ cards, camera, viewportWidth: viewWidth, viewportHeight: viewHeight,
             changedElements: (event as Event & { changedElements?: readonly Element[] }).changedElements,
             dirtyIds, pinnedIds: heldNow(), particles: createPushParticles(effectPaths, effectAge, effectViewport), particleOpacity: effectOpacity });
-          dirtyIds.clear(); totalDraws += stats.draws; totalUploads += stats.uploads; textureBytes = stats.textureBytes;
+          dirtyIds.clear(); if (diagnosticsEnabled) { totalDraws += stats.draws; totalUploads += stats.uploads; textureBytes = stats.textureBytes; }
           const drawn = new Set(stats.drawnIds);
           for (const card of cards) {
             if (drawn.has(card.id)) displayed.set(card.id, { box: { ...card.box }, transform: card.tip ? { ...card.tip } : undefined });
@@ -422,14 +431,14 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
             const transform = ctx.drawElementImage(node, box.x - padding, box.y - padding, box.width + padding * 2, box.height + padding * 2);
             displayed.set(item.id, { box: { ...box }, transform: tip ? { ...tip } : undefined });
             if (mode === 'legacy' && transform) setStyle(node, 'transform', transform.toString());
-            totalDraws++; totalUploads++; painted = true;
+            if (diagnosticsEnabled) { totalDraws++; totalUploads++; } painted = true;
           }
           drawPushPaths(ctx, effectPaths, effectOpacity, effectAge, effectViewport);
         }
-        paintSeq = nextSerial(paintSeq); host.dataset.scenePaintSerial = String(paintSeq);
-        host.dataset.sceneUploads = String(totalUploads); host.dataset.sceneDraws = String(totalDraws); host.dataset.sceneTextureBytes = String(textureBytes);
+        if (diagnosticsEnabled) { paintSeq = nextSerial(paintSeq); host.dataset.scenePaintSerial = String(paintSeq);
+        host.dataset.sceneUploads = String(totalUploads); host.dataset.sceneDraws = String(totalDraws); host.dataset.sceneTextureBytes = String(textureBytes); }
         if (painted) { clearTimeout(watchdog.timer); setStatus(`HTML-in-Canvas · native ${renderer === 'webgl' ? 'WebGL' : mode + ' CSS比較'}`); }
-      } catch (error) { changeMode('dom', 'render', classifyWebGLSceneError(error)); refresh(); }
+      } catch (error) { changeMode('dom', 'render', diagnosticsEnabled ? classifyWebGLSceneError(error) : 'unavailable'); refresh(); }
     };
     // ホイール・touch・キーボードはブラウザの縦スクロールへ任せる。
     const scroll = () => { host.scrollLeft = 0; requestFrame(); };
@@ -492,6 +501,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     };
     const blur = () => { localHeld.clear(); refresh(); };
     runtime.current = { refresh, camera, measure: () => {
+      if (!diagnosticsEnabled) return;
       if (mode === 'dom') { setMetrics('DOMではnative比較計測を開始しません'); return; }
       measurement = { start: null, previous: null, samples: [], draws: totalDraws, uploads: totalUploads };
       setMetrics('5秒計測中…（自然な新着条件は同一ではありません）'); requestFrame();
@@ -527,10 +537,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
     // 固定サイズ画像の読込完了でもnative再描画を要求する。
     host.addEventListener('canvas-image-ready', refresh);
     host.addEventListener('scroll', scroll, { passive: true });
+    if (diagnosticsEnabled) {
     window.addEventListener('pointerdown', diagnosticDown, { capture: true, passive: true });
     window.addEventListener('pointerup', diagnosticUp, { capture: true, passive: true });
     window.addEventListener('click', diagnosticClick, { capture: true, passive: true });
     window.addEventListener('pointercancel', clearDiagnosticGesture, true); window.addEventListener('blur', clearDiagnosticGesture);
+    }
     host.addEventListener('pointerdown', press, true);
     window.addEventListener('pointerup', pointerUp, true); window.addEventListener('pointercancel', pointerCancel, true);
     window.addEventListener('click', clicked, true); window.addEventListener('blur', releasePress); window.addEventListener('blur', releaseRipple);
@@ -552,28 +564,31 @@ export function CanvasScene({ items, heldIds = EMPTY, className, qaMeasurementTo
       window.removeEventListener('click', clicked, true); window.removeEventListener('blur', releasePress); window.removeEventListener('blur', releaseRipple); ripplePointer = null;
       host.removeEventListener('focusin', focus); host.removeEventListener('focusout', blur); window.removeEventListener('resize', refresh);
     };
-  }, [forcedDOM, renderer]);
+  }, [forcedDOM, renderer, diagnosticsEnabled, allowNative]);
 
-  useLayoutEffect(() => { if (qaMeasurementToken > 0) runtime.current?.measure(); }, [qaMeasurementToken]);
+  useLayoutEffect(() => { if (diagnosticsEnabled && qaMeasurementToken > 0) runtime.current?.measure(); }, [qaMeasurementToken, diagnosticsEnabled]);
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="V2 canvas">
     <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-      <span role="status" data-renderer-status>{status}</span>
-      <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-2 py-1">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>
+      <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>{allowNative ? status : '画像配信が無効のため互換表示を使用しています'}</span>
       <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
       <label className="flex items-center gap-1">エフェクト
-        <select aria-label="新着エフェクト" value={effectChoice} onChange={event => setEffectPreference(event.target.value as SceneEffectChoice)} className="rounded border bg-transparent px-2 py-1">
+        <select aria-label="新着エフェクト" disabled={!allowNative || domMode} aria-describedby={domMode ? "scene-effect-unavailable" : undefined} value={effectChoice} onChange={event => setEffectPreference(event.target.value as SceneEffectChoice)} className="rounded border bg-transparent px-2 py-1">
           <option value="off">OFF</option><option value="sparkle">キラキラ</option><option value="domino">ドミノ（試作）</option><option value="ripple">波紋（試作）</option>
         </select>
       </label>
+      {domMode && <span id="scene-effect-unavailable">エフェクトはHTML-in-Canvas対応表示で利用できます。選択は保存されています。</span>}
       <span>縦スクロールで移動 · エフェクトはnative専用（DOMでは停止）</span>
     </div>
     <details className="border-b px-4 py-1 text-xs">
-      <summary>描画比較（QA）</summary>
-      <label>比較方式 <select aria-label="QA描画方式" value={renderer} onChange={event => setRenderer(event.target.value as 'webgl' | 'css')}><option value="webgl">WebGL texture</option><option value="css">Canvas2D + CSS 比較</option></select></label>
-      <button type="button" onClick={() => runtime.current?.measure()}>5秒frame比較</button>
+      <summary>表示設定</summary>
+      {allowNative && <button type="button" onClick={() => setForcedDOM(value => !value)} className="rounded border px-2 py-1">{forcedDOM ? 'Nativeを試す' : 'DOMに切替'}</button>}
+      {diagnosticsEnabled && <>
+      <label>比較方式 <select aria-label="QA描画方式" disabled={!allowNative} value={renderer} onChange={event => setRenderer(event.target.value as 'webgl' | 'css')}><option value="webgl">WebGL texture</option><option value="css">Canvas2D + CSS 比較</option></select></label>
+      <button type="button" disabled={!allowNative} onClick={() => runtime.current?.measure()}>5秒frame比較</button>
       <output aria-label="実フィードframe比較結果">{metrics}</output>
       <p>rAF間隔と固定33.4ms超過数です。CPU/GPU時間ではなく、自然な新着条件も同一ではありません。</p>
+      </>}
     </details>
     <div ref={viewport} tabIndex={0} aria-label="カード領域。縦スクロールで移動" className="relative min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-zinc-100 dark:bg-zinc-950" style={{ touchAction: 'pan-y pinch-zoom', overflowAnchor: 'none', scrollbarGutter: 'stable' }}>
       <div ref={extent} className="relative w-full" style={{ overflowAnchor: 'none' }}>

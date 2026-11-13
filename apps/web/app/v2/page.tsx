@@ -1,5 +1,6 @@
-import { Home } from "../components/Home";
+import { redirect } from 'next/navigation';
 
+/** 旧ブックマークは標準画面へ統合する。 */
 export default function V2Page() {
-  return <Home version="v2" />;
+  redirect('/');
 }

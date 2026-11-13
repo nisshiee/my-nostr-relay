@@ -1,3 +1,4 @@
+vi.mock('server-only', () => ({}));
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "../route";
 import { fetchInlineImage, fetchPublicImage, PublicImageDeadlineError } from "../../../lib/publicImageFetch";

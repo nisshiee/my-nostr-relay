@@ -1,23 +1,13 @@
 "use client";
 
 import { useCallback, useRef } from "react";
-import Link from "next/link";
 import { useAuth } from "../contexts/AuthContext";
 import { useNostrRelay } from "../hooks/useNostrRelay";
 import { useThreadCards } from "../hooks/useThreadCards";
 import { useRecentEmojis } from "../hooks/useRecentEmojis";
-import { LiveCanvas } from "./LiveCanvas";
 import { LiveCanvasV2 } from "./LiveCanvasV2";
 
-export function Home({ version = "v1" }: { version?: "v1" | "v2" }) {
-  const Canvas = version === "v2" ? LiveCanvasV2 : LiveCanvas;
-  const versionNavigation = (
-    <nav aria-label="Canvas version" className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 border-b border-zinc-200 bg-zinc-100 px-3 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
-      <Link href="/" aria-current={version === "v1" ? "page" : undefined} className="font-semibold underline underline-offset-4">V1 · 現行版</Link>
-      <Link href="/v2" aria-current={version === "v2" ? "page" : undefined} className="font-semibold underline underline-offset-4">V2 · HTML-in-Canvas実験版</Link>
-      {version === "v2" && <span>実験的な描画方式です。外部画像の新配信経路は既定で無効です。投稿・リアクションは実際のリレーに送信されます。</span>}
-    </nav>
-  );
+export function Home({ diagnosticsEnabled = false, nativeImagesEnabled = false }: { diagnosticsEnabled?: boolean; nativeImagesEnabled?: boolean }) {
   const {
     pubkey,
     npub,
@@ -70,9 +60,10 @@ export function Home({ version = "v1" }: { version?: "v1" | "v2" }) {
   if (pubkey) {
     return (
       <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
-      {versionNavigation}
       <div className="min-h-0 flex-1 [&>div]:h-full">
-      <Canvas
+      <LiveCanvasV2
+        diagnosticsEnabled={diagnosticsEnabled}
+        nativeImagesEnabled={nativeImagesEnabled}
         notes={filteredNotes}
         threadCards={threadCards}
         profiles={profiles}
@@ -107,7 +98,6 @@ export function Home({ version = "v1" }: { version?: "v1" | "v2" }) {
   // 未認証 → ログインUI
   return (
     <>
-    {versionNavigation}
     <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-zinc-950">
       <main className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-8 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
         <img src="/icon.svg" alt="Nostr Live Canvas" width={48} height={48} className="mx-auto mb-2" />

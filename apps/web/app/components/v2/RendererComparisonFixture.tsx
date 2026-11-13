@@ -67,6 +67,6 @@ export function RendererComparisonFixture() {
       <output aria-label="再現入力の状態" data-comparison-phase={phase} data-comparison-count={ids.length}>{step}</output>
     </div>
     <p className="bg-white px-4 py-2 text-xs text-zinc-700">初期化 → QAで描画方式と同じエフェクトを選択 → 画像と配置が落ち着いてから再生。1秒: 1枚追加、2秒: 高さ変更、3秒: 2枚追加、4秒: 高さ復元と1枚削除。再生操作で5秒計測も開始します（計測の起点は次のrAFで、最大約1frameの差があります）。比較中は同じviewport・scroll位置を使い、入力操作を避けてください。タイマーの実行時刻はブラウザ負荷で遅れることがあります。これは固定fixtureの比較であり、自然新着の実フィードE2Eではありません。</p>
-    <CanvasScene key={revision} items={items} qaMeasurementToken={measurementToken} />
+    <CanvasScene diagnosticsEnabled key={revision} items={items} qaMeasurementToken={measurementToken} />
   </section>;
 }

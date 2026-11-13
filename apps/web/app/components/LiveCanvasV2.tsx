@@ -27,6 +27,8 @@ import { UserProfileModal } from "./UserProfileModal";
 import { HashtagModal } from "./HashtagModal";
 
 interface LiveCanvasProps {
+  diagnosticsEnabled?: boolean;
+  nativeImagesEnabled?: boolean;
   notes: NoteCardType[];
   threadCards: ThreadCardType[];
   profiles: Map<string, NostrProfile>;
@@ -58,7 +60,7 @@ interface LiveCanvasProps {
   unfollow: (targetPubkey: string) => Promise<void>;
 }
 
-export function LiveCanvasV2({ notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+export function LiveCanvasV2({ diagnosticsEnabled = false, nativeImagesEnabled = false, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
   const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
   const [hashtagModalTag, setHashtagModalTag] = useState<string | null>(null);
@@ -380,7 +382,7 @@ export function LiveCanvasV2({ notes, threadCards, profiles, reactions, status, 
       >f で戻す</button>}
       <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="V2 Live Canvas">
         <EmptyState status={status} hasNotes={items.length > 0} isProcessing={isProcessing} />
-        {items.length > 0 && !isProcessing && <CanvasImageProvider><CanvasScene items={items} heldIds={holdSet} /></CanvasImageProvider>}
+        {items.length > 0 && !isProcessing && <CanvasImageProvider enabled={nativeImagesEnabled}><CanvasScene items={items} heldIds={holdSet} diagnosticsEnabled={diagnosticsEnabled} allowNative={nativeImagesEnabled} /></CanvasImageProvider>}
         {status === "connected" && items.length === 0 && !isProcessing && (
           <p className="py-16 text-center text-sm text-gray-500 dark:text-gray-400">
             表示するノートはまだありません。投稿ボタンから新しいノートを書けます。

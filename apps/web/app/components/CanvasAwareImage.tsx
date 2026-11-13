@@ -8,8 +8,8 @@ import { canvasImageLoader, type CanvasImageLoad } from '../lib/canvasImageLoade
 
 const CanvasImageContext = createContext(false);
 /** V1は元の画像表示を維持し、V2のカード内だけ同一origin配信を使う。 */
-export function CanvasImageProvider({ children }: { children: ReactNode }) {
-  return <CanvasImageContext.Provider value>{children}</CanvasImageContext.Provider>;
+export function CanvasImageProvider({ children, enabled = true }: { children: ReactNode; enabled?: boolean }) {
+  return <CanvasImageContext.Provider value={enabled}>{children}</CanvasImageContext.Provider>;
 }
 
 type MediaImageProps = ImgHTMLAttributes<HTMLImageElement> & { imageSize?: number };

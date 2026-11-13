@@ -13,6 +13,12 @@ beforeEach(() => {
 afterEach(() => { cleanup(); canvasImageLoader.dispose(); vi.unstubAllGlobals(); });
 const source = 'https://i.gyazo.com/avatar.png';
 describe('V2画像の同一origin配信', () => {
+  it('配信gate無効時は通常画像へ戻しproxy要求を作らない', () => {
+    render(<CanvasImageProvider enabled={false}><MediaImage alt="互換画像" src={source} /><CanvasAwareImage alt="互換avatar" src={source} width={32} height={32} unoptimized /></CanvasImageProvider>);
+    expect(screen.getByAltText('互換画像').getAttribute('src')).toBe(source);
+    expect(screen.getByAltText('互換avatar').getAttribute('src')).toBe(source);
+    expect(fetch).not.toHaveBeenCalled();
+  });
   it('V1のimgとunoptimizedアバターは元URLのまま', () => {
     render(<><MediaImage alt="本文" src={source} /><CanvasAwareImage alt="本人" src={source} width={32} height={32} unoptimized /></>);
     for (const image of screen.getAllByRole('img')) expect(image.getAttribute('src')).toBe(source);

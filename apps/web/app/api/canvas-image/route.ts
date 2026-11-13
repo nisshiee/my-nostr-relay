@@ -1,3 +1,4 @@
+import { isCanvasImageProxyEnabled as enabled } from "../../lib/canvasImageDeployment";
 import { createHash } from "node:crypto";
 import { normalizeCanvasInlineImage } from "../../lib/canvasInlineImage";
 import { fetchInlineImage, fetchPublicImage, PublicImageDeadlineError, type PublicImageWidth } from "../../lib/publicImageFetch";
@@ -30,15 +31,7 @@ function state(): State {
   };
 }
 
-function enabled(): boolean {
-  if (process.env.CANVAS_IMAGE_PROXY_ENABLED !== "1" ||
-      process.env.CANVAS_IMAGE_PROXY_SCOPE !== "protected-preview") return false;
-  // システム環境変数がある場合は本番・未知の環境を拒否する。
-  // 未提供の場合は、保護されたプレビュー限定の環境設定を信頼境界とする。
-  return [process.env.VERCEL_ENV, process.env.VERCEL_TARGET_ENV].every(
-    value => !value || value === "preview" || value === "development",
-  );
-}
+
 
 const headers = {
   "Cache-Control": "no-store",

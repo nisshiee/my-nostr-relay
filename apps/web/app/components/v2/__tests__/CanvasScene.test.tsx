@@ -93,7 +93,7 @@ function InteractiveCard({ focus = false }: { focus?: boolean }) {
 describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   it("受動診断は直近down/up/clickの実対象だけを記録する", () => {
     localStorage.setItem('nlc-v2-effect', 'off');
-    render(<CanvasScene items={[{id:'a',content:<button aria-label="secret label">{React.createElement('img', {src:'https://example.com/secret?token=private',alt:'secret text'})}safe</button>},{id:'b',content:<span>private content</span>}]} />); flushFrame(0);
+    render(<CanvasScene diagnosticsEnabled items={[{id:'a',content:<button aria-label="secret label">{React.createElement('img', {src:'https://example.com/secret?token=private',alt:'secret text'})}safe</button>},{id:'b',content:<span>private content</span>}]} />); flushFrame(0);
     const host = screen.getByLabelText('カード領域。縦スクロールで移動');
     const image = screen.getByAltText('secret text'); const other = screen.getByText('private content');
     const rectSpy = vi.spyOn(image, 'getBoundingClientRect'); rectSpy.mockClear();
@@ -113,7 +113,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("診断は場外gestureを収集せず終了時にlistenerを解除する", () => {
-    const {unmount} = render(<CanvasScene items={[{id:'a',content:<button>対象</button>}]} />); flushFrame(0);
+    const {unmount} = render(<CanvasScene diagnosticsEnabled items={[{id:'a',content:<button>対象</button>}]} />); flushFrame(0);
     const host=screen.getByLabelText('カード領域。縦スクロールで移動');const button=screen.getByText('対象');
     const outside=document.createElement('button');document.body.appendChild(outside);
     pointer(button,'pointerdown',7);pointer(window,'pointerup',7);pointer(outside,'click',7);
@@ -131,8 +131,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     mockModernNative();
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     const original = {id:'a',content:<InteractiveCard />};
-    const {rerender} = render(<CanvasScene items={[original]} />); flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]} />); flushFrame(16); flushFrame(250);
+    const {rerender} = render(<CanvasScene diagnosticsEnabled items={[original]} />); flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]} />); flushFrame(16); flushFrame(250);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     const snapshot = [face.style.transform,node.dataset.sceneX,node.dataset.sceneY];
@@ -153,8 +153,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     localStorage.setItem('nlc-v2-effect','domino');
     vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){return this.closest<HTMLElement>('[data-scene-card]')?.dataset.sceneCard==='a'?1000:120;});
     const original={id:'a',content:<InteractiveCard/>};
-    const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(300);
+    const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(300);
     const host=screen.getByLabelText('カード領域。縦スクロールで移動');
     host.scrollTop=500;fireEvent.scroll(host);flushFrame(300);
     const button=screen.getByRole('button',{name:'クリック 0'});
@@ -170,9 +170,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const media={matches:false,addEventListener(_type:string,cb:()=>void){changed=cb;},removeEventListener(){}};
     vi.stubGlobal('matchMedia',()=>media);
     const original={id:'a',content:<InteractiveCard/>};
-    const {rerender,unmount}=render(<CanvasScene items={[original]}/>); flushFrame(0);
+    const {rerender,unmount}=render(<CanvasScene diagnosticsEnabled items={[original]}/>); flushFrame(0);
     const incoming={id:'new',content:<span>new</span>};
-    rerender(<CanvasScene items={[incoming,original]}/>); flushFrame(16); flushFrame(250);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>); flushFrame(16); flushFrame(250);
     const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const button=screen.getByRole('button',{name:'クリック 0'});
     pointer(button,'pointerdown'); fireEvent.focus(button); flushFrame(350);
@@ -182,7 +182,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     if(reason==='fallback'){pointer(window,'pointerup');act(()=>vi.advanceTimersByTime(701));}
     if(reason==='off') fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'off'}});
     if(reason==='reduced') act(()=>{media.matches=true;changed?.();});
-    if(reason==='removed') rerender(<CanvasScene items={[incoming]}/>);
+    if(reason==='removed') rerender(<CanvasScene diagnosticsEnabled items={[incoming]}/>);
     flushFrame(500);
     if(reason==='removed') expect(document.querySelector('[data-scene-card="a"]')).toBeNull();
     else { expect(node.dataset.sceneTip).toBe('0'); expect(node.style.padding).toBe('0px'); }
@@ -193,8 +193,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']}); localStorage.setItem('nlc-v2-effect','domino');
     const schedule=vi.spyOn(globalThis,'setTimeout'), cancel=vi.spyOn(globalThis,'clearTimeout');
     const original={id:'a',content:<InteractiveCard/>};
-    const {rerender,unmount}=render(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
+    const {rerender,unmount}=render(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
     pointer(screen.getByRole('button',{name:'クリック 0'}),'pointerdown');pointer(window,'pointerup');
     const index=schedule.mock.calls.findLastIndex(call=>call[1]===700);
     expect(index).toBeGreaterThanOrEqual(0);
@@ -213,10 +213,10 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     Object.defineProperty(HTMLCanvasElement.prototype,'content',{configurable:true,value:'drawable'});
     try {
       const original={id:'a',content:<InteractiveCard/>};
-      const {rerender}=render(<CanvasScene items={[original]}/>); flushFrame(0);
+      const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>); flushFrame(0);
       const surface=document.querySelector('canvas')!;
       fireEvent(surface,new Event('paint'));
-      rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
+      rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
       fireEvent(surface,new Event('paint'));
       const painted=draws.filter(draw=>draw.id==='a').at(-1)!;
       expect(painted.pose).toContain('perspective(');
@@ -257,10 +257,10 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     Object.defineProperty(HTMLCanvasElement.prototype,'content',{configurable:true,value:'drawable'});
     try {
       const item = (id:string) => ({id,content:<span>{id}</span>});
-      const {rerender} = render(<CanvasScene items={[item('a')]} />);
+      const {rerender} = render(<CanvasScene diagnosticsEnabled items={[item('a')]} />);
       flushFrame(0);
       fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'domino'}});
-      rerender(<CanvasScene items={[item('new'),item('a')]} />);
+      rerender(<CanvasScene diagnosticsEnabled items={[item('new'),item('a')]} />);
       flushFrame(16);
       const host = screen.getByLabelText('カード領域。縦スクロールで移動');
       host.scrollTop = 90; fireEvent.scroll(host);
@@ -303,8 +303,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     localStorage.setItem('nlc-v2-effect','domino');
     const {draw}=mockModernNative();
     const original={id:'a',content:<InteractiveCard/>};
-    const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
+    const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
     const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     const button=screen.getByRole('button',{name:'クリック 0'});
@@ -324,10 +324,10 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
     try {
       const original={id:'a',content:<InteractiveCard/>};
-      const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
+      const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
       if(!saved)fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'domino'}});
       draw.mockClear();
-      rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
+      rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(250);
       expect(document.querySelector('canvas')!.hidden).toBe(true);
       expect(draw).not.toHaveBeenCalled();
       expect(document.querySelector<HTMLElement>('[data-scene-card="a"] [data-scene-face]')!.style.transform).toBe('');
@@ -342,8 +342,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     mockModernNative();
     localStorage.setItem('nlc-v2-effect','domino');
     const original={id:'a',content:<InteractiveCard/>};
-    const {rerender}=render(<CanvasScene items={[original]}/>); flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
+    const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>); flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
     const node=document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face=node.querySelector<HTMLElement>('[data-scene-face]')!;
     const button=screen.getByRole('button',{name:'クリック 0'});
@@ -382,8 +382,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       return 20;
     });
     const original = {id:'a',content:<InteractiveCard/>};
-    const {rerender} = render(<CanvasScene items={[original]}/>); flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
+    const {rerender} = render(<CanvasScene diagnosticsEnabled items={[original]}/>); flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>); flushFrame(16); flushFrame(250);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const face = node.querySelector<HTMLElement>('[data-scene-face]')!;
     expect(observed.has(face)).toBe(true); expect(observed.has(node)).toBe(false);
@@ -406,32 +406,32 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const media = {matches:true,addEventListener(_type:string,cb:()=>void){changed=cb;},removeEventListener(){}};
     vi.stubGlobal('matchMedia',()=>media);
     const item = (id:string) => ({id,content:<span>{id}</span>});
-    const {rerender} = render(<CanvasScene items={[item('a')]} />); flushFrame(0);
-    rerender(<CanvasScene items={[item('new'),item('a')]} />); flushFrame(16); flushFrame(250);
+    const {rerender} = render(<CanvasScene diagnosticsEnabled items={[item('a')]} />); flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[item('new'),item('a')]} />); flushFrame(16); flushFrame(250);
     expect([...document.querySelectorAll<HTMLElement>('[data-scene-card]')].every(node=>node.dataset.sceneTip==='0')).toBe(true);
     act(()=>{media.matches=false;changed?.();}); flushFrame(300);
     expect([...document.querySelectorAll<HTMLElement>('[data-scene-card]')].every(node=>node.dataset.sceneTip==='0')).toBe(true);
   });
   it("エフェクトを保存し、OFFでは新着の粒も傾きも表示しない", () => {
     const item = (id:string) => ({id,content:<span>{id}</span>});
-    const {rerender,unmount} = render(<CanvasScene items={[item('a')]} />);
+    const {rerender,unmount} = render(<CanvasScene diagnosticsEnabled items={[item('a')]} />);
     flushFrame(0);
     fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});
-    rerender(<CanvasScene items={[item('new'),item('a')]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[item('new'),item('a')]} />);
     flushFrame(16); flushFrame(300);
     expect(screen.getByLabelText('カード領域。縦スクロールで移動').dataset.scenePushEffect).toBe('idle');
     expect(document.querySelectorAll('svg path').length).toBe(0);
     expect([...document.querySelectorAll<HTMLElement>('[data-scene-card]')].every(node=>node.dataset.sceneTip==='0')).toBe(true);
-    unmount(); render(<CanvasScene items={[item('a')]} />);
+    unmount(); render(<CanvasScene diagnosticsEnabled items={[item('a')]} />);
     expect((screen.getByRole('combobox', {name:'新着エフェクト'}) as HTMLSelectElement).value).toBe('off');
   });
   it("ドミノはnativeカードを変形し、focusと選択切替で解除して旧効果を再開しない", () => {
     mockModernNative();
     const original = {id:'a',content:<InteractiveCard />};
-    const {rerender} = render(<CanvasScene items={[original]} />);
+    const {rerender} = render(<CanvasScene diagnosticsEnabled items={[original]} />);
     flushFrame(0);
     fireEvent.change(screen.getByRole('combobox', {name:'新着エフェクト'}),{target:{value:'domino'}});
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]} />);
     flushFrame(16); flushFrame(250);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     expect(Number(node.dataset.sceneTip)).toBeGreaterThan(0);
@@ -457,9 +457,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   it("nativeの星屑はDOM切替で停止し復帰後も旧batchを再生しない", () => {
     const {fill}=mockModernNative();
     const item=(id:string)=>({id,content:<span>{id}</span>});
-    const {rerender}=render(<CanvasScene items={[item('a'),item('b')]} />);flushFrame(0);
+    const {rerender}=render(<CanvasScene diagnosticsEnabled items={[item('a'),item('b')]} />);flushFrame(0);
     const host=screen.getByLabelText('カード領域。縦スクロールで移動');
-    rerender(<CanvasScene items={[item('new'),item('a'),item('b')]} />);flushFrame(16);flushFrame(100);
+    rerender(<CanvasScene diagnosticsEnabled items={[item('new'),item('a'),item('b')]} />);flushFrame(16);flushFrame(100);
     expect(host.dataset.scenePushEffect).toBe('active');expect(fill).toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(150);
     expect(host.dataset.scenePushEffect).toBe('idle');expect(host.querySelector('svg')).toBeNull();
@@ -474,9 +474,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const original = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,'requestPaint');
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value(this:HTMLCanvasElement){this.dispatchEvent(new Event('paint'));}});
     try {
-      const {rerender} = render(<CanvasScene items={[{id:'a',content:<span>a</span>}]} />);
+      const {rerender} = render(<CanvasScene diagnosticsEnabled items={[{id:'a',content:<span>a</span>}]} />);
       flushFrame(0);
-      rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
+      rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
       flushFrame(16); flushFrame(100);
       expect(stroke).not.toHaveBeenCalled();
       expect(fill).toHaveBeenCalled();
@@ -491,8 +491,8 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   it.each(['sparkle','domino','ripple'])("DOMでは保存済み%sも効果なしで入力とクリックを維持する", choice => {
     localStorage.setItem('nlc-v2-effect',choice);
     const original={id:'a',content:<InteractiveCard/>};
-    const {rerender}=render(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(400);
+    const {rerender}=render(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},original]}/>);flushFrame(16);flushFrame(400);
     const host=screen.getByLabelText('カード領域。縦スクロールで移動');
     expect(host.dataset.scenePushEffect).toBe('idle');expect(host.querySelector('svg')).toBeNull();
     for(const node of host.querySelectorAll<HTMLElement>('[data-scene-card]')) {
@@ -510,9 +510,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     let changed: (() => void) | undefined;
     const media = {matches:false,addEventListener(_type:string,callback:()=>void){changed=callback;},removeEventListener(){}};
     vi.stubGlobal('matchMedia',()=>media);
-    const {rerender} = render(<CanvasScene items={[{id:'a',content:<span>a</span>}]} />);
+    const {rerender} = render(<CanvasScene diagnosticsEnabled items={[{id:'a',content:<span>a</span>}]} />);
     flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
     flushFrame(16); flushFrame(100);
     const host = screen.getByLabelText('カード領域。縦スクロールで移動');
     expect(host.dataset.scenePushEffect).toBe('active');
@@ -526,9 +526,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
   it("reduced-motionでは新着の因果線を表示せず余分なframeを続けない", () => {
     vi.stubGlobal('matchMedia', () => ({matches:true,addEventListener(){},removeEventListener(){}}));
-    const {rerender} = render(<CanvasScene items={[{id:'a',content:<span>a</span>}]} />);
+    const {rerender} = render(<CanvasScene diagnosticsEnabled items={[{id:'a',content:<span>a</span>}]} />);
     flushFrame(0);
-    rerender(<CanvasScene items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[{id:'new',content:<span>new</span>},{id:'a',content:<span>a</span>}]} />);
     flushFrame(16);
     const host = screen.getByLabelText('カード領域。縦スクロールで移動');
     expect(host.dataset.scenePushEffect).toBe('reduced');
@@ -545,9 +545,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const card = (id:string, score:number): Card => ({ type:'compose', slotId:id, pubkey:id, score, created_at:0 });
     const a = card('a',2), b = card('b',1), added = card('new',3);
     const items = (cards:Card[]) => cards.map(card => ({id:card.slotId, card, content:<span>{card.slotId}</span>}));
-    const { rerender } = render(<CanvasScene items={items([a,b])} />);
+    const { rerender } = render(<CanvasScene diagnosticsEnabled items={items([a,b])} />);
     flushFrame(0);
-    rerender(<CanvasScene items={items([added,a,b])} />);
+    rerender(<CanvasScene diagnosticsEnabled items={items([added,a,b])} />);
     flushFrame(16);
     const node = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const host = screen.getByLabelText('カード領域。縦スクロールで移動');
@@ -570,7 +570,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     const card = (id: string, score: number, pubkey: string): Card => ({ type: 'compose', slotId: id, score, pubkey, created_at: 0 });
     const cards = [card('a', 100, 'alice'), card('b', 80, 'bob'), card('c', 60, 'alice'), card('d', 20, 'dave')];
     const items = (list: Card[]) => list.map(value => ({ id: value.slotId, card: value, content: <span>{value.slotId}</span> }));
-    const { rerender } = render(<CanvasScene items={items(cards)} />);
+    const { rerender } = render(<CanvasScene diagnosticsEnabled items={items(cards)} />);
     flushFrame(0);
     const heights = new Map(cards.map(value => [value.slotId, 120]));
     const initial = buildInitialLayout(cards, 2, heights);
@@ -584,7 +584,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     assertGrid(initial.grid);
     const added = card('new', 110, 'alice');
     heights.set('new', 120);
-    rerender(<CanvasScene items={items([added, ...cards])} />);
+    rerender(<CanvasScene diagnosticsEnabled items={items([added, ...cards])} />);
     flushFrame(16);
     const inserted = insertCard(initial.grid, added, [added, ...cards], 2, heights, new Set());
     assertGrid(reflow(inserted.grid, [added, ...cards], 2, heights).grid);
@@ -597,11 +597,11 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     // 配置の全frame回帰では粒子描画を分離する。各エフェクトは専用回帰で検査する。
     localStorage.setItem('nlc-v2-effect', 'off');
     const item = (id: string) => ({ id, content: <button>{id}</button> });
-    const { rerender, unmount } = render(<CanvasScene items={[item('a'), item('b'), item('c'), item('d')]} />);
+    const { rerender, unmount } = render(<CanvasScene diagnosticsEnabled items={[item('a'), item('b'), item('c'), item('d')]} />);
     flushFrame(0);
     const a = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const oldY = Number(a.dataset.sceneY);
-    rerender(<CanvasScene items={[item('new'), item('a'), item('b'), item('c'), item('d')]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[item('new'), item('a'), item('b'), item('c'), item('d')]} />);
     flushFrame(16);
     const cards = [...document.querySelectorAll<HTMLElement>('[data-scene-card]')];
     expect(cards.some(card => card.dataset.sceneY !== card.dataset.sceneTargetY)).toBe(true);
@@ -619,9 +619,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     Object.defineProperty(HTMLCanvasElement.prototype, 'requestPaint', { configurable:true, value(this: HTMLCanvasElement) { this.dispatchEvent(new Event('paint')); } });
     try {
       const item = (id:string) => ({ id, content:<span>{id}</span> });
-      const { rerender } = render(<CanvasScene items={[item('a'),item('b'),item('c'),item('d')]} />);
+      const { rerender } = render(<CanvasScene diagnosticsEnabled items={[item('a'),item('b'),item('c'),item('d')]} />);
       flushFrame(0);
-      rerender(<CanvasScene items={[item('new'),item('a'),item('b'),item('c'),item('d')]} />);
+      rerender(<CanvasScene diagnosticsEnabled items={[item('new'),item('a'),item('b'),item('c'),item('d')]} />);
       flushFrame(16); flushFrame(48);
       const a = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
       const before = Number(a.dataset.sceneDelay);
@@ -639,9 +639,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
   it("描画modeを途中で切り替えても現在座標と待機を保持する", () => {
     const item = (id:string) => ({ id, content:<span>{id}</span> });
-    const { rerender } = render(<CanvasScene items={[item('a'),item('b'),item('c')]} />);
+    const { rerender } = render(<CanvasScene diagnosticsEnabled items={[item('a'),item('b'),item('c')]} />);
     flushFrame(0);
-    rerender(<CanvasScene items={[item('new'),item('a'),item('b'),item('c')]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[item('new'),item('a'),item('b'),item('c')]} />);
     flushFrame(16); flushFrame(48);
     const card = document.querySelector<HTMLElement>('[data-scene-card="new"]')!;
     const y = card.dataset.sceneY;
@@ -655,9 +655,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
   it("移動途中のfocusは実表示位置をholdし、続く新着でも入力を動かさない", () => {
     const a = { id:'a', content:<input aria-label="移動中の入力" /> };
-    const { rerender } = render(<CanvasScene items={[a]} />);
+    const { rerender } = render(<CanvasScene diagnosticsEnabled items={[a]} />);
     flushFrame(0);
-    rerender(<CanvasScene items={[{ id:'new',content:<span>new</span> }, a]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[{ id:'new',content:<span>new</span> }, a]} />);
     flushFrame(16); flushFrame(100); flushFrame(164);
     const card = document.querySelector<HTMLElement>('[data-scene-card="a"]')!;
     const y = card.dataset.sceneY;
@@ -665,22 +665,22 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     flushFrame(180);
     expect(card.dataset.scenePhase).toBe('held');
     expect(card.dataset.sceneY).toBe(y);
-    rerender(<CanvasScene items={[{ id:'newer',content:<span>newer</span> }, { id:'new',content:<span>new</span> }, a]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[{ id:'newer',content:<span>newer</span> }, { id:'new',content:<span>new</span> }, a]} />);
     flushFrame(196); flushFrame(260);
     expect(card.dataset.sceneY).toBe(y);
   });
   it("reduced motionでは新着と押出しを即座に確定する", () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true, addEventListener() {}, removeEventListener() {} }));
-    const { rerender } = render(<CanvasScene items={[{ id:'a', content:<span>a</span> }]} />);
+    const { rerender } = render(<CanvasScene diagnosticsEnabled items={[{ id:'a', content:<span>a</span> }]} />);
     flushFrame();
-    rerender(<CanvasScene items={[{ id:'new', content:<span>new</span> }, { id:'a', content:<span>a</span> }]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[{ id:'new', content:<span>new</span> }, { id:'a', content:<span>a</span> }]} />);
     flushFrame(16);
     for (const card of document.querySelectorAll<HTMLElement>('[data-scene-card]')) expect(card.dataset.sceneY).toBe(card.dataset.sceneTargetY);
     expect(frames.size).toBe(0);
   });
 
   it("固定サイズ画像のload通知で再描画frameを予約する", () => {
-    render(<CanvasScene items={[{ id: "image", content: <span data-testid="loaded-image" /> }]} />);
+    render(<CanvasScene diagnosticsEnabled items={[{ id: "image", content: <span data-testid="loaded-image" /> }]} />);
     flushFrame();
     expect(frames.size).toBe(0);
     act(() => screen.getByTestId("loaded-image").dispatchEvent(new CustomEvent("canvas-image-ready", { bubbles: true })));
@@ -688,7 +688,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     flushFrame();
   });
   it("SSRと初回hydrationを一致させ、回復可能エラーなしでportalを操作できる", async () => {
-    const element = <CanvasScene items={[{ id: "one", content: <InteractiveCard focus /> }]} />;
+    const element = <CanvasScene diagnosticsEnabled items={[{ id: "one", content: <InteractiveCard focus /> }]} />;
     const browserDocument = document;
     let html: string;
     try {
@@ -716,7 +716,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("アプリ倍率と横位置を固定し、native縦scrollだけを反映する", () => {
-    render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);
+    render(<CanvasScene diagnosticsEnabled items={[{ id: "one", content: <InteractiveCard /> }]} />);
     flushFrame();
     const card = document.querySelector<HTMLElement>("[data-scene-card]")!;
     const host = screen.getByLabelText('カード領域。縦スクロールで移動');
@@ -738,7 +738,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(card.style.transform).toBe('translate(16px,16px) scale(1)');
   });
   it("縦scroll位置と描画extentをmode切替後も維持する", () => {
-    render(<CanvasScene items={Array.from({length:12}, (_,i) => ({id:String(i),content:<span>{i}</span>}))} />);
+    render(<CanvasScene diagnosticsEnabled items={Array.from({length:12}, (_,i) => ({id:String(i),content:<span>{i}</span>}))} />);
     flushFrame();
     const host = screen.getByLabelText('カード領域。縦スクロールで移動');
     const extent = host.firstElementChild as HTMLElement;
@@ -753,7 +753,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
     expect(first.style.transform).toBe(before);
   });
   it("DOM fallback内の実際のボタンがReactハンドラを呼ぶ", () => {
-    render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);
+    render(<CanvasScene diagnosticsEnabled items={[{ id: "one", content: <InteractiveCard /> }]} />);
     flushFrame();
     expect(document.querySelector("[data-renderer-status]")!.textContent).toContain("DOM fallback");
     fireEvent.click(screen.getByRole("button", { name: "クリック 0" }));
@@ -761,7 +761,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("手動切替の往復でもportalの入力ノード・入力値・選択範囲を維持する", () => {
-    render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);
+    render(<CanvasScene diagnosticsEnabled items={[{ id: "one", content: <InteractiveCard /> }]} />);
     flushFrame();
     const input = screen.getByRole("textbox", { name: "下書き" }) as HTMLInputElement;
     fireEvent.change(input, { target: { value: "保存する入力" } });
@@ -780,9 +780,9 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
   });
 
   it("後から追加したカードはfocus effectが実行される前に接続される", () => {
-    const { rerender } = render(<CanvasScene items={[]} />);
+    const { rerender } = render(<CanvasScene diagnosticsEnabled items={[]} />);
     flushFrame();
-    rerender(<CanvasScene items={[{ id: "draft", content: <InteractiveCard focus /> }]} />);
+    rerender(<CanvasScene diagnosticsEnabled items={[{ id: "draft", content: <InteractiveCard focus /> }]} />);
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "下書き" }));
     flushFrame();
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "下書き" }));
@@ -800,7 +800,7 @@ describe("CanvasScene DOM操作とAPI失敗時の回復", () => {
       value(this: HTMLCanvasElement) { this.dispatchEvent(new Event("paint")); },
     });
     try {
-      render(<CanvasScene items={[{ id: "one", content: <InteractiveCard /> }]} />);
+      render(<CanvasScene diagnosticsEnabled items={[{ id: "one", content: <InteractiveCard /> }]} />);
       flushFrame();
       flushFrame();
       expect(draw).toHaveBeenCalled();
@@ -833,6 +833,72 @@ describe('CanvasScene WebGL feed接続', () => {
   const original = {id:'a',content:<InteractiveCard/>};
   const incoming = {id:'new',content:<span>new</span>};
 
+  it('allowNative=falseはAPI対応環境でもcontext取得とnative再試行を禁止する', () => {
+    gpuBackend();vi.mocked(HTMLCanvasElement.prototype.getContext).mockClear();
+    renderUI(<CanvasScene diagnosticsEnabled allowNative={false} items={[original]} qaMeasurementToken={1}/>);flushFrame(0);
+    expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();expect(backendMock.create).not.toHaveBeenCalled();
+    expect(host().dataset.sceneRenderer).toBe('dom');expect(host().dataset.sceneFallbackStage).toBe('image-gate');
+    expect(screen.getByText('画像配信が無効のため互換表示を使用しています')).toBeDefined();
+    expect(screen.queryByRole('button',{name:'Nativeを試す'})).toBeNull();expect(screen.queryByRole('button',{name:'DOMに切替'})).toBeNull();
+    expect((screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement).disabled).toBe(true);
+    expect((screen.getByRole('combobox',{name:'QA描画方式'}) as HTMLSelectElement).disabled).toBe(true);
+    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(20);
+    expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
+  });
+  it('allowNative切替は入力を保ち復帰で過去batchを再生しない', () => {
+    const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    fireEvent.change(screen.getByLabelText('下書き'),{target:{value:'keep'}});
+    rerender(<CanvasScene diagnosticsEnabled allowNative={false} items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
+    expect(host().dataset.sceneRenderer).toBe('dom');expect((screen.getByLabelText('下書き') as HTMLInputElement).value).toBe('keep');
+    rerender(<CanvasScene diagnosticsEnabled allowNative items={[incoming,original]}/>);flushFrame(400);
+    expect(host().dataset.sceneRenderer).toBe('webgl');expect((screen.getByLabelText('下書き') as HTMLInputElement).value).toBe('keep');
+    expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);expect(host().dataset.scenePushEffect).toBe('idle');
+  });
+  it('allowNative=falseのSSRも互換表示を説明しnative再試行を出さない', () => {
+    const html=renderToString(<CanvasScene allowNative={false} items={[original]}/>);
+    expect(html).toContain('画像配信が無効のため互換表示を使用しています');
+    expect(html).not.toContain('Nativeを試す');expect(html).not.toContain('DOMに切替');
+  });
+
+  it('既定ではQA・受動診断・frame計測を行わず機能用属性と操作は維持する', () => {
+    const {seen}=gpuBackend();const listen=vi.spyOn(window,'addEventListener');
+    const {rerender}=renderUI(<CanvasScene items={[original]} qaMeasurementToken={1}/>);flushFrame(0);
+    expect(frames.size).toBe(0);
+    expect(screen.queryByRole('combobox',{name:'QA描画方式'})).toBeNull();
+    expect(screen.queryByRole('button',{name:'5秒frame比較'})).toBeNull();
+    expect(screen.queryByLabelText('実フィードframe比較結果')).toBeNull();
+    expect(screen.getByText('表示設定')).toBeDefined();
+    expect(screen.getByRole('button',{name:'DOMに切替'}).closest('details')).not.toBeNull();
+    expect(listen.mock.calls.some(([type,,options])=>['pointerdown','pointerup','click'].includes(type) && typeof options==='object' && options?.passive)).toBe(false);
+    rerender(<CanvasScene items={[incoming,original]} qaMeasurementToken={2}/>);flushFrame(100);flushFrame(350);
+    expect(seen.at(-1)!.cards.length).toBe(2);
+    const node=card('a');expect(node.dataset.sceneCard).toBe('a');expect(node.dataset.sceneCapturePadding).toBe('0');
+    expect(node.querySelector('[data-scene-face]')).not.toBeNull();
+    expect(Object.keys(host().dataset)).toEqual([]);
+    expect(Object.keys(node.dataset).sort()).toEqual(['sceneCapturePadding','sceneCard']);
+    const button=screen.getByRole('button',{name:'クリック 0'});pointer(button,'pointerdown');pointer(window,'pointerup');fireEvent.click(button);flushFrame(400);
+    expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();expect(host().dataset.sceneLastPointerDown).toBeUndefined();
+    for(let t=500;t<=10000;t+=100) flushFrame(t);expect(frames.size).toBe(0);
+  });
+  it('診断を無効へ戻すと既存attrsを消しrendererはWebGLへ戻す', () => {
+    gpuBackend();const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    expect(host().dataset.sceneRenderer).toBe('webgl');expect(card('a').dataset.sceneX).toBeDefined();
+    fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(50);
+    rerender(<CanvasScene items={[original]}/>);flushFrame(100);
+    expect(Object.keys(host().dataset)).toEqual([]);expect(card('a').dataset.sceneX).toBeUndefined();
+    expect((screen.getByLabelText('WebGLライブカード') as HTMLCanvasElement).hidden).toBe(false);
+  });
+  it('通常DOMではエフェクト選択を無効化して保存済み選択とカード操作を保つ', () => {
+    localStorage.setItem('nlc-v2-effect','ripple');renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    const select=screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement;
+    expect(select.disabled).toBe(true);expect(select.value).toBe('ripple');
+    expect(screen.getByText('エフェクトはHTML-in-Canvas対応表示で利用できます。選択は保存されています。')).toBeDefined();
+    expect(localStorage.getItem('nlc-v2-effect')).toBe('ripple');
+    fireEvent.click(screen.getByRole('button',{name:'クリック 0'}));expect(screen.getByRole('button',{name:'クリック 1'})).toBeDefined();
+  });
+
   it('波紋の適用先は実edgeだけで固定し通常reflow移動・無関係・単独rootを除外する', () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
     const update=sceneModule.updateSceneLayout;let clearTraces=false;
@@ -846,8 +912,8 @@ describe('CanvasScene WebGL feed接続', () => {
       return result;
     });
     const unrelated={id:'unrelated',content:<span>unrelated</span>},second={id:'second',content:<span>second</span>};
-    const {rerender}=renderUI(<CanvasScene items={[original,unrelated]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,second,original,unrelated]}/>);flushFrame(100);flushFrame(350);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original,unrelated]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,second,original,unrelated]}/>);flushFrame(100);flushFrame(350);
     const applied=()=>seen.at(-1)!.cards.filter(c=>c.ripple).map(c=>c.id).sort();
     expect(applied()).toEqual(['a','second']);
     expect(host().dataset.sceneRippleCards).toBe('2');
@@ -857,7 +923,7 @@ describe('CanvasScene WebGL feed接続', () => {
     const positions=seen.at(-1)!.cards.map(c=>({...c.box}));
     fireEvent(window,new Event('resize'));flushFrame(500);
     expect(applied()).toEqual(['a','second']);expect(seen.at(-1)!.cards.map(c=>({...c.box}))).not.toEqual(positions);
-    rerender(<CanvasScene items={[incoming,second,original,unrelated]} heldIds={new Set(['a'])}/>);flushFrame(550);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,second,original,unrelated]} heldIds={new Set(['a'])}/>);flushFrame(550);
     expect(applied()).toEqual(['second']);expect(host().dataset.sceneRippleCards).toBe('1');
   });
 
@@ -866,8 +932,8 @@ describe('CanvasScene WebGL feed接続', () => {
     let refresh:(()=>void)|undefined;
     vi.stubGlobal('ResizeObserver',class{constructor(fn:()=>void){refresh=fn;}observe(){}unobserve(){}disconnect(){}});
     let height=120;vi.spyOn(HTMLElement.prototype,'offsetHeight','get').mockImplementation(function(this:HTMLElement){return this.hasAttribute('data-scene-face')?height:0;});
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(300);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(300);
     const ripple=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!.ripple!;
     const sources=ripple().sources;
     expect(sources).toHaveLength(1);expect(sources[0]).toMatchObject({id:'new',x:Number(card('new').dataset.sceneTargetX)+180,y:Number(card('new').dataset.sceneTargetY)+60});
@@ -878,15 +944,15 @@ describe('CanvasScene WebGL feed接続', () => {
     await act(async()=>{await Promise.resolve();});flushFrame(350);expect(seen.at(-1)!.dirtyIds!.size).toBe(0);
     height=240;act(()=>refresh?.());flushFrame(400);expect(ripple().sources).toEqual(sources);expect(ripple().ageMs).toBe(300);
     host().scrollTop=90;fireEvent.scroll(host());flushFrame(450);expect(ripple().sources).toEqual(sources);expect(seen.at(-1)!.camera.y).toBe(-90);
-    rerender(<CanvasScene items={[original]}/>);flushFrame(500);expect(ripple().sources).toEqual(sources);
-    const next={id:'second',content:<span>second</span>};rerender(<CanvasScene items={[next,original]}/>);flushFrame(600);flushFrame(700);
+    rerender(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(500);expect(ripple().sources).toEqual(sources);
+    const next={id:'second',content:<span>second</span>};rerender(<CanvasScene diagnosticsEnabled items={[next,original]}/>);flushFrame(600);flushFrame(700);
     expect(ripple().sources.map(s=>s.id)).toEqual(['second']);expect(ripple().ageMs).toBe(100);
   });
 
   it('波紋はGLでだけ屈折しhold・focus・非focus押下を抑制する', () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
     const latest=()=>seen.at(-1)!.cards.find(c=>c.id==='a')!;
     expect(latest().ripple!.amount).toBeGreaterThan(0);expect(latest().tip).toBeUndefined();
     expect(card('a').querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
@@ -897,16 +963,16 @@ describe('CanvasScene WebGL feed接続', () => {
     fireEvent(window,new Event('blur'));flushFrame(390);expect(latest().ripple).toBeDefined();
     const input=screen.getByLabelText('下書き');fireEvent.focus(input);flushFrame(410);expect(latest().ripple).toBeUndefined();
     fireEvent.blur(input);flushFrame(430);expect(latest().ripple).toBeDefined();
-    rerender(<CanvasScene items={[incoming,original]} heldIds={new Set(['a'])}/>);flushFrame(450);expect(latest().ripple).toBeUndefined();
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(470);expect(latest().ripple).toBeDefined();
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]} heldIds={new Set(['a'])}/>);flushFrame(450);expect(latest().ripple).toBeUndefined();
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(470);expect(latest().ripple).toBeDefined();
     fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});flushFrame(490);
     expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
   });
   it('波紋はCSS比較とDOMで停止しGL復帰で旧batchを再生しない', () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'css'}});flushFrame(30);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
     expect(host().dataset.scenePushEffect).toBe('idle');expect(host().dataset.sceneRippleCards).toBe('0');
     fireEvent.change(screen.getByRole('combobox',{name:'QA描画方式'}),{target:{value:'webgl'}});flushFrame(400);
     expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
@@ -917,8 +983,8 @@ describe('CanvasScene WebGL feed接続', () => {
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','ripple');
     let changed:(()=>void)|undefined;const media={matches:false,addEventListener(_t:string,fn:()=>void){changed=fn;},removeEventListener(){}};
     vi.stubGlobal('matchMedia',()=>media);
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(350);
     expect(seen.at(-1)!.cards.some(c=>c.ripple)).toBe(true);
     act(()=>{media.matches=true;changed!();});flushFrame(400);expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
     act(()=>{media.matches=false;changed!();});flushFrame(450);expect(seen.at(-1)!.cards.every(c=>!c.ripple)).toBe(true);
@@ -927,9 +993,9 @@ describe('CanvasScene WebGL feed接続', () => {
   it('default GLはCSSを平面に保ちtipとDPR/scrollをbackendへ渡す', () => {
     const {seen}=gpuBackend(); vi.stubGlobal('devicePixelRatio',2);
     localStorage.setItem('nlc-v2-effect','domino');
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>); flushFrame(0);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>); flushFrame(0);
     fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'domino'}});
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
     expect(host().dataset.sceneRenderer).toBe('webgl');
     expect(seen.at(-1)!.cards.some(c=>(c.tip?.amount??0)>0)).toBe(true);
     expect(card('a').querySelector<HTMLElement>('[data-scene-face]')!.style.transform).toBe('');
@@ -941,7 +1007,7 @@ describe('CanvasScene WebGL feed接続', () => {
   });
 
   it('self診断attrsでDOM idleのrAFを再起動しない', async () => {
-    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     await act(async()=>{await Promise.resolve();});
     for(let n=0;n<4;n++){flushFrame(16*(n+1));await act(async()=>{await Promise.resolve();});}
     expect(frames.size).toBe(0);
@@ -949,8 +1015,8 @@ describe('CanvasScene WebGL feed接続', () => {
 
   it('位置だけのframeはdirtyなし、入力とpaint.changedElementsは伝播する', async () => {
     const {seen}=gpuBackend();
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);
     await act(async()=>{await Promise.resolve();});flushFrame(200);
     await act(async()=>{await Promise.resolve();});flushFrame(250);
     expect(seen.at(-1)!.dirtyIds!.size).toBe(0);
@@ -962,7 +1028,7 @@ describe('CanvasScene WebGL feed接続', () => {
   });
 
   it('context lossは平面DOMへ退避し入力とクリックを保つ', () => {
-    const {dispose}=gpuBackend();renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    const {dispose}=gpuBackend();renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     fireEvent.change(screen.getByLabelText('下書き'),{target:{value:'keep'}});
     const event=new Event('webglcontextlost',{cancelable:true});fireEvent(screen.getByLabelText('WebGLライブカード'),event);flushFrame(50);
     expect(event.defaultPrevented).toBe(true);expect(dispose).toHaveBeenCalled();
@@ -974,14 +1040,14 @@ describe('CanvasScene WebGL feed接続', () => {
 
   it('resource failureは欠落カードを残さずDOMへ退避する', () => {
     const {draw,dispose}=gpuBackend();draw.mockImplementation(()=>{throw new Error('budget');});
-    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     expect(host().dataset.sceneRenderer).toBe('dom');expect(dispose).toHaveBeenCalled();
     expect(card('a').parentElement!.tagName).toBe('DIV');
   });
 
   it('sparkleは同じGPUへ渡しOFFとDOMで消し、切替で入力scrollを保つ', () => {
-    const {seen}=gpuBackend();const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
+    const {seen}=gpuBackend();const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
     expect(seen.at(-1)!.particles!.length).toBeGreaterThan(0);
     fireEvent.change(screen.getByRole('combobox',{name:'新着エフェクト'}),{target:{value:'off'}});flushFrame(300);
     expect(seen.at(-1)!.particles).toEqual([]);
@@ -992,8 +1058,8 @@ describe('CanvasScene WebGL feed接続', () => {
   });
 
   it('5秒計測tokenは有限でDOM計測は起動しない', () => {
-    gpuBackend();const {rerender}=renderUI(<CanvasScene items={[original]} qaMeasurementToken={0}/>);flushFrame(0);
-    rerender(<CanvasScene items={[original]} qaMeasurementToken={1}/>);flushFrame(10);flushFrame(5010);
+    gpuBackend();const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]} qaMeasurementToken={0}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[original]} qaMeasurementToken={1}/>);flushFrame(10);flushFrame(5010);
     expect(screen.getByLabelText('実フィードframe比較結果').textContent).toContain('webgl');expect(frames.size).toBe(0);
     fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(5100);
     fireEvent.click(screen.getByRole('button',{name:'5秒frame比較'}));expect(frames.size).toBe(0);
@@ -1001,8 +1067,8 @@ describe('CanvasScene WebGL feed接続', () => {
   it('GPUの最後の描画姿勢とboxをpointerdownからclick完了まで固定する', () => {
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
     const {seen}=gpuBackend();localStorage.setItem('nlc-v2-effect','domino');
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
     const drawn=seen.at(-1)!.cards.find(c=>c.id==='a')!;
     expect(drawn.tip!.amount).toBeGreaterThan(0);
     expect(card('a').style.height).toBe(`${drawn.box.height}px`);
@@ -1021,8 +1087,8 @@ describe('CanvasScene WebGL feed接続', () => {
     let changed:(()=>void)|undefined;
     const media={matches:false,addEventListener(_type:string,fn:()=>void){changed=fn;},removeEventListener(){}};
     vi.stubGlobal('matchMedia',()=>media);
-    const {rerender}=renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
-    rerender(<CanvasScene items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
+    const {rerender}=renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
+    rerender(<CanvasScene diagnosticsEnabled items={[incoming,original]}/>);flushFrame(100);flushFrame(250);
     expect(seen.at(-1)!.cards.some(c=>c.tip)).toBe(true);
     act(()=>{media.matches=true;changed!();});flushFrame(300);
     expect(seen.at(-1)!.cards.every(c=>!c.tip)).toBe(true);expect(seen.at(-1)!.particles).toEqual([]);
@@ -1032,14 +1098,14 @@ describe('CanvasScene WebGL feed接続', () => {
 
   it.each([['Program failed','program-link'],['Fragment shader failed','fragment-compile'],['https://private.example/?token=secret','unknown']])('init分類は固定値のみ: %s', (message,code) => {
     mockModernNative();backendMock.create.mockImplementation(()=>{throw new Error(message);});
-    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     expect(host().dataset.sceneFallbackStage).toBe('init');expect(host().dataset.sceneFallbackReason).toBe(code);
     expect(document.querySelector('[data-renderer-status]')!.textContent).toContain(`init/${code}`);
     expect(host().outerHTML).not.toContain(message);
   });
   it('render分類とmanual切替は旧診断を引き継がない', () => {
     const {draw}=gpuBackend();draw.mockImplementation(()=>{throw new Error('Texture budget limit');});
-    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     expect(host().dataset.sceneFallbackStage).toBe('render');expect(host().dataset.sceneFallbackReason).toBe('texture-budget');
     fireEvent.click(screen.getByRole('button',{name:'DOMに切替'}));flushFrame(20);
     expect(host().dataset.sceneFallbackStage).toBe('manual');expect(host().dataset.sceneFallbackReason).toBe('requested');
@@ -1047,7 +1113,7 @@ describe('CanvasScene WebGL feed接続', () => {
   it('paint未発火をwatchdog分類しcontext lossと分ける', () => {
     vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});gpuBackend();
     Object.defineProperty(HTMLCanvasElement.prototype,'requestPaint',{configurable:true,value:vi.fn()});
-    renderUI(<CanvasScene items={[original]}/>);flushFrame(0);
+    renderUI(<CanvasScene diagnosticsEnabled items={[original]}/>);flushFrame(0);
     act(()=>vi.advanceTimersByTime(2500));flushFrame(2600);
     expect(host().dataset.sceneFallbackStage).toBe('watchdog');expect(host().dataset.sceneFallbackReason).toBe('paint-timeout');
   });
