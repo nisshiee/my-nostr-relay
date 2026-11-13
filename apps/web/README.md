@@ -35,3 +35,21 @@ Frontend CIはlint・テスト・buildを実行する。過去のテスト数や
 ## ローカル E2E 動作確認
 
 [ローカル NIP-46 E2E 手順](../../docs/testing/local-nip46-e2e.md)では、アプリの一時コピー、使い捨て鍵、localhostのnakリレー・署名器を使用する。ブラウザで接続・署名・投稿・再取得を確認し、独立した購読で署名を検証する。任意のストリームfixtureと空フォローfixtureも利用できる。
+
+### NIP-46 upstream connection patch
+
+The pinned `window.nostr.js@0.8.1` bundle is patched during `npm ci` / `npm install`
+by `scripts/patch-remote-signer.mjs`. Installation fails closed if the version or
+the full bundle SHA-256 differs from the audited release. Update/remove this patch
+when upgrading the dependency; do not bypass the integrity check.
+
+The patch makes optional `switch_relays` maintenance non-blocking after connecting
+and draining the public-key queue. A failed connection rejects queued callers and
+creates a fresh internal signer promise for the next attempt. It does not change
+identity verification, signing permissions, relay destinations, or saved credentials.
+The failure/retry and successful-connect/unsupported-switch cases are tested without
+real keys, signing, or network access.
+
+This fixes reproducible upstream lifecycle bugs, not a proven diagnosis of every
+remote-signer outage. Real signer approval and response delivery still depend on the
+signer and relays. The app's automatic-restoration timeout remains in place.
