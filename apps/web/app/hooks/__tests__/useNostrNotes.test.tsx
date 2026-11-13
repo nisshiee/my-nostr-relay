@@ -50,6 +50,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("useNostrNotes subscription lifecycle", () => {
   it("deduplicates initial notes, respects published slots and bounds the displayed batch", async () => {
+    expect(MAX_NOTES).toBe(100);
     const h = setup();
     h.slots.current.set("0", "published-slot");
     const sub = h.subscriptions[0]!;
@@ -65,6 +66,18 @@ describe("useNostrNotes subscription lifecycle", () => {
     expect(h.result.current.notesRef.current).toBe(h.result.current.notes);
     expect(h.onReady).toHaveBeenLastCalledWith(h.result.current.notes.map(n => n.eventId));
     expect(h.setStatus).toHaveBeenLastCalledWith("connected");
+  });
+  it("keeps the 100 highest-scored notes after live arrivals", async () => {
+    const h = setup();
+    const sub = h.subscriptions[0]!;
+    await act(async () => { await sub.oneose(); });
+    const now = Math.floor(Date.now() / 1000);
+    act(() => {
+      for (let i = 0; i < 101; i++) sub.onevent(note(`live-${i}`, now - 101 + i));
+    });
+    expect(h.result.current.notes).toHaveLength(100);
+    expect(h.result.current.notes.some(n => n.eventId === "live-0")).toBe(false);
+    expect(h.result.current.notes.some(n => n.eventId === "live-100")).toBe(true);
   });
   it("preserves live notes and newer repost metadata while initial reposts are fetched", async () => {
     const h = setup();
