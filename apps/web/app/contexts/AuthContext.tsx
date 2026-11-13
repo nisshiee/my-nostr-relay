@@ -27,6 +27,7 @@ import {
   type NostrLoginMethod,
 } from "../lib/nostrSigner";
 import type { Nostr } from "../types/nostr";
+import { describeRemoteLoginError } from "../lib/remoteLoginError";
 
 const STORAGE_KEY = "nostr-relay:pubkey";
 const METHOD_STORAGE_KEY = "nostr-relay:login-method";
@@ -127,6 +128,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const nextPubkey = await requestPublicKey(provider, {
         signal,
         timeoutMs: expectedPubkey ? AUTO_LOGIN_TIMEOUT_MS : undefined,
+      }).catch((error: unknown) => {
+        if (method !== "remote" || error instanceof LoginCancelledError) throw error;
+        throw new Error(describeRemoteLoginError(error));
       });
       if (signal.aborted) throw new LoginCancelledError();
       if (!isValidPubkey(nextPubkey)) {
