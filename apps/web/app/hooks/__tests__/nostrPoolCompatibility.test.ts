@@ -226,6 +226,44 @@ describe("nostr-tools SimplePool compatibility", () => {
     pool.destroy();
   });
 
+  it("再購読の watermark をリレーごとに独立して保持する", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    useWebSocketImplementation(MockWebSocket as unknown as typeof WebSocket);
+    const pool = new SimplePool({ enableReconnect: false, enablePing: false });
+    const subscription = subscribeTimeline(
+      pool,
+      ["wss://relay-one.example", "wss://relay-two.example"],
+      { kinds: [1] },
+      { onevent() {} },
+      { retryBaseMs: 5, retryMaxMs: 5, random: () => 0.5 },
+    );
+    await waitFor(
+      () => MockWebSocket.instances.length === 2
+        && MockWebSocket.instances.every((socket) => requests(socket).length === 1),
+      "複数リレーの購読",
+    );
+
+    const advanced = MockWebSocket.instances.find((socket) => socket.url.includes("relay-one"))!;
+    const lagging = MockWebSocket.instances.find((socket) => socket.url.includes("relay-two"))!;
+    const createdAt = Math.floor(Date.now() / 1000);
+    advanced.receive(JSON.stringify([
+      "EVENT",
+      requests(advanced)[0]![1],
+      signedEvent(1, createdAt, "advanced relay event"),
+    ]));
+    lagging.receive(JSON.stringify([
+      "CLOSED",
+      requests(lagging)[0]![1],
+      "error: temporarily unavailable",
+    ]));
+
+    await waitFor(() => requests(lagging).length === 2, "遅いリレーの再購読");
+    expect(requests(lagging)[1]![2]).toEqual({ kinds: [1] });
+
+    subscription.close("テスト終了");
+    pool.destroy();
+  });
+
   it("一時障害が続いても再試行上限で停止する", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     useWebSocketImplementation(MockWebSocket as unknown as typeof WebSocket);

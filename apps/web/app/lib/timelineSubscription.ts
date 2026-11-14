@@ -79,7 +79,6 @@ export function subscribeTimeline(
   const overlapSeconds = options.reconnectOverlapSeconds ?? TIMELINE_RECONNECT_OVERLAP_SECONDS;
   const random = options.random ?? Math.random;
 
-  let latestSafeCreatedAt: number | undefined;
   let cancelled = false;
   let initialEoseNotified = false;
   const rememberedIds = new Set<string>();
@@ -89,6 +88,7 @@ export function subscribeTimeline(
     current: null as SubCloser | null,
     retryTimer: null as ReturnType<typeof setTimeout> | null,
     retryCount: 0,
+    latestSafeCreatedAt: undefined as number | undefined,
     eosed: false,
     terminal: false,
   }));
@@ -122,13 +122,16 @@ export function subscribeTimeline(
     if (cancelled || state.terminal) return;
     state.current = pool.subscribeMany(
       [state.url],
-      reconnectFilter(baseFilter, latestSafeCreatedAt, overlapSeconds),
+      reconnectFilter(baseFilter, state.latestSafeCreatedAt, overlapSeconds),
       {
         onevent(event) {
           if (cancelled || !remember(event.id)) return;
           const receivedAt = Math.floor(Date.now() / 1000);
           const safeCreatedAt = Math.min(event.created_at, receivedAt);
-          latestSafeCreatedAt = Math.max(latestSafeCreatedAt ?? safeCreatedAt, safeCreatedAt);
+          state.latestSafeCreatedAt = Math.max(
+            state.latestSafeCreatedAt ?? safeCreatedAt,
+            safeCreatedAt,
+          );
           state.retryCount = 0;
           params.onevent(event);
         },
