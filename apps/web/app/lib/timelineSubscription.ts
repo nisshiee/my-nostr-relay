@@ -63,7 +63,7 @@ function reconnectFilter(
  * タイムライン購読をアプリ境界で再作成する。
  *
  * SDK のソケット再接続は受信時刻の最大値 + 1 を since にするため、この購読に渡す
- * pool は enableReconnect: false で作る。ここで未来時刻を現在時刻に丸め、同秒遅配を
+ * pool は enableReconnect: false で作る。ここで未来時刻を watermark から除外し、同秒遅配を
  * overlap で拾い直し、event id で重複を除く。
  */
 export function subscribeTimeline(
@@ -125,14 +125,18 @@ export function subscribeTimeline(
       reconnectFilter(baseFilter, state.latestSafeCreatedAt, overlapSeconds),
       {
         onevent(event) {
-          if (cancelled || !remember(event.id)) return;
+          if (cancelled) return;
           const receivedAt = Math.floor(Date.now() / 1000);
-          const safeCreatedAt = Math.min(event.created_at, receivedAt);
-          state.latestSafeCreatedAt = Math.max(
-            state.latestSafeCreatedAt ?? safeCreatedAt,
-            safeCreatedAt,
-          );
+          // Future-dated events must not skip an unreceived historical range.
+          if (event.created_at <= receivedAt) {
+            state.latestSafeCreatedAt = Math.max(
+              state.latestSafeCreatedAt ?? event.created_at,
+              event.created_at,
+            );
+          }
+          // Each relay made progress, even when another relay delivered this ID first.
           state.retryCount = 0;
+          if (!remember(event.id)) return;
           params.onevent(event);
         },
         oneose() {

@@ -343,9 +343,8 @@ describe("nostr-tools SimplePool compatibility", () => {
     firstSocket.close();
 
     await waitFor(() => MockWebSocket.instances.length === 2 && requests(MockWebSocket.instances[1]!).length === 1, "安全な再購読");
-    const recoveredFilter = requests(MockWebSocket.instances[1]!)[0]![2] as { since: number };
-    expect(recoveredFilter.since).toBe(receivedAt - TIMELINE_RECONNECT_OVERLAP_SECONDS);
-    expect(recoveredFilter.since).toBeLessThanOrEqual(Math.floor(Date.now() / 1000));
+    const recoveredFilter = requests(MockWebSocket.instances[1]!)[0]![2];
+    expect(recoveredFilter).toEqual({ kinds: [1, 6], limit: 500 });
 
     subscription.close("テスト終了");
     pool.destroy();

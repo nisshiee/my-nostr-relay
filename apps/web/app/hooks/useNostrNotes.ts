@@ -214,6 +214,7 @@ export function useNostrNotes(
     const initialBuffer: Event[] = [];
     const initialRepostBuffer: Event[] = [];
     let initialLoading = true;
+    let terminalClosed = false;
 
     const notesSub: SubCloser = subscribeTimeline(
       pool,
@@ -349,12 +350,13 @@ export function useNostrNotes(
             }
           }
 
-          setStatus("connected");
+          if (!terminalClosed) setStatus("connected");
 
           // state反映後に、実際に表示するノートをリアクションhookへ通知する。
           setReadyGeneration(generation);
         },
         onterminalclose() {
+          terminalClosed = true;
           if (!cancelled) setStatus("error");
         },
       },
