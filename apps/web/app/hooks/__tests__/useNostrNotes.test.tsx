@@ -46,7 +46,7 @@ function setup() {
   ), { initialProps: props });
   return { ...hook, props, subscriptions, subscribeMany, slots, setStatus, fetchProfiles, onReady, fetchEvents, cache };
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("useNostrNotes subscription lifecycle", () => {
   it("deduplicates initial notes, respects published slots and bounds the displayed batch", async () => {
@@ -78,6 +78,47 @@ describe("useNostrNotes subscription lifecycle", () => {
     expect(h.result.current.notes).toHaveLength(100);
     expect(h.result.current.notes.some(n => n.eventId === "live-0")).toBe(false);
     expect(h.result.current.notes.some(n => n.eventId === "live-100")).toBe(true);
+  });
+  it.each([0, 2, 30])(
+    "re-scores every candidate at the same time before pruning (%s second delivery delay)",
+    async (deliveryDelay) => {
+      vi.useFakeTimers();
+      const startedAt = Date.UTC(2026, 0, 1, 0, 0, 0);
+      vi.setSystemTime(startedAt);
+      const h = setup();
+      const sub = h.subscriptions[0]!;
+      await act(async () => { await sub.oneose(); });
+
+      for (let index = 0; index < MAX_NOTES; index++) {
+        vi.setSystemTime(startedAt + index * 60_000);
+        const createdAt = Math.floor(Date.now() / 1000) - deliveryDelay;
+        act(() => { sub.onevent(note(`old-${index}`, createdAt)); });
+      }
+
+      vi.setSystemTime(startedAt + (MAX_NOTES - 1) * 60_000 + 2 * 60 * 60_000);
+      const newest = note("newest", Math.floor(Date.now() / 1000) - deliveryDelay);
+      act(() => { sub.onevent(newest); });
+
+      expect(h.cache.addEvents).toHaveBeenCalledWith([newest]);
+      expect(h.result.current.notes).toHaveLength(MAX_NOTES);
+      expect(h.result.current.notes.some((candidate) => candidate.eventId === newest.id)).toBe(true);
+      expect(h.result.current.notes.some((candidate) => candidate.eventId === "old-0")).toBe(false);
+    },
+  );
+  it("still prefers a zero-delay arrival over equally recent notes received 30 seconds late", async () => {
+    vi.useFakeTimers();
+    const startedAt = Date.UTC(2026, 0, 1, 0, 0, 0);
+    vi.setSystemTime(startedAt);
+    const h = setup();
+    const sub = h.subscriptions[0]!;
+    await act(async () => { await sub.oneose(); });
+    for (let index = 0; index < MAX_NOTES; index++) {
+      vi.setSystemTime(startedAt + index * 60_000);
+      act(() => { sub.onevent(note(`delayed-${index}`, Math.floor(Date.now() / 1000) - 30)); });
+    }
+    vi.setSystemTime(startedAt + MAX_NOTES * 60_000);
+    act(() => { sub.onevent(note("immediate", Math.floor(Date.now() / 1000))); });
+    expect(h.result.current.notes.some((candidate) => candidate.eventId === "immediate")).toBe(true);
   });
   it("preserves live notes and newer repost metadata while initial reposts are fetched", async () => {
     const h = setup();
