@@ -11,6 +11,7 @@ import { MAX_NOTES } from "../../lib/constants";
 interface Subscription {
   onevent(event: Event): void;
   oneose(): Promise<void>;
+  onclose(reasons: { url: string; reason: string }[]): void;
   close: ReturnType<typeof vi.fn>;
 }
 function note(id: string, created_at = 100): Event {
@@ -196,6 +197,32 @@ describe("useNostrNotes subscription lifecycle", () => {
     h.rerender({ ...h.props, pubkey: null, pool: null });
     expect(h.result.current.notes).toEqual([]);
     expect(h.onReady).toHaveBeenLastCalledWith([]);
+  });
+  it("cancels a pending transient retry when the account changes", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = setup();
+    const old = h.subscriptions[0]!;
+    act(() => {
+      old.onclose([{ url: "wss://relay.example", reason: "relay connection closed" }]);
+      h.rerender({ ...h.props, pubkey: "other" });
+    });
+    expect(h.subscribeMany).toHaveBeenCalledTimes(2);
+    act(() => { vi.advanceTimersByTime(2_000); });
+    expect(h.subscribeMany).toHaveBeenCalledTimes(2);
+    expect(old.close).toHaveBeenCalledOnce();
+  });
+  it("reports terminal subscription closure without retrying", () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = setup();
+    act(() => {
+      h.subscriptions[0]!.onclose([{ url: "wss://relay.example", reason: "rate-limited: slow down" }]);
+      vi.runAllTimers();
+    });
+    expect(h.subscribeMany).toHaveBeenCalledOnce();
+    expect(h.setStatus).toHaveBeenLastCalledWith("error");
   });
   it("finishes an empty following feed without subscribing or retaining earlier notes", async () => {
     const h = setup();

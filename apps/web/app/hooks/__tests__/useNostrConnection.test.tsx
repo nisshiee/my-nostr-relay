@@ -48,6 +48,7 @@ describe("useNostrConnection", () => {
     expect(result.current.followPubkeys).toEqual([]);
     expect(result.current.relayUrls).toEqual([...BOOTSTRAP_RELAYS, "wss://owner.example"]);
     expect(result.current.pool).toBe(mocks.pools[0]);
+    expect(result.current.timelinePool).toBe(mocks.pools[1]);
   });
 
   it("bootstrapイベントが空でも既定リレーで空feedの初期化を完了する", async () => {
@@ -86,11 +87,14 @@ describe("useNostrConnection", () => {
     mocks.queries.push(old.promise, Promise.resolve([event(3, [["p", "new-follow"]])]));
     const { result, rerender } = renderHook(({ key }) => useNostrConnection(key), { initialProps: { key: "old" } });
     const oldPool = mocks.pools[0];
+    const oldTimelinePool = mocks.pools[1];
     rerender({ key: "new" });
     await waitFor(() => expect(result.current.followPubkeys).toEqual(["new-follow"]));
     await act(async () => old.resolve([event(3, [["p", "old-follow"]])]));
     expect(oldPool.destroy).toHaveBeenCalledOnce();
-    expect(result.current.pool).toBe(mocks.pools[1]);
+    expect(oldTimelinePool.destroy).toHaveBeenCalledOnce();
+    expect(result.current.pool).toBe(mocks.pools[2]);
+    expect(result.current.timelinePool).toBe(mocks.pools[3]);
     expect(result.current.followPubkeys).toEqual(["new-follow"]);
   });
 
@@ -110,7 +114,9 @@ describe("useNostrConnection", () => {
     await waitFor(() => expect(result.current.status).toBe("loading"));
     rerender({ key: null });
     expect(mocks.pools[0].destroy).toHaveBeenCalledOnce();
+    expect(mocks.pools[1].destroy).toHaveBeenCalledOnce();
     expect(result.current.pool).toBeNull();
+    expect(result.current.timelinePool).toBeNull();
     expect(result.current.followPubkeys).toEqual([]);
     expect(result.current.relayUrls).toEqual([]);
   });

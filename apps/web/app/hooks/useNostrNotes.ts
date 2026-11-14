@@ -9,6 +9,7 @@ import {
 } from "../lib/constants";
 import { sortByScore } from "../lib/scoring";
 import { calculateNoteScore, createNoteCard, resolveSlotId } from "../lib/createNoteCard";
+import { subscribeTimeline } from "../lib/timelineSubscription";
 import type { NoteCard, NostrProfile } from "../lib/types";
 import type { ConnectionStatus } from "./useNostrConnection";
 import type { EventCache } from "./useEventCache";
@@ -214,7 +215,8 @@ export function useNostrNotes(
     const initialRepostBuffer: Event[] = [];
     let initialLoading = true;
 
-    const notesSub: SubCloser = pool.subscribeMany(
+    const notesSub: SubCloser = subscribeTimeline(
+      pool,
       relayUrls,
       { kinds: [1, 6], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter,
       {
@@ -351,6 +353,9 @@ export function useNostrNotes(
 
           // state反映後に、実際に表示するノートをリアクションhookへ通知する。
           setReadyGeneration(generation);
+        },
+        onterminalclose() {
+          if (!cancelled) setStatus("error");
         },
       },
     );

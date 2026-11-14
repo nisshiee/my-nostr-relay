@@ -17,6 +17,7 @@ type FollowAction = "follow" | "unfollow";
 
 export interface UseNostrConnectionResult {
   pool: SimplePool | null;
+  timelinePool: SimplePool | null;
   relayUrls: string[];
   followPubkeys: string[];
   status: ConnectionStatus;
@@ -32,6 +33,7 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
   const [relayUrls, setRelayUrls] = useState<string[]>([]);
   const [followPubkeys, setFollowPubkeys] = useState<string[]>([]);
   const [pool, setPool] = useState<SimplePool | null>(null);
+  const [timelinePool, setTimelinePool] = useState<SimplePool | null>(null);
   const poolRef = useRef<SimplePool | null>(null);
   const relayUrlsRef = useRef<string[]>([]);
 
@@ -129,8 +131,15 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
           enablePing: true,
         });
         newPool.maxWaitForConnection = MAX_WAIT_FOR_CONNECTION;
+        // タイムラインは since を安全に制御するため、アプリ境界で再購読する。
+        const newTimelinePool = new SimplePool({
+          enableReconnect: false,
+          enablePing: true,
+        });
+        newTimelinePool.maxWaitForConnection = MAX_WAIT_FOR_CONNECTION;
         poolRef.current = newPool;
         setPool(newPool);
+        setTimelinePool(newTimelinePool);
 
         // ステップ1: kind:10002（リレーリスト）とkind:3（フォローリスト）を1リクエストで取得
         const bootstrapEvents = await newPool.querySync(
@@ -194,11 +203,19 @@ export function useNostrConnection(pubkey: string | null): UseNostrConnectionRes
         poolRef.current = null;
       }
       setPool(null);
+      setTimelinePool((current) => {
+        try {
+          current?.destroy();
+        } catch {
+          // 既に閉じている場合は無視
+        }
+        return null;
+      });
       setStatus("connecting");
       setRelayUrls([]);
       setFollowPubkeys([]);
     };
   }, [pubkey]);
 
-  return { pool, relayUrls, followPubkeys, status, setStatus, updateFollowList };
+  return { pool, timelinePool, relayUrls, followPubkeys, status, setStatus, updateFollowList };
 }
