@@ -5,15 +5,11 @@ import { useAuth } from "../contexts/AuthContext";
 import { useNostrRelay } from "../hooks/useNostrRelay";
 import { useThreadCards } from "../hooks/useThreadCards";
 import { useRecentEmojis } from "../hooks/useRecentEmojis";
-import { useCanvasImageSession, type CanvasImageAccessMode } from "../hooks/useCanvasImageSession";
 import { useNativeCanvasCapability } from "./canvas/nativeCanvasCapability";
 import { useManualDOMPreference } from "./canvas/manualDOMPreference";
-import { ImageProxyAccess } from "./ImageProxyAccess";
-import { CorsImageExperimentNotice } from "./CorsImageExperimentNotice";
 import { LiveCanvas } from "./LiveCanvas";
 
-export function Home({ diagnosticsEnabled = false, imageAccessMode: configuredAccessMode = "disabled", corsExperiment = false }: { diagnosticsEnabled?: boolean; imageAccessMode?: CanvasImageAccessMode; corsExperiment?: boolean }) {
-  const imageAccessMode = corsExperiment ? "disabled" : configuredAccessMode;
+export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: boolean }) {
   const {
     pubkey,
     npub,
@@ -31,9 +27,7 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode: configuredAc
   } = useAuth();
   const manualDOM = useManualDOMPreference();
   const nativeCapable = useNativeCanvasCapability();
-  const imageAccess = useCanvasImageSession({ pubkey, mode: imageAccessMode, nativeCapable, manualDOM });
-  const imageReason = !nativeCapable ? "このブラウザはHTML-in-Canvasに対応していないため互換表示を使用しています" : manualDOM ? "互換表示を選択中です。画像の本人確認は行いません。" : imageAccess.reason;
-  const handleLogout = () => { if (imageAccessMode === "owner") void imageAccess.revoke(); logout(); };
+  const imageReason = !nativeCapable ? "このブラウザはHTML-in-Canvas非対応のため互換表示を使用しています" : "互換表示を選択中です";
   // eventId → slotId のマッピング（publish時に登録し、リレー到着時に参照する）
   const publishedSlotMapRef = useRef<Map<string, string>>(new Map());
   const {
@@ -71,14 +65,11 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode: configuredAc
   if (pubkey) {
     return (
       <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
-      {corsExperiment && <CorsImageExperimentNotice />}
       <div className="min-h-0 flex-1 [&>div]:h-full">
       <LiveCanvas
         diagnosticsEnabled={diagnosticsEnabled}
-        corsExperiment={corsExperiment}
-        nativeImagesEnabled={nativeCapable && !manualDOM && (corsExperiment || imageAccess.nativeImagesEnabled)}
-        imageAccessReason={!nativeCapable || manualDOM || imageAccessMode === "owner" ? imageReason : undefined}
-        settingsContent={imageAccessMode === "owner" ? <ImageProxyAccess access={imageAccess} nativeCapable={nativeCapable} manualDOM={manualDOM} /> : undefined}
+        nativeEnabled={nativeCapable && !manualDOM}
+        nativeUnavailableReason={!nativeCapable || manualDOM ? imageReason : undefined}
         notes={filteredNotes}
         threadCards={threadCards}
         profiles={profiles}
@@ -91,7 +82,7 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode: configuredAc
         sendReaction={handleSendReaction}
         sendRepost={sendRepost}
         cache={cache}
-        onLogout={handleLogout}
+        onLogout={logout}
         showSignerControl={loginMethod === "remote"}
         onManageSigner={manageRemoteSigner}
         isProcessing={isProcessing}
@@ -120,8 +111,6 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode: configuredAc
           Nostr Live Canvas
         </h1>
 
-        {corsExperiment && <CorsImageExperimentNotice />}
-        {imageAccessMode === "owner" && !manualDOM && <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">対応ブラウザではログイン後、画像配信の本人確認署名を署名器へ依頼します。リレーへの投稿は行いません。</p>}
 
         {/* 自動ログインまたは署名器接続中 */}
         {(autoLoading || remoteLoading || extensionLoading) && (

@@ -17,7 +17,7 @@
 
 ## 描画方式と互換性
 
-現行画面は `LiveCanvas` と `components/canvas/` の一系統だけを使う。HTML-in-Canvas の WebGL texture API を検出し、未対応・初期化失敗・描画失敗・context loss・画像認証未成立時は同じカードDOMへ退避する。旧V1へ戻る経路ではない。Canvas2D＋CSS比較rendererとラボ/probeは撤去済み。
+現行画面は `LiveCanvas` と `components/canvas/` の一系統だけを使う。HTML-in-Canvas の WebGL texture API を検出し、未対応・初期化失敗・描画失敗・context loss・手動互換表示選択時は同じカードDOMへ退避する。旧V1へ戻る経路ではない。Canvas2D＋CSS比較rendererとラボ/probeは撤去済み。
 
 エフェクトとDOM選択の保存キー `nlc-v2-effect` / `nlc-v2-manual-dom` は既存ユーザー設定を引き継ぐため変更しない。`/v2` のリダイレクトも旧ブックマーク互換のため残す。診断設定は残すが、通常は無効で、比較rendererを再び有効にするものではない。
 

@@ -39,7 +39,7 @@ export function ImageNode({
 
   return (
     <>
-      <MediaImage imageSize={640}
+      <MediaImage
         src={url}
         alt="投稿画像"
         loading="lazy"

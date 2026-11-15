@@ -21,7 +21,7 @@ export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
 interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; diagnosticsEnabled?: boolean; showRendererStatus?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode; settingsOpen?: boolean; onSettingsClose?: () => void; settingsTrigger?: RefObject<HTMLButtonElement | null> }
 const EMPTY = new Set<string>();
 
-type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'image-gate';
+type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'capability';
 interface CardRootProps { item: CanvasSceneItem; register: (id: string, node: HTMLDivElement | null) => void }
 const subscribeHydration = () => () => {};
 const clientSnapshot = () => true;
@@ -49,7 +49,7 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnabled = false, showRendererStatus = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent, settingsOpen: controlledSettingsOpen, onSettingsClose, settingsTrigger: externalSettingsTrigger }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnabled = false, showRendererStatus = false, allowNative = true, nativeUnavailableReason = '互換表示を使用しています', settingsContent, settingsOpen: controlledSettingsOpen, onSettingsClose, settingsTrigger: externalSettingsTrigger }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
   const [localSettingsOpen, setSettingsOpen] = useState(false);
@@ -92,7 +92,7 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
     const dom = fallback.current!;
     let gpu: ReturnType<typeof createWebGLSceneRenderer> | null = null;
     let supported: CanvasMode = 'dom';
-    let fallbackStage: FallbackStage = !allowNative ? 'image-gate' : forcedDOM ? 'manual' : 'init';
+    let fallbackStage: FallbackStage = !allowNative ? 'capability' : forcedDOM ? 'manual' : 'init';
     let fallbackReason = !allowNative ? 'disabled' : forcedDOM ? 'requested' : 'api-unavailable';
     if (allowNative && !forcedDOM) try {
       const gl = gpuSurface.getContext('webgl2', { alpha: true, antialias: true, premultipliedAlpha: true }) as HtmlTextureGL | null;

@@ -23,13 +23,13 @@ describe("ImageLightbox", () => {
     const image = screen.getByRole("img", { name: "拡大画像" });
     const overlay = image.parentElement;
     expect(overlay?.style.opacity).toBe("0");
-    expect(image.getAttribute("src")).toBe("https://example.com/first.jpg");
+    expect(screen.getByRole("img", { name: "拡大画像" }).getAttribute("src")).toBe("https://example.com/first.jpg");
 
     fireEvent.click(screen.getByRole("button", { name: "次の画像" }));
-    expect(image.getAttribute("src")).toBe("https://example.com/second.jpg");
+    expect(screen.getByRole("img", { name: "拡大画像" }).getAttribute("src")).toBe("https://example.com/second.jpg");
 
     fireEvent.keyDown(window, { key: "ArrowLeft" });
-    expect(image.getAttribute("src")).toBe("https://example.com/first.jpg");
+    expect(screen.getByRole("img", { name: "拡大画像" }).getAttribute("src")).toBe("https://example.com/first.jpg");
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(onClose).toHaveBeenCalledOnce();

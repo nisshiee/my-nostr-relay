@@ -10,7 +10,7 @@ interface EmojiNodeProps {
 /** NIP-30 カスタム絵文字をインライン画像として表示する */
 export function EmojiNode({ shortcode, url }: EmojiNodeProps) {
   return (
-    <MediaImage imageSize={64}
+    <MediaImage
       src={url}
       alt={`:${shortcode}:`}
       title={`:${shortcode}:`}

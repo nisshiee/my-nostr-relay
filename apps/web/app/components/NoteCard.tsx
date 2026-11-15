@@ -319,7 +319,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
                 }`}
               >
                 {imageUrl ? (
-                  <MediaImage imageSize={64}
+                  <MediaImage
                     src={imageUrl}
                     alt={emoji}
                     className="inline-block h-4 w-4"

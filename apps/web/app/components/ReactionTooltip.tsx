@@ -154,7 +154,7 @@ export function ReactionTooltip({
             <div key={pubkey} className="flex items-center gap-2">
               {/* アバター画像 */}
               {profile?.picture ? (
-                <MediaImage imageSize={64}
+                <MediaImage
                   src={profile.picture}
                   alt={name}
                   className="w-5 h-5 rounded-full object-cover flex-shrink-0"

@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { CanvasImageProvider } from "./CanvasAwareImage";
 import { CanvasScene } from "./canvas/CanvasScene";
 import type { Card, CardScoreSource, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
 import {
@@ -27,9 +26,8 @@ import { HashtagModal } from "./HashtagModal";
 
 interface LiveCanvasProps {
   diagnosticsEnabled?: boolean;
-  corsExperiment?: boolean;
-  nativeImagesEnabled?: boolean;
-  imageAccessReason?: string;
+  nativeEnabled?: boolean;
+  nativeUnavailableReason?: string;
   settingsContent?: React.ReactNode;
   notes: NoteCardType[];
   threadCards: ThreadCardType[];
@@ -67,7 +65,7 @@ export function LiveCanvas(props: LiveCanvasProps) {
   return <LiveCanvasSession key={props.pubkey} {...props} />;
 }
 
-function LiveCanvasSession({ diagnosticsEnabled = false, corsExperiment = false, nativeImagesEnabled = false, imageAccessReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, nativeUnavailableReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -373,7 +371,7 @@ function LiveCanvasSession({ diagnosticsEnabled = false, corsExperiment = false,
       >f で戻す</button>}
       <main className="relative flex min-h-0 flex-1 flex-col overflow-hidden" aria-label="Live Canvas">
         {(items.length === 0 || isProcessing) && <div className="pointer-events-none absolute inset-0 z-10"><EmptyState status={status} hasNotes={items.length > 0} isProcessing={isProcessing} /></div>}
-        <CanvasImageProvider enabled={nativeImagesEnabled} mode={corsExperiment ? "cors" : undefined}><CanvasScene showRendererStatus={corsExperiment} settingsOpen={settingsOpen} onSettingsClose={closeSettings} settingsTrigger={settingsTrigger} items={isProcessing ? [] : items} heldIds={holdSet} diagnosticsEnabled={diagnosticsEnabled} allowNative={nativeImagesEnabled} nativeUnavailableReason={imageAccessReason} settingsContent={settingsContent} /></CanvasImageProvider>
+        <CanvasScene showRendererStatus settingsOpen={settingsOpen} onSettingsClose={closeSettings} settingsTrigger={settingsTrigger} items={isProcessing ? [] : items} heldIds={holdSet} diagnosticsEnabled={diagnosticsEnabled} allowNative={nativeEnabled} nativeUnavailableReason={nativeUnavailableReason} settingsContent={settingsContent} />
         {status === "connected" && items.length === 0 && !isProcessing && (
           <p className="pointer-events-none absolute inset-x-0 top-0 py-16 text-center text-sm text-gray-500 dark:text-gray-400">
             表示するノートはまだありません。投稿ボタンから新しいノートを書けます。

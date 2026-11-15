@@ -545,7 +545,7 @@ function ThreadNoteItem({
                     }`}
                   >
                     {imageUrl ? (
-                      <MediaImage imageSize={64}
+                      <MediaImage
                         src={imageUrl}
                         alt={emoji}
                         className="inline-block h-3.5 w-3.5"
