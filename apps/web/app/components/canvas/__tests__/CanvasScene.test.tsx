@@ -1074,3 +1074,10 @@ describe('CanvasScene WebGL feed接続', () => {
   });
 
 });
+
+it('実験用の描画方式表示は診断を有効化せずDOM fallbackを示す', () => {
+  const view = actualRender(<CanvasScene items={[]} showRendererStatus allowNative={false} nativeUnavailableReason="API非対応" />);
+  expect(screen.getByRole('status').textContent).toContain('DOM互換表示 · API非対応');
+  expect(screen.queryByRole('button', { name: '先頭に戻る' })).toBeNull();
+  expect(view.container.querySelector('[data-scene-renderer]')).toBeNull();
+});

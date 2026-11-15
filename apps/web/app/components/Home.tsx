@@ -9,9 +9,11 @@ import { useCanvasImageSession, type CanvasImageAccessMode } from "../hooks/useC
 import { useNativeCanvasCapability } from "./canvas/nativeCanvasCapability";
 import { useManualDOMPreference } from "./canvas/manualDOMPreference";
 import { ImageProxyAccess } from "./ImageProxyAccess";
+import { CorsImageExperimentNotice } from "./CorsImageExperimentNotice";
 import { LiveCanvas } from "./LiveCanvas";
 
-export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" }: { diagnosticsEnabled?: boolean; imageAccessMode?: CanvasImageAccessMode }) {
+export function Home({ diagnosticsEnabled = false, imageAccessMode: configuredAccessMode = "disabled", corsExperiment = false }: { diagnosticsEnabled?: boolean; imageAccessMode?: CanvasImageAccessMode; corsExperiment?: boolean }) {
+  const imageAccessMode = corsExperiment ? "disabled" : configuredAccessMode;
   const {
     pubkey,
     npub,
@@ -69,10 +71,12 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" 
   if (pubkey) {
     return (
       <div className="flex h-dvh min-h-0 flex-col overflow-hidden">
+      {corsExperiment && <CorsImageExperimentNotice />}
       <div className="min-h-0 flex-1 [&>div]:h-full">
       <LiveCanvas
         diagnosticsEnabled={diagnosticsEnabled}
-        nativeImagesEnabled={nativeCapable && !manualDOM && imageAccess.nativeImagesEnabled}
+        corsExperiment={corsExperiment}
+        nativeImagesEnabled={nativeCapable && !manualDOM && (corsExperiment || imageAccess.nativeImagesEnabled)}
         imageAccessReason={!nativeCapable || manualDOM || imageAccessMode === "owner" ? imageReason : undefined}
         settingsContent={imageAccessMode === "owner" ? <ImageProxyAccess access={imageAccess} nativeCapable={nativeCapable} manualDOM={manualDOM} /> : undefined}
         notes={filteredNotes}
@@ -116,6 +120,7 @@ export function Home({ diagnosticsEnabled = false, imageAccessMode = "disabled" 
           Nostr Live Canvas
         </h1>
 
+        {corsExperiment && <CorsImageExperimentNotice />}
         {imageAccessMode === "owner" && !manualDOM && <p className="mb-4 text-sm text-zinc-600 dark:text-zinc-400">対応ブラウザではログイン後、画像配信の本人確認署名を署名器へ依頼します。リレーへの投稿は行いません。</p>}
 
         {/* 自動ログインまたは署名器接続中 */}

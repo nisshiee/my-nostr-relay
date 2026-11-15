@@ -18,7 +18,7 @@ import { SceneSettingsDialog } from "./SceneSettingsDialog";
 import { getEffectPreference, serverEffectPreference, subscribeEffectPreference, setEffectPreference, type SceneEffectChoice } from "./effectPreference";
 
 export interface CanvasSceneItem { id: string; content: ReactNode; card?: Card }
-interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; diagnosticsEnabled?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode; settingsOpen?: boolean; onSettingsClose?: () => void; settingsTrigger?: RefObject<HTMLButtonElement | null> }
+interface Props { items: CanvasSceneItem[]; heldIds?: ReadonlySet<string>; className?: string; diagnosticsEnabled?: boolean; showRendererStatus?: boolean; allowNative?: boolean; nativeUnavailableReason?: string; settingsContent?: ReactNode; settingsOpen?: boolean; onSettingsClose?: () => void; settingsTrigger?: RefObject<HTMLButtonElement | null> }
 const EMPTY = new Set<string>();
 
 type FallbackStage = 'none' | 'manual' | 'init' | 'render' | 'watchdog' | 'context-loss' | 'image-gate';
@@ -49,7 +49,7 @@ function MountedCardRoot({ item, register }: CardRootProps) {
   </>, node);
 }
 
-export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnabled = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent, settingsOpen: controlledSettingsOpen, onSettingsClose, settingsTrigger: externalSettingsTrigger }: Props) {
+export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnabled = false, showRendererStatus = false, allowNative = true, nativeUnavailableReason = '画像配信が無効のため互換表示を使用しています', settingsContent, settingsOpen: controlledSettingsOpen, onSettingsClose, settingsTrigger: externalSettingsTrigger }: Props) {
   const effectChoice = useSyncExternalStore(subscribeEffectPreference, getEffectPreference, serverEffectPreference);
   const chosenEffect = useRef(effectChoice);
   const [localSettingsOpen, setSettingsOpen] = useState(false);
@@ -518,11 +518,12 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
   }, [forcedDOM, diagnosticsEnabled, allowNative]);
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="Live canvas">
-    {diagnosticsEnabled && <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-      <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>{allowNative ? status : nativeUnavailableReason}</span>
+    {(diagnosticsEnabled || showRendererStatus) && <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+      <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>描画方式: {allowNative ? status : `DOM互換表示 · ${nativeUnavailableReason}`}</span>
+      {diagnosticsEnabled && <>
       <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
       {controlledSettingsOpen === undefined && <button ref={localSettingsTrigger} type="button" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} className="rounded border px-2 py-1">設定</button>}
-      <span>縦スクロールで移動</span>
+      <span>縦スクロールで移動</span></>}
     </div>}
     {settingsOpen && <SceneSettingsDialog onClose={closeSettings} trigger={settingsTrigger}>
       <label className="mb-3 flex items-center justify-between gap-3">新着エフェクト
