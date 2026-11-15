@@ -518,17 +518,17 @@ export function CanvasScene({ items, heldIds = EMPTY, className, diagnosticsEnab
   }, [forcedDOM, diagnosticsEnabled, allowNative]);
 
   return <section className={`flex min-h-0 flex-1 flex-col ${className ?? ''}`} aria-label="Live canvas">
-    {(diagnosticsEnabled || showRendererStatus) && <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
-      <span role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>描画方式: {allowNative ? status : `DOM互換表示 · ${nativeUnavailableReason}`}</span>
+    {diagnosticsEnabled && <div className="flex flex-wrap items-center gap-3 border-b border-zinc-200 bg-white px-4 py-2 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
       {diagnosticsEnabled && <>
       <button type="button" onClick={() => runtime.current?.reset()} className="rounded border px-2 py-1">先頭に戻る</button>
       {controlledSettingsOpen === undefined && <button ref={localSettingsTrigger} type="button" onClick={() => setSettingsOpen(true)} aria-haspopup="dialog" aria-expanded={settingsOpen} className="rounded border px-2 py-1">設定</button>}
       <span>縦スクロールで移動</span></>}
     </div>}
     {settingsOpen && <SceneSettingsDialog onClose={closeSettings} trigger={settingsTrigger}>
+      {(diagnosticsEnabled || showRendererStatus) && <p className="mb-4 text-xs text-zinc-600 dark:text-zinc-300" role="status" data-renderer-status={diagnosticsEnabled ? true : undefined}>描画方式: {allowNative ? status : `DOM互換表示 · ${nativeUnavailableReason}`}</p>}
       <label className="mb-3 flex items-center justify-between gap-3">新着エフェクト
         <select aria-label="新着エフェクト" disabled={!allowNative || domMode} aria-describedby={!allowNative || domMode ? "scene-effect-unavailable" : undefined} value={effectChoice} onChange={event => setEffectPreference(event.target.value as SceneEffectChoice)} className="rounded border bg-transparent px-2 py-1">
-          <option value="off">OFF</option><option value="sparkle">キラキラ</option><option value="domino">ドミノ（試作）</option><option value="ripple">波紋（試作）</option>
+          <option value="off">OFF</option><option value="sparkle">キラキラ</option><option value="domino">ドミノ</option><option value="ripple">波紋</option>
         </select>
       </label>
       {(!allowNative || domMode) && <p id="scene-effect-unavailable" className="mb-4 text-xs text-zinc-500">{!allowNative ? nativeUnavailableReason : 'エフェクトはHTML-in-Canvas対応表示で利用できます。選択は保存されています。'}</p>}
