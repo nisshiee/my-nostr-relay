@@ -3,13 +3,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { CanvasImageProvider } from "./CanvasAwareImage";
 import { CanvasScene } from "./canvas/CanvasScene";
-import type { Card, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
+import type { Card, CardScoreSource, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
 import {
   SCORE_UPDATE_INTERVAL,
-  SCORE_HALF_LIFE,
-  OWNER_SCORE_HALF_LIFE,
 } from "../lib/constants";
-import { calcFreshnessScore, sortByScore } from "../lib/scoring";
+import { scoreCards } from "../lib/scoring";
+import { reconcileCardSources } from "../lib/cardSources";
 import { useDraftNotes } from "../hooks/useDraftNotes";
 import { useReplyDrafts } from "../hooks/useReplyDrafts";
 
@@ -62,7 +61,12 @@ interface LiveCanvasProps {
   unfollow: (targetPubkey: string) => Promise<void>;
 }
 
-export function LiveCanvas({ diagnosticsEnabled = false, nativeImagesEnabled = false, imageAccessReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+/** アカウント境界では全形式のローカル状態を同時に破棄する。 */
+export function LiveCanvas(props: LiveCanvasProps) {
+  return <LiveCanvasSession key={props.pubkey} {...props} />;
+}
+
+function LiveCanvasSession({ diagnosticsEnabled = false, nativeImagesEnabled = false, imageAccessReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -121,7 +125,7 @@ export function LiveCanvas({ diagnosticsEnabled = false, nativeImagesEnabled = f
     pendingThreadReplies,
     addNoteReply,
     addThreadReply,
-  } = useReplyDrafts({ threadCards, pubkey, publishedSlotMapRef });
+  } = useReplyDrafts({ threadCards, publishedSlotMapRef });
 
   const scoredCards = useMemo((): Card[] => {
     // pendingNoteReplies の originalNote.eventId を収集（仮ThreadCardに変換されるため notes から除外する）
@@ -137,37 +141,16 @@ export function LiveCanvas({ diagnosticsEnabled = false, nativeImagesEnabled = f
       (n) => !pendingOriginalEventIds.has(n.eventId),
     );
 
-    let updatedNotes: Card[] = allNotes.map((note) => {
-      const halfLife = note.pubkey === pubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-      // リポストの場合はリポスト時刻をスコア計算に使用（フィード上での鮮度を反映）
-      const scoreTimestamp = note.repostInfo?.repostedAt ?? note.created_at;
-      const score = calcFreshnessScore(scoreTimestamp, nowEpoch, halfLife);
-      return {
-        ...note,
-        score,
-      };
-    });
-
-    // draftNotes にスコアを再計算
-    const scoredDrafts: Card[] = draftNotes.map((d) => {
-      const score = calcFreshnessScore(d.created_at, nowEpoch, OWNER_SCORE_HALF_LIFE);
-      return {
-        ...d,
-        score,
-      };
-    });
+    let updatedNotes = allNotes;
 
     // pendingNoteReplies から仮ThreadCard を生成
-    const fakeThreads: Card[] = Array.from(pendingNoteReplies.values()).map(
+    const fakeThreads: ThreadCardType[] = Array.from(pendingNoteReplies.values()).map(
       (pending) => ({
         type: "thread" as const,
         slotId: pending.slotId,
         pubkey: pending.originalNote.pubkey,
-        score: calcFreshnessScore(
-          pending.replyNote.created_at,
-          nowEpoch,
-          OWNER_SCORE_HALF_LIFE,
-        ),
+        score: 0,
+        scoreSources: [],
         created_at: pending.replyNote.created_at,
         notes: [
           // 元のNoteCardをThreadNoteに変換
@@ -188,63 +171,62 @@ export function LiveCanvas({ diagnosticsEnabled = false, nativeImagesEnabled = f
       }),
     );
 
-    // 本物のthreadCardsに同じslotIdが存在する仮ThreadCardは除外（重複によるアニメーション発火防止）
-    const threadSlotIds = new Set(threadCards.map((tc) => tc.slotId));
-    const dedupedFakeThreads = fakeThreads.filter((ft) => !threadSlotIds.has(ft.slotId));
-
-    // ThreadCard（本物 or 仮）と同じslotIdのNoteCardを除外
-    // - fakeThreadSlotIds: pendingNoteRepliesから生成された仮ThreadCard（NoteCard→ThreadCard変化時の重複防止）
-    // - threadSlotIds: 本物のthreadCards（filteredNotesのeventIdベース除外だけでは
-    //   タイミングずれでNoteCardが残る場合があるため、slotIdベースでも除外する）
-    const allThreadSlotIds = new Set([
-      ...threadSlotIds,
-      ...dedupedFakeThreads.map((ft) => ft.slotId),
-    ]);
-    if (allThreadSlotIds.size > 0) {
-      updatedNotes = updatedNotes.filter((n) => !allThreadSlotIds.has(n.slotId));
+    // feedと期限内のローカル投稿を共通の保持元へ正規化する。
+    const retainedSources = new Map<string, CardScoreSource>();
+    for (const source of [
+      ...notes, ...publishedNotes,
+      ...threadCards.flatMap(card => card.scoreSources),
+      ...[...pendingNoteReplies.values()].map(pending => pending.replyNote),
+      ...[...pendingThreadReplies.values()].flatMap(list => list.map(pending => pending.replyNote)),
+    ]) {
+      if (source.eventId) retainedSources.set(source.eventId, source);
     }
 
-    // threadCards にスコアを再計算（pendingThreadReplies の仮ノートをマージ）
-    const scoredThreads: Card[] = threadCards.map((thread) => {
-      // pendingThreadReplies の仮ノートを追加
-      // ※ threadCards更新後、pendingThreadRepliesクリア前の1レンダーで重複マージされるのを防ぐため、
-      //    すでにthreadCards.eventIdsに含まれるリプライは除外する
-      const pendingReplies = pendingThreadReplies.get(thread.slotId);
+    // すべての表示候補をslot単位で一度だけ構成する。実データを優先する。
+    const pendingSnapshots = [...pendingThreadReplies.values()].flatMap(pending =>
+      pending.length ? [{ ...pending[0].originalThread, scoreSources: [] }] : [],
+    );
+    const threadCandidates = new Map([...pendingSnapshots, ...fakeThreads, ...threadCards].map(card => [card.slotId, card]));
+    updatedNotes = updatedNotes.filter(note => !threadCandidates.has(note.slotId));
+
+    // 保留投稿の種類によらず、同じslotへ重複なくマージする。
+    const mergedThreads: ThreadCardType[] = [...threadCandidates.values()].map((thread) => {
+      const pendingNote = pendingNoteReplies.get(thread.slotId);
+      const pendingReplies = [...new Map([
+        ...(pendingNote ? [pendingNote.replyNote] : []),
+        ...(pendingThreadReplies.get(thread.slotId) ?? []).map(p => p.replyNote),
+      ].map(note => [note.eventId, note])).values()];
       let mergedThread = thread;
-      if (pendingReplies && pendingReplies.length > 0) {
-        const newPending = pendingReplies.filter((p) => !thread.eventIds.has(p.replyEventId));
+      if (pendingReplies.length > 0) {
+        const newPending = pendingReplies.filter(note => !thread.eventIds.has(note.eventId));
         if (newPending.length > 0) {
           const latestCreatedAt = Math.max(
             thread.created_at,
-            ...newPending.map((p) => p.replyNote.created_at),
+            ...newPending.map(note => note.created_at),
           );
           mergedThread = {
             ...thread,
             notes: [
               ...thread.notes,
-              ...newPending.map((p) => p.replyNote),
+              ...newPending,
             ],
             eventIds: new Set([
               ...thread.eventIds,
-              ...newPending.map((p) => p.replyEventId),
+              ...newPending.map(note => note.eventId),
             ]),
             created_at: latestCreatedAt,
           };
         }
       }
 
-      // スレッド内に自分のノートがあれば OWNER_SCORE_HALF_LIFE を使用
-      const hasOwnerNote = mergedThread.notes.some((n) => n.pubkey === pubkey);
-      const halfLife = hasOwnerNote ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-      // スレッド内最新リプライの created_at をベースにスコア計算
-      const score = calcFreshnessScore(mergedThread.created_at, nowEpoch, halfLife);
-      return {
-        ...mergedThread,
-        score,
-      };
+      return mergedThread;
     });
 
-    return sortByScore([...scoredDrafts, ...updatedNotes, ...scoredThreads, ...dedupedFakeThreads]);
+    const sourcedCards = reconcileCardSources<Card, CardScoreSource>([
+      ...updatedNotes.map(card => ({ card, sourceIds: [card.eventId] })),
+      ...mergedThreads.map(card => ({ card, sourceIds: card.eventIds })),
+    ], retainedSources);
+    return scoreCards([...draftNotes, ...sourcedCards], pubkey, nowEpoch);
   }, [notes, publishedNotes, draftNotes, threadCards, pendingNoteReplies, pendingThreadReplies, nowEpoch, pubkey]);
 
   // サイズ測定と座標は描画シーンが所有する。既存カードの通知は使用しない。
@@ -304,8 +286,8 @@ export function LiveCanvas({ diagnosticsEnabled = false, nativeImagesEnabled = f
           onHold={() => holdCard(note.slotId)}
           onRelease={() => releaseCard(note.slotId)}
           cache={cache}
-          onReplyPublish={(signedEvent, noteCard, threadSlotId) => {
-            addThreadReply(signedEvent, noteCard, threadSlotId);
+          onReplyPublish={(signedEvent, noteCard) => {
+            addThreadReply(signedEvent, noteCard, note);
           }}
           publishEvent={publishEvent}
           myProfile={profiles.get(pubkey)}

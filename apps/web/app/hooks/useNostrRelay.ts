@@ -48,7 +48,7 @@ export function useNostrRelay(
   pubkey: string | null,
   publishedSlotMapRef: React.RefObject<Map<string, string>>,
 ): UseNostrRelayResult {
-  const { pool, relayUrls, followPubkeys, status, setStatus, updateFollowList } = useNostrConnection(pubkey);
+  const { pool, timelinePool, relayUrls, followPubkeys, status, setStatus, updateFollowList } = useNostrConnection(pubkey);
   const { profiles, fetchProfiles, profilesRef } = useNostrProfiles(pool, relayUrls, followPubkeys);
   const cache = useEventCache(pool, relayUrls, fetchProfiles);
   const { emojiSets, looseEmojis } = useCustomEmojis(pool, relayUrls, pubkey);
@@ -60,7 +60,7 @@ export function useNostrRelay(
   }, []);
 
   const { notes, notesRef, newNotesMinCreatedAtRef } = useNostrNotes(
-    pool, relayUrls, followPubkeys, pubkey, publishedSlotMapRef,
+    timelinePool, relayUrls, followPubkeys, pubkey, publishedSlotMapRef,
     setStatus, profilesRef, fetchProfiles, onInitialNotesReady,
     cache,
   );

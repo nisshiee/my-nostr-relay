@@ -31,7 +31,7 @@ function makeThreadCard(
   slotId = "slot-1",
 ): ThreadCard {
   return {
-    type: "thread",
+    type: "thread", scoreSources: [],
     slotId,
     pubkey: notes[0]?.pubkey ?? "",
     score: 0,

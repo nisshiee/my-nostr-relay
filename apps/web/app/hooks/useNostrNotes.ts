@@ -7,8 +7,9 @@ import {
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
 } from "../lib/constants";
-import { sortByScore } from "../lib/scoring";
+import { scoreCards, sortByScore } from "../lib/scoring";
 import { createNoteCard, resolveSlotId } from "../lib/createNoteCard";
+import { subscribeTimeline } from "../lib/timelineSubscription";
 import type { NoteCard, NostrProfile } from "../lib/types";
 import type { ConnectionStatus } from "./useNostrConnection";
 import type { EventCache } from "./useEventCache";
@@ -40,6 +41,10 @@ export function useNostrNotes(
   const subscriptionGenerationRef = useRef(0);
   const initialNotificationRef = useRef<"waiting" | "empty" | "nonempty">("waiting");
   const newNotesMinCreatedAtRef = useRef<number | undefined>(undefined);
+
+  const pruneNotes = useCallback((candidates: NoteCard[], now: number) => (
+    scoreCards(candidates, pubkey, now).slice(0, MAX_NOTES)
+  ), [pubkey]);
 
   // コールバックをRefで保持（subscription内から最新の値を参照するため）
   const onInitialNotesReadyRef = useRef(onInitialNotesReady);
@@ -79,13 +84,12 @@ export function useNostrNotes(
 
       // MAX_NOTES超過時はスコアが低いものを削除
       if (updated.length > MAX_NOTES) {
-        const sorted = sortByScore(updated);
-        return sorted.slice(0, MAX_NOTES);
+        return pruneNotes(updated, now);
       }
 
       return updated;
     });
-  }, [pubkey, publishedSlotMapRef]);
+  }, [pubkey, publishedSlotMapRef, pruneNotes]);
 
   /**
    * 元ノートイベントをNoteCardに変換してstateに追加する（既存カードがあればrepostInfoを付与）
@@ -132,11 +136,11 @@ export function useNostrNotes(
 
       const updated = [...prev, newNote];
       if (updated.length > MAX_NOTES) {
-        return sortByScore(updated).slice(0, MAX_NOTES);
+        return pruneNotes(updated, now);
       }
       return updated;
     });
-  }, [pubkey, publishedSlotMapRef]);
+  }, [pubkey, publishedSlotMapRef, pruneNotes]);
 
   // notesの最新値をrefで同期（タイマーコールバックからアクセスするため）
   useEffect(() => {
@@ -207,8 +211,10 @@ export function useNostrNotes(
     const initialBuffer: Event[] = [];
     const initialRepostBuffer: Event[] = [];
     let initialLoading = true;
+    let terminalClosed = false;
 
-    const notesSub: SubCloser = pool.subscribeMany(
+    const notesSub: SubCloser = subscribeTimeline(
+      pool,
       relayUrls,
       { kinds: [1, 6], authors: followPubkeys, limit: INITIAL_NOTES_LIMIT } as Filter,
       {
@@ -341,10 +347,14 @@ export function useNostrNotes(
             }
           }
 
-          setStatus("connected");
+          if (!terminalClosed) setStatus("connected");
 
           // state反映後に、実際に表示するノートをリアクションhookへ通知する。
           setReadyGeneration(generation);
+        },
+        onterminalclose() {
+          terminalClosed = true;
+          if (!cancelled) setStatus("error");
         },
       },
     );
