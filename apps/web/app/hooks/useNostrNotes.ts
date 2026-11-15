@@ -7,8 +7,8 @@ import {
   MAX_NOTES,
   INITIAL_NOTES_LIMIT,
 } from "../lib/constants";
-import { sortByScore } from "../lib/scoring";
-import { calculateNoteScore, createNoteCard, resolveSlotId } from "../lib/createNoteCard";
+import { scoreCards, sortByScore } from "../lib/scoring";
+import { createNoteCard, resolveSlotId } from "../lib/createNoteCard";
 import { subscribeTimeline } from "../lib/timelineSubscription";
 import type { NoteCard, NostrProfile } from "../lib/types";
 import type { ConnectionStatus } from "./useNostrConnection";
@@ -43,10 +43,7 @@ export function useNostrNotes(
   const newNotesMinCreatedAtRef = useRef<number | undefined>(undefined);
 
   const pruneNotes = useCallback((candidates: NoteCard[], now: number) => (
-    sortByScore(candidates.map((note) => ({
-      ...note,
-      score: calculateNoteScore(note, pubkey, now),
-    }))).slice(0, MAX_NOTES)
+    scoreCards(candidates, pubkey, now).slice(0, MAX_NOTES)
   ), [pubkey]);
 
   // コールバックをRefで保持（subscription内から最新の値を参照するため）

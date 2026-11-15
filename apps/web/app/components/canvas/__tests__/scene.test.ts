@@ -406,7 +406,7 @@ describe('配置エンジンの初期配置・引力とシーンの挿入後一�
     const cards = base();
     const first = updateSceneLayout(createSceneLayout(), items(cards), new Map(), 800);
     const compose: Card = { type: 'compose', slotId: 'compose', pubkey: 'a', score: 1, created_at: 0, quotedEvent: { eventId: 'event-b', pubkey: 'b' } };
-    const thread: Card = { type: 'thread', slotId: 'thread', pubkey: 'a', score: 1, created_at: 0, notes: [], eventIds: new Set(['thread-event']) };
+    const thread: Card = { type: 'thread', scoreSources: [], slotId: 'thread', pubkey: 'a', score: 1, created_at: 0, notes: [], eventIds: new Set(['thread-event']) };
     const quote: Card = { ...note('quote', 1, 'unrelated'), tags: [['q', 'event-a']], repostInfo: { reposterPubkey: 'a', repostedAt: 10 } };
     for (const incoming of [compose, thread, quote]) {
       const nextCards = [incoming, ...cards];
@@ -588,5 +588,31 @@ describe('配置エンジンの初期配置・引力とシーンの挿入後一�
       expectOracle(state, expected, heights);
     }
     expect(state.grid.size).toBe(200);
+  });
+});
+
+describe('カード形式によらない配置契約', () => {
+  it.each([1, 5])('%i列で同じscore・pubkey・高さなら単独とスレッドの引力・押し出し・reflowが一致する', columns => {
+    const asThread = (card: NoteCard): Card => ({
+      type: 'thread', slotId: card.slotId, pubkey: card.pubkey, score: card.score,
+      created_at: card.created_at, scoreSources: [card], notes: [card], eventIds: new Set([card.eventId]),
+    });
+    const originals = Array.from({ length: 20 }, (_, i) => note(`original-${i}`, 1 - i / 30, `author-${i % 3}`));
+    const arrivals = [note('new', 1, 'author-1'), ...originals];
+    const heights = new Map([...originals, arrivals[0]].map((card, i) => [card.slotId, i % 4 === 0 ? 900 : 120]));
+    const held = new Set(['original-0']);
+    const width = columns === 5 ? 1920 : 400;
+    let singles = updateSceneLayout(createSceneLayout(), items(originals), heights, width, held);
+    let threads = updateSceneLayout(createSceneLayout(), items(originals.map(asThread)), heights, width, held);
+    expect(threads.grid).toEqual(singles.grid);
+    singles = updateSceneLayout(singles, items(arrivals), heights, width, held);
+    threads = updateSceneLayout(threads, items(arrivals.map(asThread)), heights, width, held);
+    expect(threads.grid).toEqual(singles.grid);
+    expect(threads.insertion).toEqual(singles.insertion);
+    const reduced = arrivals.filter(card => card.slotId !== 'original-2').reverse().map(card => ({ ...card, score: card.score / 10 }));
+    singles = updateSceneLayout(singles, items(reduced), heights, width, held);
+    threads = updateSceneLayout(threads, items(reduced.map(asThread)), heights, width, held);
+    expect(threads.grid).toEqual(singles.grid);
+    expect(threads.boxes).toEqual(singles.boxes);
   });
 });

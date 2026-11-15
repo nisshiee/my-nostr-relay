@@ -1,5 +1,15 @@
+/** 採点の根拠となる投稿。表示用の祖先文脈とは区別する。 */
+export interface CardScoreSource {
+  eventId?: string;
+  pubkey: string;
+  created_at: number;
+  repostInfo?: { reposterPubkey: string; repostedAt: number };
+}
+
 /** カード共通フィールド */
-interface CardBase {
+interface CardBase extends CardScoreSource {
+  /** 複数投稿をまとめた表示の採点元。空配列は採点根拠なし。 */
+  scoreSources?: readonly CardScoreSource[];
   /** カードの配置スロットID（UUID）。レイアウト・heightMap等はこのIDで管理する */
   slotId: string;
   pubkey: string;
@@ -48,6 +58,8 @@ export interface ThreadNote {
 /** リプライスレッドカード */
 export interface ThreadCard extends CardBase {
   type: "thread";
+  /** 保持中の投稿のみ。取得した祖先や剪定済みの文脈は含めない。 */
+  scoreSources: readonly CardScoreSource[];
   /** スレッド内のノート（created_at 順） */
   notes: ThreadNote[];
   /** スレッドに含まれる全 eventId の集合（マージ判定に使用） */

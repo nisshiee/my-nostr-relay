@@ -1,4 +1,5 @@
-import type { ThreadNote, ThreadCard } from "./types";
+import type { NoteCard, ThreadNote, ThreadCard } from "./types";
+import { reconcileCardSources } from "./cardSources";
 export { MAX_THREAD_DEPTH } from "./constants";
 
 /**
@@ -97,6 +98,7 @@ export function buildThreadCard(
 
   return {
     type: "thread",
+    scoreSources: [],
     slotId: crypto.randomUUID(),
     pubkey: resolved[0]?.pubkey ?? "",
     score: 0, // スコアは LiveCanvas 側で再計算される
@@ -171,4 +173,16 @@ export function collectMissingEventIds(
     }
   }
   return [...missing];
+}
+
+/** 表示の構成だけを担当し、寿命と採点元の解決は共通処理に渡す。 */
+export function materializeFeedCards(notes: NoteCard[], threads: ThreadCard[]) {
+  const retainedSources = new Map(notes.map(note => [note.eventId, note]));
+  const activeThreads = reconcileCardSources(threads.map(card => ({ card, sourceIds: card.eventIds })), retainedSources);
+  const groupedIds = new Set(activeThreads.flatMap(card => [...card.eventIds]));
+  const singles = notes.filter(note => !groupedIds.has(note.eventId));
+  return {
+    filteredNotes: reconcileCardSources(singles.map(card => ({ card, sourceIds: [card.eventId] })), retainedSources),
+    threadCards: activeThreads,
+  };
 }

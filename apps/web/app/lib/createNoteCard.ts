@@ -1,5 +1,4 @@
-import { calcFreshnessScore } from "./scoring";
-import { OWNER_SCORE_HALF_LIFE, SCORE_HALF_LIFE } from "./constants";
+import { calculateCardScore } from "./scoring";
 import type { NoteCard } from "./types";
 import type { Event } from "nostr-tools/core";
 
@@ -19,15 +18,6 @@ interface CreateNoteCardParams {
   };
 }
 
-export function calculateNoteScore(
-  note: Pick<NoteCard, "pubkey" | "created_at" | "repostInfo">,
-  ownerPubkey: string | null,
-  now: number,
-): number {
-  const halfLife = note.pubkey === ownerPubkey ? OWNER_SCORE_HALF_LIFE : SCORE_HALF_LIFE;
-  return calcFreshnessScore(note.repostInfo?.repostedAt ?? note.created_at, now, halfLife);
-}
-
 export function createNoteCard(params: CreateNoteCardParams): NoteCard {
   const { event, ownerPubkey, repostInfo, slotId } = params;
   const now = params.now ?? Math.floor(Date.now() / 1000);
@@ -41,7 +31,7 @@ export function createNoteCard(params: CreateNoteCardParams): NoteCard {
     content: event.content,
     tags: event.tags,
     created_at: event.created_at,
-    score: calculateNoteScore({
+    score: calculateCardScore({
       pubkey: event.pubkey,
       created_at: event.created_at,
       repostInfo,

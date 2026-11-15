@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import type {
   NoteCard as NoteCardType,
   ThreadCard as ThreadCardType,
@@ -24,6 +24,8 @@ interface PendingNoteReply {
 
 /** ThreadCardからのリプライで追加する仮ノート */
 interface PendingThreadReply {
+  /** 保留中に保持元が剪定されても表示文脈を失わないためのスナップショット */
+  originalThread: ThreadCardType;
   /** 対象ThreadCardのslotId */
   threadSlotId: string;
   /** 追加する仮ノート */
@@ -37,8 +39,6 @@ interface PendingThreadReply {
 interface UseReplyDraftsProps {
   /** useThreadCards から返される threadCards（リレー到着検出用） */
   threadCards: ThreadCardType[];
-  /** 自分のpubkey */
-  pubkey: string;
   /** publishedSlotMapRef（eventId → slotId マッピング、リレー到着時にslotIdを引き継ぐため） */
   publishedSlotMapRef: React.RefObject<Map<string, string>>;
 }
@@ -70,7 +70,7 @@ interface UseReplyDraftsResult {
       tags: string[][];
       created_at: number;
     },
-    threadSlotId: string,
+    originalThread: ThreadCardType,
   ) => void;
 }
 
@@ -84,7 +84,6 @@ interface UseReplyDraftsResult {
  */
 export function useReplyDrafts({
   threadCards,
-  pubkey,
   publishedSlotMapRef,
 }: UseReplyDraftsProps): UseReplyDraftsResult {
   const [pendingNoteReplies, setPendingNoteReplies] = useState<
@@ -93,6 +92,17 @@ export function useReplyDrafts({
   const [pendingThreadReplies, setPendingThreadReplies] = useState<
     Map<string, PendingThreadReply[]>
   >(() => new Map());
+
+  const pendingIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    pendingIdsRef.current = new Set([
+      ...[...pendingNoteReplies.values()].map(p => p.replyEventId),
+      ...[...pendingThreadReplies.values()].flatMap(list => list.map(p => p.replyEventId)),
+    ]);
+  }, [pendingNoteReplies, pendingThreadReplies]);
+  useEffect(() => () => {
+    for (const id of pendingIdsRef.current) publishedSlotMapRef.current?.delete(id);
+  }, [publishedSlotMapRef]);
 
   // NoteCardからのリプライPublish時に呼ぶ
   const addNoteReply = useCallback(
@@ -151,8 +161,9 @@ export function useReplyDrafts({
         tags: string[][];
         created_at: number;
       },
-      threadSlotId: string,
+      originalThread: ThreadCardType,
     ) => {
+      const threadSlotId = originalThread.slotId;
       const replyEventId = signedEvent.id;
       const replyNote: ThreadNote = {
         eventId: noteCard.eventId,
@@ -163,6 +174,7 @@ export function useReplyDrafts({
       };
 
       const pending: PendingThreadReply = {
+        originalThread,
         threadSlotId,
         replyNote,
         replyEventId,
