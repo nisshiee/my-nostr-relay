@@ -1,7 +1,7 @@
 export const CANVAS_INLINE_MAX_BYTES = 2 * 1024 * 1024;
 const prefix = /^data:image\/(jpeg|png|webp|avif);base64,/;
 
-/** client側の構文・容量検査。実際の画像形式と画素数はserverで再検査する。 */
+/** client側の構文・容量検査。画像のデコードはブラウザに任せる。 */
 export function normalizeCanvasInlineImage(source: string): string | null {
   if (source.length > Math.ceil(CANVAS_INLINE_MAX_BYTES / 3) * 4 + 32) return null;
   const match = prefix.exec(source);

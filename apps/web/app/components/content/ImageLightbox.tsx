@@ -123,7 +123,7 @@ export function ImageLightbox({
       )}
 
       {/* 画像 */}
-      <MediaImage imageSize={1280}
+      <MediaImage
         src={images[index]}
         alt="拡大画像"
         className="max-h-[90vh] max-w-[90vw] object-contain"

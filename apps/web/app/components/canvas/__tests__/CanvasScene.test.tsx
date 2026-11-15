@@ -746,8 +746,8 @@ describe('CanvasScene WebGL feed接続', () => {
     gpuBackend();vi.mocked(HTMLCanvasElement.prototype.getContext).mockClear();
     renderUI(<CanvasScene diagnosticsEnabled allowNative={false} items={[original]}/>);flushFrame(0);
     expect(HTMLCanvasElement.prototype.getContext).not.toHaveBeenCalled();expect(backendMock.create).not.toHaveBeenCalled();
-    expect(host().dataset.sceneRenderer).toBe('dom');expect(host().dataset.sceneFallbackStage).toBe('image-gate');
-    expect(screen.getAllByText('画像配信が無効のため互換表示を使用しています').length).toBeGreaterThan(0);
+    expect(host().dataset.sceneRenderer).toBe('dom');expect(host().dataset.sceneFallbackStage).toBe('capability');
+    expect(screen.getAllByText('互換表示を使用しています').length).toBeGreaterThan(0);
     expect(screen.getByRole('button',{name:'DOMに切替'})).toBeDefined();
     expect((screen.getByRole('combobox',{name:'新着エフェクト'}) as HTMLSelectElement).disabled).toBe(true);
     expect(screen.queryByRole('combobox',{name:'QA描画方式'})).toBeNull();
@@ -766,7 +766,7 @@ describe('CanvasScene WebGL feed接続', () => {
   });
   it('allowNative=falseのSSRも互換表示を説明しnative再試行を出さない', () => {
     const html=renderToString(<CanvasScene allowNative={false} items={[original]}/>);
-    expect(html).not.toContain('画像配信が無効のため互換表示を使用しています');
+    expect(html).not.toContain('互換表示を使用しています');
     expect(html).not.toContain('Nativeを試す');expect(html).not.toContain('DOMに切替');
   });
 
@@ -1073,4 +1073,11 @@ describe('CanvasScene WebGL feed接続', () => {
     expect(host().dataset.sceneFallbackStage).toBe('watchdog');expect(host().dataset.sceneFallbackReason).toBe('paint-timeout');
   });
 
+});
+
+it('実験用の描画方式表示は診断を有効化せずDOM fallbackを示す', () => {
+  const view = actualRender(<CanvasScene items={[]} showRendererStatus allowNative={false} nativeUnavailableReason="API非対応" />);
+  expect(screen.getByRole('status').textContent).toContain('DOM互換表示 · API非対応');
+  expect(screen.queryByRole('button', { name: '先頭に戻る' })).toBeNull();
+  expect(view.container.querySelector('[data-scene-renderer]')).toBeNull();
 });

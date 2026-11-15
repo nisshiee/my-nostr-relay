@@ -83,7 +83,7 @@ describe("LiveCanvas のカード統合", () => {
     const props = {...makeProps(), notes: [makeNote()]};
     const {rerender} = render(<LiveCanvas {...props} />);
     expect(screen.getByTestId('scene').dataset.allowNative).toBe('false');
-    rerender(<LiveCanvas {...props} nativeImagesEnabled />);
+    rerender(<LiveCanvas {...props} nativeEnabled />);
     expect(screen.getByTestId('scene').dataset.allowNative).toBe('true');
   });
   it("空フィードでも下書きを作成し、公開時にslotIdを引き継いで固定を解除する", () => {
