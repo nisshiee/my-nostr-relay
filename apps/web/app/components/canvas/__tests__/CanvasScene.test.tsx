@@ -1075,9 +1075,15 @@ describe('CanvasScene WebGL feed接続', () => {
 
 });
 
-it('実験用の描画方式表示は診断を有効化せずDOM fallbackを示す', () => {
-  const view = actualRender(<CanvasScene items={[]} showRendererStatus allowNative={false} nativeUnavailableReason="API非対応" />);
+it('描画方式は設定内だけでDOM fallbackを示し、エフェクト名に試作表記を付けない', () => {
+  const view = actualRender(<HeaderScene items={[]} showRendererStatus allowNative={false} nativeUnavailableReason="API非対応" />);
+  expect(screen.queryByRole('status')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '設定' }));
+  expect(screen.getByRole('status').closest('[role=dialog]')).toBe(screen.getByRole('dialog'));
+  expect(Array.from((screen.getByRole('combobox', { name: '新着エフェクト' }) as HTMLSelectElement).options).map(option => [option.value, option.text])).toEqual([['off','OFF'],['sparkle','キラキラ'],['domino','ドミノ'],['ripple','波紋']]);
   expect(screen.getByRole('status').textContent).toContain('DOM互換表示 · API非対応');
   expect(screen.queryByRole('button', { name: '先頭に戻る' })).toBeNull();
   expect(view.container.querySelector('[data-scene-renderer]')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: '設定を閉じる' }));
+  expect(screen.queryByRole('status')).toBeNull();
 });
