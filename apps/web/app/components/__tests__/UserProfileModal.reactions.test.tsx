@@ -89,7 +89,7 @@ describe("プロフィール内のリアクション", () => {
     expect(p.watchReactions).toHaveBeenCalledTimes(3);
   });
 
-  it("取得中・取得失敗の説明文を表示せず、バッジと再取得を維持する", async () => {
+  it("取得中・取得失敗の説明文と再試行ボタンを表示せず、バッジを維持する", async () => {
     const p = props(); let update!: (state: ReactionLoadState) => void;
     p.watchReactions = vi.fn((_ids, onState) => { update = onState; onState("loading"); return vi.fn(); });
     render(<UserProfileModal {...p} />);
@@ -100,8 +100,8 @@ describe("プロフィール内のリアクション", () => {
     expect(screen.queryByText(/リアクションを取得できない場合/)).toBeNull();
     expect(screen.queryByText(/表示中の件数は取得できた分/)).toBeNull();
     expect(screen.getByRole("button", { name: "👍 2件" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "再試行" }));
-    expect(p.watchReactions).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("button", { name: "再試行" })).toBeNull();
+    expect(p.watchReactions).toHaveBeenCalledTimes(1);
     act(() => update("settled"));
     expect(screen.getByText("取得できたリアクションを表示しています。")).toBeTruthy();
   });

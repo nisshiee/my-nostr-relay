@@ -81,11 +81,10 @@ export function UserProfileModal({
     fetchUserRecentNotes,
   });
   const [reactionState, setReactionState] = useState<ReactionLoadState>("loading");
-  const [reactionAttempt, setReactionAttempt] = useState(0);
   useEffect(() => {
     if (!isOpen || isLoading || notes.length === 0) return;
     return watchReactions(notes.map(note => note.id), setReactionState);
-  }, [isOpen, isLoading, notes, watchReactions, reactionAttempt]);
+  }, [isOpen, isLoading, notes, watchReactions]);
 
   const [isSubmittingFollow, setIsSubmittingFollow] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
@@ -310,10 +309,8 @@ export function UserProfileModal({
             <span className="text-xs text-gray-500 dark:text-gray-400">最新50件</span>
           </div>
 
-          {!isLoading && notes.length > 0 && reactionState !== "loading" && <div className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {reactionState === "error"
-              ? <button type="button" className="underline" onClick={() => setReactionAttempt(value => value + 1)}>再試行</button>
-              : <p>取得できたリアクションを表示しています。</p>}
+          {!isLoading && notes.length > 0 && reactionState === "settled" && <div className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            <p>取得できたリアクションを表示しています。</p>
           </div>}
 
           {isLoading ? (
