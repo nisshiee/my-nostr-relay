@@ -64,7 +64,7 @@ function makeProps(): ComponentProps<typeof LiveCanvas> {
     notes: [], threadCards: [], profiles: new Map(), reactions: new Map(),
     status: "connected", pubkey: "me", npub: null,
     publishEvent: vi.fn(), publishedSlotMapRef: { current: new Map() },
-    sendReaction: vi.fn(), sendRepost: vi.fn(),
+    sendReaction: vi.fn(), sendRepost: vi.fn(), watchReactions: vi.fn(() => vi.fn()),
     cache: {} as ComponentProps<typeof LiveCanvas>["cache"],
     onLogout: vi.fn(), showSignerControl: false, onManageSigner: vi.fn(),
     isProcessing: false, recentEmojis: [], emojiSets: [], looseEmojis: [],

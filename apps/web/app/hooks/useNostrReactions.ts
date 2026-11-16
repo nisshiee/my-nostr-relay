@@ -3,15 +3,20 @@ import type { SimplePool } from "nostr-tools/pool";
 import type { Event } from "nostr-tools/core";
 import type { SubCloser } from "nostr-tools/abstract-pool";
 import {
+  BOOTSTRAP_EOSE_TIMEOUT,
   REACTION_POLL_INTERVAL,
   REACTION_SINCE_SAFETY_MARGIN,
 } from "../lib/constants";
 import type { NoteCard, Reactions } from "../lib/types";
 import { aggregateReactionEvent } from "../lib/reactions";
 
+export type ReactionLoadState = "loading" | "settled" | "error";
+export type WatchReactions = (eventIds: string[], onState: (state: ReactionLoadState) => void) => () => void;
+
 export interface UseNostrReactionsResult {
   reactions: Reactions;
   addReaction: (event: Event) => void;
+  watchReactions: WatchReactions;
 }
 
 /**
@@ -27,24 +32,103 @@ export function useNostrReactions(
   const [reactions, setReactions] = useState<Reactions>(new Map());
 
   const seenReactionIdsRef = useRef<Set<string>>(new Set());
+  const extraSubscriptionsRef = useRef(new Set<() => void>());
   const reactionSubRef = useRef<SubCloser | null>(null);
   const reactionIntervalRef = useRef<number | null>(null);
   const lastReactionSubClosedAtRef = useRef<number | undefined>(undefined);
 
-  /** kind:7リアクションイベントを集計に追加する */
-  const addReaction = useCallback((event: Event) => {
-    if (seenReactionIdsRef.current.has(event.id)) return;
-    seenReactionIdsRef.current.add(event.id);
-
-    setReactions((prev) => aggregateReactionEvent(prev, event));
+  /** 履歴の一括反映とライブ更新で同じ重複除去を使う。 */
+  const addReactions = useCallback((events: Event[]) => {
+    const unseen = events.filter(event => {
+      if (seenReactionIdsRef.current.has(event.id)) return false;
+      seenReactionIdsRef.current.add(event.id);
+      return true;
+    });
+    if (unseen.length) setReactions(prev => unseen.reduce(aggregateReactionEvent, prev));
   }, []);
+  const addReaction = useCallback((event: Event) => addReactions([event]), [addReactions]);
+
+  // 集計は接続セッションに属し、表示対象の購読を切り替えても保持する。
+  useEffect(() => {
+    const seen = seenReactionIdsRef.current;
+    const extras = extraSubscriptionsRef.current;
+    return () => {
+      for (const stop of extras) stop();
+      seen.clear();
+      setReactions(new Map());
+    };
+  }, [pool, relayUrls]);
+
+  // プロフィールの投稿を一括購読する。フィード・送信結果と同じ重複除去と集計を使う。
+  const watchReactions = useCallback<WatchReactions>((eventIds, onState) => {
+    const ids = [...new Set(eventIds)];
+    if (ids.length === 0) return () => {};
+    if (!pool || relayUrls.length === 0) {
+      onState("error");
+      return () => {};
+    }
+    let cancelled = false;
+    let sub: SubCloser | undefined;
+    let initialLoading = true;
+    const buffer: Event[] = [];
+    const flush = () => {
+      initialLoading = false;
+      addReactions(buffer.splice(0));
+    };
+    onState("loading");
+    const timer = setTimeout(() => {
+      if (cancelled) return;
+      flush();
+      onState("error");
+      stop();
+    }, BOOTSTRAP_EOSE_TIMEOUT);
+    const stop = () => {
+      if (cancelled) return;
+      cancelled = true;
+      clearTimeout(timer);
+      sub?.close();
+      extraSubscriptionsRef.current.delete(stop);
+    };
+    extraSubscriptionsRef.current.add(stop);
+    try {
+      sub = pool.subscribeMany(relayUrls, { kinds: [7], "#e": ids }, {
+        // SDKの擬似EOSEより先にアプリ側でタイムアウトを表示する。
+        maxWait: BOOTSTRAP_EOSE_TIMEOUT + 1_000,
+        eoseTimeout: BOOTSTRAP_EOSE_TIMEOUT + 1_000,
+        onevent(event) {
+          if (cancelled) return;
+          if (initialLoading) buffer.push(event);
+          else addReaction(event);
+        },
+        oneose() {
+          if (cancelled) return;
+          clearTimeout(timer);
+          flush();
+          onState("settled");
+        },
+        onclose() {
+          if (cancelled) return;
+          clearTimeout(timer);
+          flush();
+          onState("error");
+          stop();
+        },
+      });
+      if (cancelled) sub.close();
+    } catch {
+      clearTimeout(timer);
+      flush();
+      onState("error");
+      stop();
+    }
+    return stop;
+  }, [pool, relayUrls, addReaction, addReactions]);
 
   // kind:7 subscribe（initialEventIdsが空でなくなったら開始）
   useEffect(() => {
     if (!pool || relayUrls.length === 0 || initialEventIds.length === 0) return;
 
     let cancelled = false;
-    const seenReactionIds = seenReactionIdsRef.current;
 
     // リアクション初期ロード用バッファ
     const reactionBuffer: Event[] = [];
@@ -65,16 +149,7 @@ export function useNostrReactions(
         oneose() {
           if (cancelled || !reactionInitialLoading) return;
           reactionInitialLoading = false;
-          // 重複判定はstate updaterの外で行い、楽観的更新済みの集計に追記する
-          const unseenEvents = reactionBuffer.filter((event) => {
-            if (seenReactionIds.has(event.id)) return false;
-            seenReactionIds.add(event.id);
-            return true;
-          });
-          reactionBuffer.length = 0;
-          if (unseenEvents.length > 0) {
-            setReactions((prev) => unseenEvents.reduce(aggregateReactionEvent, prev));
-          }
+          addReactions(reactionBuffer.splice(0));
 
           // リアクション初期ロード完了 — 定期再subscribeタイマーを開始
           lastReactionSubClosedAtRef.current = Math.floor(Date.now() / 1000);
@@ -140,10 +215,8 @@ export function useNostrReactions(
         }
         reactionSubRef.current = null;
       }
-      seenReactionIds.clear();
-      setReactions(new Map());
     };
-  }, [pool, relayUrls, initialEventIds, addReaction, notesRef, newNotesMinCreatedAtRef]);
+  }, [pool, relayUrls, initialEventIds, addReaction, addReactions, notesRef, newNotesMinCreatedAtRef]);
 
-  return { reactions, addReaction };
+  return { reactions, addReaction, watchReactions };
 }

@@ -11,7 +11,11 @@ import { encodeNpub } from "../lib/nip19";
 import type { NostrProfile } from "../lib/types";
 import { NoteCardContent, resolveProfileDisplayName } from "./NoteCardContent";
 
-interface UserProfileModalProps {
+import { ProfileNoteReactions, type ProfileReactionsProps } from "./ProfileNoteReactions";
+import type { WatchReactions } from "../hooks/useNostrReactions";
+
+interface UserProfileModalProps extends ProfileReactionsProps {
+  watchReactions: WatchReactions;
   pubkey: string;
   profile?: NostrProfile;
   isOpen: boolean;
@@ -69,12 +73,18 @@ export function UserProfileModal({
   follow,
   unfollow,
   onHashtagClick,
+  reactions, myPubkey, sendReaction, recentEmojis, emojiSets, looseEmojis, watchReactions,
 }: UserProfileModalProps) {
   const { notes, isLoading, error } = useUserRecentNotes({
     pubkey: isOpen ? pubkey : null,
     enabled: isOpen,
     fetchUserRecentNotes,
   });
+  useEffect(() => {
+    if (!isOpen || isLoading || notes.length === 0) return;
+    return watchReactions(notes.map(note => note.id), () => undefined);
+  }, [isOpen, isLoading, notes, watchReactions]);
+
   const [isSubmittingFollow, setIsSubmittingFollow] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
 
@@ -87,16 +97,17 @@ export function UserProfileModal({
     if (!isOpen) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && !event.defaultPrevented) {
         onClose();
       }
     };
 
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", handleKeyDown);
 
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [isOpen, onClose]);
@@ -148,6 +159,9 @@ export function UserProfileModal({
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.98, y: 8 }}
         transition={{ duration: 0.2 }}
+        role="dialog"
+        aria-modal="true"
+        aria-label="ユーザープロフィール"
         className="relative flex h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 shadow-2xl dark:border-gray-700 dark:bg-gray-900"
         onClick={(event) => event.stopPropagation()}
       >
@@ -324,6 +338,9 @@ export function UserProfileModal({
                     profiles={profiles}
                     onHashtagClick={onHashtagClick}
                   />
+                  <ProfileNoteReactions note={note} reactions={reactions} myPubkey={myPubkey}
+                    sendReaction={sendReaction} recentEmojis={recentEmojis} emojiSets={emojiSets}
+                    looseEmojis={looseEmojis} profiles={profiles} fetchProfiles={fetchProfiles} />
                 </div>
               ))}
             </div>

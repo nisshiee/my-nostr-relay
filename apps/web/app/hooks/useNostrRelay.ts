@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import type { Event } from "nostr-tools/core";
 import type { NoteCard, NostrProfile, Reactions } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
@@ -7,6 +7,7 @@ import { useNostrConnection } from "./useNostrConnection";
 import type { ConnectionStatus } from "./useNostrConnection";
 import { useNostrProfiles } from "./useNostrProfiles";
 import { useNostrNotes } from "./useNostrNotes";
+import type { WatchReactions } from "./useNostrReactions";
 import { useNostrReactions } from "./useNostrReactions";
 import { useEventCache } from "./useEventCache";
 import type { EventCache } from "./useEventCache";
@@ -19,6 +20,7 @@ interface UseNostrRelayResult {
   notes: NoteCard[];
   profiles: Map<string, NostrProfile>;
   reactions: Reactions;
+  watchReactions: WatchReactions;
   status: ConnectionStatus;
   relayUrls: string[];
   pool: SimplePool | null;
@@ -65,7 +67,7 @@ export function useNostrRelay(
     cache,
   );
 
-  const { reactions, addReaction } = useNostrReactions(
+  const { reactions, addReaction, watchReactions } = useNostrReactions(
     pool, relayUrls, notesRef, newNotesMinCreatedAtRef, initialEventIds,
   );
 
@@ -152,9 +154,20 @@ export function useNostrRelay(
     [updateFollowList],
   );
 
+  const pendingReactionsRef = useRef(new Map<string, { key: string; promise: Promise<void> }>());
+
   /** NIP-25準拠のリアクションイベントを構築・署名・送信し、楽観的にUIを更新する */
   const sendReaction = useCallback(
-    async (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => {
+    (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => {
+      // モーダルを閉じて開き直しても、同じ投稿への署名待ちを二重に開始しない。
+      const key = JSON.stringify([targetPubkey, emoji, imageUrl ?? null]);
+      const pending = pendingReactionsRef.current.get(targetEventId);
+      if (pending) {
+        return pending.key === key
+          ? pending.promise
+          : Promise.reject(new Error("この投稿へのリアクションを送信中です。完了後にもう一度お試しください"));
+      }
+      const sending = (async () => {
       // NIP-25準拠のkind:7イベントを構築
       const tags: string[][] = [
         ["e", targetEventId, "", targetPubkey],
@@ -185,6 +198,14 @@ export function useNostrRelay(
 
       // 楽観的にローカルのreactions stateを更新
       addReaction(signedEvent as unknown as Event);
+      })();
+      pendingReactionsRef.current.set(targetEventId, { key, promise: sending });
+      void sending.finally(() => {
+        if (pendingReactionsRef.current.get(targetEventId)?.promise === sending) {
+          pendingReactionsRef.current.delete(targetEventId);
+        }
+      }).catch(() => {});
+      return sending;
     },
     [publishEvent, addReaction],
   );
@@ -216,6 +237,7 @@ export function useNostrRelay(
     notes,
     profiles,
     reactions,
+    watchReactions,
     status,
     relayUrls,
     pool,
