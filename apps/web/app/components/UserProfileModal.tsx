@@ -12,7 +12,7 @@ import type { NostrProfile } from "../lib/types";
 import { NoteCardContent, resolveProfileDisplayName } from "./NoteCardContent";
 
 import { ProfileNoteReactions, type ProfileReactionsProps } from "./ProfileNoteReactions";
-import type { ReactionLoadState, WatchReactions } from "../hooks/useNostrReactions";
+import type { WatchReactions } from "../hooks/useNostrReactions";
 
 interface UserProfileModalProps extends ProfileReactionsProps {
   watchReactions: WatchReactions;
@@ -80,10 +80,9 @@ export function UserProfileModal({
     enabled: isOpen,
     fetchUserRecentNotes,
   });
-  const [reactionState, setReactionState] = useState<ReactionLoadState>("loading");
   useEffect(() => {
     if (!isOpen || isLoading || notes.length === 0) return;
-    return watchReactions(notes.map(note => note.id), setReactionState);
+    return watchReactions(notes.map(note => note.id), () => undefined);
   }, [isOpen, isLoading, notes, watchReactions]);
 
   const [isSubmittingFollow, setIsSubmittingFollow] = useState(false);
@@ -308,10 +307,6 @@ export function UserProfileModal({
             </h3>
             <span className="text-xs text-gray-500 dark:text-gray-400">最新50件</span>
           </div>
-
-          {!isLoading && notes.length > 0 && reactionState === "settled" && <div className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            <p>取得できたリアクションを表示しています。</p>
-          </div>}
 
           {isLoading ? (
             <RecentNotesLoadingSkeleton />

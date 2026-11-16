@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React, { type ComponentProps } from "react";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Event } from "nostr-tools/core";
 import { UserProfileModal } from "../UserProfileModal";
@@ -89,13 +89,14 @@ describe("プロフィール内のリアクション", () => {
     expect(p.watchReactions).toHaveBeenCalledTimes(3);
   });
 
-  it("取得中・取得失敗の説明文と再試行ボタンを表示せず、バッジを維持する", async () => {
+  it("全取得状態で説明文・再試行・専用領域を表示せず、バッジを維持する", async () => {
     const p = props(); let update!: (state: ReactionLoadState) => void;
     p.watchReactions = vi.fn((_ids, onState) => { update = onState; onState("loading"); return vi.fn(); });
     render(<UserProfileModal {...p} />);
     await screen.findByText("古い投稿");
     expect(screen.queryByText(/リアクションを取得中/)).toBeNull();
     expect(screen.getByRole("button", { name: "👍 2件" })).toBeTruthy();
+    await waitFor(() => expect(p.watchReactions).toHaveBeenCalledTimes(1));
     act(() => update("error"));
     expect(screen.queryByText(/リアクションを取得できない場合/)).toBeNull();
     expect(screen.queryByText(/表示中の件数は取得できた分/)).toBeNull();
@@ -103,7 +104,11 @@ describe("プロフィール内のリアクション", () => {
     expect(screen.queryByRole("button", { name: "再試行" })).toBeNull();
     expect(p.watchReactions).toHaveBeenCalledTimes(1);
     act(() => update("settled"));
-    expect(screen.getByText("取得できたリアクションを表示しています。")).toBeTruthy();
+    expect(screen.queryByText("取得できたリアクションを表示しています。")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    const heading = screen.getByText("Recent notes").parentElement!;
+    expect(heading.nextElementSibling?.textContent).toContain("古い投稿");
+    expect(screen.getByRole("button", { name: "👍 2件" })).toBeTruthy();
   });
 
   it("tooltipはモーダルより上に表示し、Escapeとスクロールで閉じる", async () => {
