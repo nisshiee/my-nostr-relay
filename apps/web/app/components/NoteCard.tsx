@@ -1,15 +1,13 @@
 "use client";
 
-import { MediaImage } from "./CanvasAwareImage";
-
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState } from "react";
 import type { NoteCard as NoteCardType, NostrProfile, ReactionSummary } from "../lib/types";
 import { reactionKey } from "../lib/reactions";
 import type { NostrEvent } from "../types/nostr";
 import { ActionBar } from "./ActionBar";
 import { NoteCardContent, resolveProfileDisplayName } from "./NoteCardContent";
 import { ReplyCompose } from "./ReplyCompose";
-import { ReactionTooltip } from "./ReactionTooltip";
+import { ReactionBadges } from "./ReactionBadges";
 import type { EventCache } from "../hooks/useEventCache";
 import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
 import type { RecentEmoji } from "../hooks/useRecentEmojis";
@@ -68,14 +66,6 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
   const [isReplyMode, setIsReplyMode] = useState(false);
   const isHoveringRef = useRef(false);
   const isEmojiPickerOpenRef = useRef(false);
-
-  // リアクションツールチップ用の状態・ref
-  const [activeTooltipEmoji, setActiveTooltipEmoji] = useState<string | null>(null);
-  const [activeTooltipAnchor, setActiveTooltipAnchor] = useState<HTMLElement | null>(null);
-  const badgeRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
-  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const longTapTriggeredRef = useRef(false);
 
   // ResizeObserver でカードの高さを測定して親に通知
   useEffect(() => {
@@ -163,91 +153,7 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
       if (leaveTimerRef.current) {
         clearTimeout(leaveTimerRef.current);
       }
-      if (hoverTimerRef.current) {
-        clearTimeout(hoverTimerRef.current);
-      }
-      if (longTapTimerRef.current) {
-        clearTimeout(longTapTimerRef.current);
-      }
     };
-  }, []);
-
-  // ツールチップ表示中に画面のどこかをタップしたら閉じる（モバイル用）
-  useEffect(() => {
-    if (!activeTooltipEmoji) return;
-
-    const handleDocumentTouch = (e: TouchEvent) => {
-      // ツールチップ自体のタップは無視
-      const tooltip = document.querySelector("[data-reaction-tooltip]");
-      if (tooltip && tooltip.contains(e.target as Node)) return;
-      // アンカーバッジのタップも無視
-      const badgeEl = badgeRefs.current.get(activeTooltipEmoji);
-      if (badgeEl && badgeEl.contains(e.target as Node)) return;
-
-      setActiveTooltipEmoji(null);
-    };
-
-    document.addEventListener("touchstart", handleDocumentTouch);
-    return () => {
-      document.removeEventListener("touchstart", handleDocumentTouch);
-    };
-  }, [activeTooltipEmoji]);
-
-  // リアクションバッジのツールチップ用イベントハンドラー
-  const handleBadgeMouseEnter = useCallback((emoji: string, anchor: HTMLElement) => {
-    // リアクション者のプロフィールを先行取得
-    if (fetchProfiles && reactions) {
-      const entry = reactions.get(emoji);
-      if (entry) {
-        const unknownPubkeys = Array.from(entry.pubkeys).filter(pk => !profiles?.has(pk));
-        if (unknownPubkeys.length > 0) {
-          fetchProfiles(unknownPubkeys);
-        }
-      }
-    }
-
-    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
-    hoverTimerRef.current = setTimeout(() => {
-      setActiveTooltipAnchor(anchor);
-      setActiveTooltipEmoji(emoji);
-    }, 500);
-  }, [fetchProfiles, reactions, profiles]);
-
-  const handleBadgeMouseLeave = useCallback(() => {
-    if (hoverTimerRef.current) {
-      clearTimeout(hoverTimerRef.current);
-      hoverTimerRef.current = null;
-    }
-    setActiveTooltipAnchor(null);
-    setActiveTooltipEmoji(null);
-  }, []);
-
-  const handleBadgeTouchStart = useCallback((emoji: string, anchor: HTMLElement) => {
-    longTapTriggeredRef.current = false;
-    if (longTapTimerRef.current) clearTimeout(longTapTimerRef.current);
-    longTapTimerRef.current = setTimeout(() => {
-      longTapTriggeredRef.current = true;
-      setActiveTooltipAnchor(anchor);
-      setActiveTooltipEmoji(emoji);
-    }, 500);
-  }, []);
-
-  const handleBadgeTouchEnd = useCallback((e: React.TouchEvent) => {
-    if (longTapTimerRef.current) {
-      clearTimeout(longTapTimerRef.current);
-      longTapTimerRef.current = null;
-    }
-    // ロングタップ成功時はリアクション送信を防ぐ
-    if (longTapTriggeredRef.current) {
-      e.preventDefault();
-    }
-  }, []);
-
-  const handleBadgeTouchMove = useCallback(() => {
-    if (longTapTimerRef.current) {
-      clearTimeout(longTapTimerRef.current);
-      longTapTimerRef.current = null;
-    }
   }, []);
 
   return (
@@ -283,70 +189,8 @@ export function NoteCard({ note, profile, reposterProfile, reactions, myPubkey, 
         onHashtagClick={onHashtagClick}
       />
 
-      {/* リアクションバッジ */}
-      {reactions && reactions.size > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {Array.from(reactions.entries()).map(([key, { emoji, count, imageUrl, pubkeys }]) => {
-            const reacted = !!(myPubkey && pubkeys.has(myPubkey));
-            return (
-              <button
-                key={key}
-                type="button"
-                ref={(el) => {
-                  if (el) {
-                    badgeRefs.current.set(key, el);
-                  } else {
-                    badgeRefs.current.delete(key);
-                  }
-                }}
-                aria-disabled={reacted || undefined}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (!reacted && onReaction) {
-                    onReaction(emoji, imageUrl);
-                  }
-                }}
-                onMouseEnter={(e) => handleBadgeMouseEnter(key, e.currentTarget)}
-                onMouseLeave={handleBadgeMouseLeave}
-                onTouchStart={(e) => handleBadgeTouchStart(key, e.currentTarget)}
-                onTouchEnd={handleBadgeTouchEnd}
-                onTouchCancel={handleBadgeTouchEnd}
-                onTouchMove={handleBadgeTouchMove}
-                className={`rounded-full px-2 py-0.5 text-xs inline-flex items-center gap-1 transition-colors ${
-                  reacted
-                    ? "bg-blue-100 dark:bg-blue-900/40 border border-blue-400 dark:border-blue-500 text-blue-700 dark:text-blue-300 cursor-not-allowed"
-                    : "bg-gray-100 dark:bg-gray-700 border border-transparent cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
-                }`}
-              >
-                {imageUrl ? (
-                  <MediaImage
-                    src={imageUrl}
-                    alt={emoji}
-                    className="inline-block h-4 w-4"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  emoji
-                )}{" "}
-                {count}
-              </button>
-            );
-          })}
-
-          {/* リアクションツールチップ */}
-          {(() => {
-            const tooltipData = activeTooltipEmoji ? reactions?.get(activeTooltipEmoji) : null;
-            return tooltipData ? (
-                <ReactionTooltip
-                  isOpen={!!activeTooltipEmoji}
-                  pubkeys={Array.from(tooltipData.pubkeys)}
-                  profiles={profiles ?? new Map()}
-                  anchorElement={activeTooltipAnchor}
-                />
-            ) : null;
-          })()}
-        </div>
-      )}
+      <ReactionBadges reactions={reactions} myPubkey={myPubkey}
+        profiles={profiles} fetchProfiles={fetchProfiles} onReaction={onReaction} />
 
       {/* アクションバー（リプライモード中は非表示） */}
       <ActionBar

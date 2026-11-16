@@ -121,3 +121,78 @@ describe("useNostrReactions", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe("プロフィールの追加リアクション購読", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { cleanup(); vi.useRealTimers(); });
+
+  it("フィードが空でも50投稿を一括で履歴購読し、ローカル更新と重複除去する", () => {
+    const { result, subscribeMany, subscriptions } = setup([]);
+    const ids = Array.from({ length: 50 }, (_, i) => "old-" + i);
+    const state = vi.fn();
+    let stop!: () => void;
+    act(() => { stop = result.current.watchReactions(ids, state); });
+    expect(subscribeMany).toHaveBeenCalledOnce();
+    expect(subscribeMany.mock.calls[0][1]).toEqual({ kinds: [7], "#e": ids });
+    act(() => {
+      subscriptions[0].callbacks.onevent(reaction("historic", ids[0]));
+      result.current.addReaction(reaction("historic", ids[0]));
+      subscriptions[0].callbacks.oneose();
+    });
+    expect(result.current.reactions.get(ids[0])?.get(reactionKey("👍"))?.count).toBe(1);
+    expect(state).toHaveBeenLastCalledWith("settled");
+    act(stop);
+    expect(subscriptions[0].close).toHaveBeenCalledOnce();
+    act(() => subscriptions[0].callbacks.onevent(reaction("late", ids[0])));
+    expect(result.current.reactions.get(ids[0])?.get(reactionKey("👍"))?.count).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("フィード・モーダル・送信echoを一度だけ集計し、購読切替でも消さない", () => {
+    const { result, subscriptions, rerender } = setup();
+    let stop!: () => void;
+    act(() => { stop = result.current.watchReactions(["note", "old"], vi.fn()); });
+    act(() => {
+      subscriptions[1].callbacks.onevent(reaction("shared"));
+      subscriptions[0].callbacks.onevent(reaction("shared"));
+      result.current.addReaction(reaction("local"));
+      subscriptions[1].callbacks.onevent(reaction("local"));
+      subscriptions[0].callbacks.oneose();
+      subscriptions[1].callbacks.oneose();
+    });
+    expect(result.current.reactions.get("note")?.get(reactionKey("👍"))?.count).toBe(2);
+    act(stop);
+    rerender({ ids: ["replacement"] });
+    expect(result.current.reactions.get("note")?.get(reactionKey("👍"))?.count).toBe(2);
+  });
+
+  it("未完了の取得を0件とせず失敗にし、再試行で重複加算しない", () => {
+    const { result, subscriptions } = setup([]);
+    const state = vi.fn();
+    act(() => { result.current.watchReactions(["old"], state); });
+    act(() => subscriptions[0].callbacks.onevent(reaction("partial", "old")));
+    act(() => vi.advanceTimersByTime(3_000));
+    expect(state).toHaveBeenLastCalledWith("error");
+    expect(subscriptions[0].close).toHaveBeenCalledOnce();
+    act(() => subscriptions[0].callbacks.oneose());
+    expect(state).toHaveBeenLastCalledWith("error");
+    act(() => { result.current.watchReactions(["old"], state); });
+    act(() => {
+      subscriptions[1].callbacks.onevent(reaction("partial", "old"));
+      subscriptions[1].callbacks.oneose();
+    });
+    expect(result.current.reactions.get("old")?.get(reactionKey("👍"))?.count).toBe(1);
+    expect(state).toHaveBeenLastCalledWith("settled");
+  });
+
+  it("対象なしでは購読を作らず、接続なしは取得失敗として通知する", () => {
+    const state = vi.fn();
+    const { result, subscribeMany } = setup([]);
+    act(() => { result.current.watchReactions([], state); });
+    expect(state).not.toHaveBeenCalled();
+    expect(subscribeMany).not.toHaveBeenCalled();
+    const { result: disconnected } = renderHook(() => useNostrReactions(null, [], { current: [] }, { current: undefined }, []));
+    act(() => { disconnected.current.watchReactions(["old"], state); });
+    expect(state).toHaveBeenLastCalledWith("error");
+  });
+});

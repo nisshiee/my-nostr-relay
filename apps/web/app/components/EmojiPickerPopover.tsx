@@ -418,7 +418,7 @@ export function EmojiPickerPopover({
     if (!anchorRef.current) return;
     const rect = anchorRef.current.getBoundingClientRect();
     const pickerWidth = Math.min(320, window.innerWidth * 0.9);
-    const pickerHeight = 360; // タブバー分を加算
+    const pickerHeight = Math.min(popoverRef.current?.getBoundingClientRect().height || 360, window.innerHeight - 16);
     const gap = 8;
 
     let left = rect.left;
@@ -428,18 +428,19 @@ export function EmojiPickerPopover({
     if (left < 8) left = 8;
 
     const spaceAbove = rect.top;
-    const placement = spaceAbove >= pickerHeight + gap ? "above" : "below";
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const placement = spaceAbove >= pickerHeight + gap || spaceAbove > spaceBelow ? "above" : "below";
 
     if (placement === "above") {
       setPosition({
-        top: rect.top + window.scrollY - gap,
-        left: left + window.scrollX,
+        top: Math.max(pickerHeight + 8, rect.top - gap),
+        left: left,
         placement,
       });
     } else {
       setPosition({
-        top: rect.bottom + window.scrollY + gap,
-        left: left + window.scrollX,
+        top: Math.max(8, Math.min(rect.bottom + gap, window.innerHeight - pickerHeight - 8)),
+        left: left,
         placement,
       });
     }
@@ -461,18 +462,22 @@ export function EmojiPickerPopover({
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onClose();
+      }
     };
 
     const handleScroll = () => updatePosition();
 
     document.addEventListener("mousedown", handleMouseDown);
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keydown", handleKeyDown, true);
     window.addEventListener("scroll", handleScroll, true);
     window.addEventListener("resize", updatePosition);
     return () => {
       document.removeEventListener("mousedown", handleMouseDown);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown, true);
       window.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("resize", updatePosition);
     };
@@ -483,15 +488,19 @@ export function EmojiPickerPopover({
   return createPortal(
     <div
       ref={popoverRef}
+      role="dialog"
+      aria-label="絵文字を選択"
       className="fixed rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg"
       data-emoji-picker-popover
       style={{
         width: "min(320px, 90vw)",
+        maxHeight: "calc(100dvh - 16px)",
+        overflowY: "auto",
         top: position.top,
         left: position.left,
         transform:
           position.placement === "above" ? "translateY(-100%)" : undefined,
-        zIndex: 9999,
+        zIndex: 10001,
       }}
       onClick={(e) => e.stopPropagation()}
     >

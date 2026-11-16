@@ -21,6 +21,7 @@ interface UseUserRecentNotesState {
 }
 
 type UseUserRecentNotesAction =
+  | { type: "reset" }
   | { type: "start"; pubkey: string }
   | { type: "success"; pubkey: string; notes: Event[] }
   | { type: "error"; pubkey: string; error: string };
@@ -30,6 +31,8 @@ function useUserRecentNotesReducer(
   action: UseUserRecentNotesAction,
 ): UseUserRecentNotesState {
   switch (action.type) {
+    case "reset":
+      return { requestedPubkey: null, notes: [], isLoading: false, error: null };
     case "start":
       return {
         requestedPubkey: action.pubkey,
@@ -78,6 +81,8 @@ export function useUserRecentNotes({
 
   useEffect(() => {
     if (!enabled || !pubkey) {
+      // 再表示の初回renderで前回の投稿を購読しないよう、閉じた時点で破棄する。
+      dispatch({ type: "reset" });
       return;
     }
 

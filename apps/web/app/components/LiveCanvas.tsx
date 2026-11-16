@@ -24,6 +24,8 @@ import type { RecentEmoji } from "../hooks/useRecentEmojis";
 import { UserProfileModal } from "./UserProfileModal";
 import { HashtagModal } from "./HashtagModal";
 
+import type { WatchReactions } from "../hooks/useNostrReactions";
+
 interface LiveCanvasProps {
   diagnosticsEnabled?: boolean;
   nativeEnabled?: boolean;
@@ -34,6 +36,7 @@ interface LiveCanvasProps {
   profiles: Map<string, NostrProfile>;
   /** リアクション集計: eventId → (絵文字 → 件数) */
   reactions: Reactions;
+  watchReactions: WatchReactions;
   status: "connecting" | "loading" | "connected" | "error";
   pubkey: string;
   npub: string | null;
@@ -65,7 +68,7 @@ export function LiveCanvas(props: LiveCanvasProps) {
   return <LiveCanvasSession key={props.pubkey} {...props} />;
 }
 
-function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, nativeUnavailableReason, settingsContent, notes, threadCards, profiles, reactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, nativeUnavailableReason, settingsContent, notes, threadCards, profiles, reactions, watchReactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -381,7 +384,15 @@ function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, 
 
       {profileModalPubkey && (
         <UserProfileModal
+          key={profileModalPubkey}
           pubkey={profileModalPubkey}
+          reactions={reactions}
+          watchReactions={watchReactions}
+          sendReaction={sendReaction}
+          myPubkey={pubkey}
+          recentEmojis={recentEmojis}
+          emojiSets={emojiSets}
+          looseEmojis={looseEmojis}
           profile={profiles.get(profileModalPubkey)}
           isOpen={!!profileModalPubkey}
           onClose={() => setProfileModalPubkey(null)}

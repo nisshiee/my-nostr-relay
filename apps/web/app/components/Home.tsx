@@ -34,6 +34,7 @@ export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: bool
     notes,
     profiles,
     reactions,
+    watchReactions,
     status,
     relayUrls,
     pool,
@@ -55,8 +56,8 @@ export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: bool
 
   const handleSendReaction = useCallback(
     async (targetEventId: string, targetPubkey: string, emoji: string, imageUrl?: string) => {
-      addEmoji(emoji, imageUrl); // 楽観的に即座に更新
       await sendReaction(targetEventId, targetPubkey, emoji, imageUrl);
+      addEmoji(emoji, imageUrl);
     },
     [sendReaction, addEmoji],
   );
@@ -74,6 +75,7 @@ export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: bool
         threadCards={threadCards}
         profiles={profiles}
         reactions={reactions}
+        watchReactions={watchReactions}
         status={status}
         pubkey={pubkey}
         npub={npub}

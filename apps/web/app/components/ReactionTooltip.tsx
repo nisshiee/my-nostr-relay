@@ -135,12 +135,13 @@ export function ReactionTooltip({
   return createPortal(
     <div
       ref={tooltipRef}
+      role="tooltip"
       data-reaction-tooltip
       className="fixed rounded-lg bg-gray-900/90 backdrop-blur-sm text-white shadow-lg px-3 py-2"
       style={{
         top: position.top,
         left: position.left,
-        zIndex: 9999,
+        zIndex: 10002,
         opacity: visible ? 1 : 0,
         transition: "opacity 150ms ease-in-out",
         pointerEvents: visible ? "auto" : "none",
