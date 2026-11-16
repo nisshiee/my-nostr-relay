@@ -16,7 +16,7 @@ vi.mock('../webglSceneRenderer', async importOriginal => ({ ...await importOrigi
 function HeaderScene(props: React.ComponentProps<typeof CanvasScene>) {
   const [open,setOpen]=useState(false);const trigger=useRef<HTMLButtonElement>(null);
   const close=React.useCallback(()=>setOpen(false),[]);
-  return <><CanvasHeader status="connected" npub={null} onAddDraft={()=>{}} onLogout={()=>{}} showSignerControl={false} onManageSigner={()=>{}} onOpenSettings={()=>setOpen(true)} settingsOpen={open} settingsTrigger={trigger}/><CanvasScene {...props} settingsOpen={open} onSettingsClose={close} settingsTrigger={trigger}/></>;
+  return <><CanvasHeader status="connected" pubkey="me" onOpenProfile={()=>{}} onAddDraft={()=>{}} onLogout={()=>{}} showSignerControl={false} onManageSigner={()=>{}} onOpenSettings={()=>setOpen(true)} settingsOpen={open} settingsTrigger={trigger}/><CanvasScene {...props} settingsOpen={open} onSettingsClose={close} settingsTrigger={trigger}/></>;
 }
 // 描画回帰では設定を明示的に開く。modal自身の回帰はactualRenderを使う。
 function renderUI(ui: React.ReactElement, options?: Parameters<typeof actualRender>[1]) {

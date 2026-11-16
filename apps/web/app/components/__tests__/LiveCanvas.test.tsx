@@ -17,7 +17,7 @@ vi.mock("../canvas/CanvasScene", () => ({
   ))}</div>,
 }));
 vi.mock("../CanvasHeader", () => ({
-  CanvasHeader: ({ onAddDraft, onOpenSettings }: { onAddDraft: () => void; onOpenSettings?: () => void }) => <><button onClick={() => onAddDraft()}>新規投稿</button><button onClick={onOpenSettings}>設定</button></>,
+  CanvasHeader: ({ onAddDraft, onOpenSettings, onOpenProfile }: { onAddDraft: () => void; onOpenSettings?: () => void; onOpenProfile: () => void }) => <><button onClick={() => onAddDraft()}>新規投稿</button><button onClick={onOpenSettings}>設定</button><button onClick={onOpenProfile}>自分の投稿</button></>,
 }));
 vi.mock("../ComposeCard", () => ({
   ComposeCard: ({ slotId, onPublish, onHold }: ComponentProps<typeof import("../ComposeCard").ComposeCard>) => (
@@ -50,7 +50,7 @@ vi.mock("../ThreadCard", () => ({
     }}>返信公開</button>
   </div>,
 }));
-vi.mock("../UserProfileModal", () => ({ UserProfileModal: () => null }));
+vi.mock("../UserProfileModal", () => ({ UserProfileModal: ({ pubkey }: { pubkey: string }) => <div data-testid="profile-modal">{pubkey}</div> }));
 vi.mock("../HashtagModal", () => ({ HashtagModal: () => null }));
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -62,7 +62,7 @@ function makeNote(slotId = "slot-a", eventId = "event-a"): Note {
 function makeProps(): ComponentProps<typeof LiveCanvas> {
   return {
     notes: [], threadCards: [], profiles: new Map(), reactions: new Map(),
-    status: "connected", pubkey: "me", npub: null,
+    status: "connected", pubkey: "me",
     publishEvent: vi.fn(), publishedSlotMapRef: { current: new Map() },
     sendReaction: vi.fn(), sendRepost: vi.fn(), watchReactions: vi.fn(() => vi.fn()),
     cache: {} as ComponentProps<typeof LiveCanvas>["cache"],
@@ -74,6 +74,13 @@ function makeProps(): ComponentProps<typeof LiveCanvas> {
 }
 
 describe("LiveCanvas のカード統合", () => {
+  it("自分のプロフィールを取得し、ヘッダーから同じ投稿一覧モーダルを開く", () => {
+    const props = makeProps();
+    render(<LiveCanvas {...props} />);
+    expect(props.fetchProfiles).toHaveBeenCalledWith(["me"]);
+    fireEvent.click(screen.getByRole("button", { name: "自分の投稿" }));
+    expect(screen.getByTestId("profile-modal").textContent).toBe("me");
+  });
   it.each([false,true])("空/処理中でもヘッダーから設定を開閉できる processing=%s", isProcessing => {
     render(<LiveCanvas {...makeProps()} isProcessing={isProcessing} settingsContent={<span>本人確認fixture</span>} />);
     fireEvent.click(screen.getByRole('button',{name:'設定'}));expect(screen.getByRole('dialog').textContent).toContain('本人確認fixture');

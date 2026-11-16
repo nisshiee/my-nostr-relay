@@ -1,12 +1,18 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { KeyRound } from "lucide-react";
+import { validateCanvasImageSource } from "../lib/canvasImagePolicy";
+import type { NostrProfile } from "../lib/types";
+import Image from "./CanvasAwareImage";
+import { resolveProfileDisplayName } from "./NoteCardContent";
 import { StatusIndicator } from "./StatusIndicator";
 
 interface CanvasHeaderProps {
   status: "connecting" | "loading" | "connected" | "error";
-  npub: string | null;
+  pubkey: string;
+  profile?: NostrProfile;
+  onOpenProfile: () => void;
   onAddDraft: () => void;
   onLogout: () => void;
   showSignerControl: boolean;
@@ -16,14 +22,52 @@ interface CanvasHeaderProps {
   settingsTrigger?: React.RefObject<HTMLButtonElement | null>;
 }
 
-/** npubを省略表示する */
-function truncateNpub(npub: string): string {
-  if (npub.length <= 20) return npub;
-  return `${npub.slice(0, 12)}...${npub.slice(-8)}`;
+interface HeaderProfileButtonProps {
+  pubkey: string;
+  profile?: NostrProfile;
+  onOpenProfile: () => void;
 }
 
-/** キャンバスのヘッダー（タイトル、ステータス、投稿ボタン、npub表示、ログアウトボタン） */
-export function CanvasHeader({ status, npub, onAddDraft, onLogout, showSignerControl, onManageSigner, onOpenSettings, settingsOpen, settingsTrigger }: CanvasHeaderProps): React.ReactNode {
+/** 認証中ユーザーのアイコン。画像を表示できない場合はカードと同じ頭文字表示へ戻す。 */
+function HeaderProfileButton({ pubkey, profile, onOpenProfile }: HeaderProfileButtonProps) {
+  const displayName = resolveProfileDisplayName(pubkey, profile);
+  const avatarUrl = profile?.picture;
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState<string | null>(null);
+  const avatarSource = avatarUrl ? validateCanvasImageSource(avatarUrl) : null;
+  const showAvatar = Boolean(avatarUrl && avatarSource?.allowed && failedAvatarUrl !== avatarUrl);
+
+  return (
+    <button
+      type="button"
+      onClick={onOpenProfile}
+      className="h-8 w-8 shrink-0 overflow-hidden rounded-full transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-purple-500"
+      aria-label={`${displayName}の投稿一覧を開く`}
+      title={`${displayName}の投稿一覧を開く`}
+    >
+      {showAvatar && avatarUrl ? (
+        <Image
+          src={avatarUrl}
+          alt=""
+          width={32}
+          height={32}
+          className="h-8 w-8 rounded-full object-cover"
+          unoptimized
+          onError={() => setFailedAvatarUrl(avatarUrl)}
+        />
+      ) : (
+        <span
+          aria-hidden="true"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-purple-400 to-blue-500 text-xs font-bold text-white"
+        >
+          {displayName.charAt(0).toUpperCase()}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** キャンバスのヘッダー（タイトル、ステータス、投稿ボタン、プロフィール、ログアウトボタン） */
+export function CanvasHeader({ status, pubkey, profile, onOpenProfile, onAddDraft, onLogout, showSignerControl, onManageSigner, onOpenSettings, settingsOpen, settingsTrigger }: CanvasHeaderProps): React.ReactNode {
   return (
     <header className="flex shrink-0 items-center justify-between gap-2 border-b border-gray-200 bg-white px-3 py-3 sm:px-6 dark:border-gray-800 dark:bg-gray-900">
       <div className="flex min-w-0 items-center gap-2 sm:gap-4">
@@ -42,14 +86,7 @@ export function CanvasHeader({ status, npub, onAddDraft, onLogout, showSignerCon
         >
           ✏️ <span className="hidden sm:inline">投稿</span>
         </button>
-        {npub && (
-          <span
-            className="hidden rounded bg-gray-100 px-2 py-1 font-mono text-xs text-gray-600 md:inline dark:bg-gray-800 dark:text-gray-400"
-            title={npub}
-          >
-            {truncateNpub(npub)}
-          </span>
-        )}
+        <HeaderProfileButton pubkey={pubkey} profile={profile} onOpenProfile={onOpenProfile} />
         {onOpenSettings && <button ref={settingsTrigger} type="button" onClick={onOpenSettings} aria-haspopup="dialog" aria-expanded={settingsOpen} className="shrink-0 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs dark:border-gray-600">設定</button>}
         {showSignerControl && (
           <button
