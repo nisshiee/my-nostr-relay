@@ -310,12 +310,9 @@ export function UserProfileModal({
             <span className="text-xs text-gray-500 dark:text-gray-400">最新50件</span>
           </div>
 
-          {!isLoading && notes.length > 0 && <div className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {reactionState === "loading" ? <p role="status">リアクションを取得中…</p>
-              : reactionState === "error" ? <p role="status">
-                リアクションを取得できない場合があります。表示中の件数は取得できた分です。{" "}
-                <button type="button" className="underline" onClick={() => setReactionAttempt(value => value + 1)}>再試行</button>
-              </p>
+          {!isLoading && notes.length > 0 && reactionState !== "loading" && <div className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            {reactionState === "error"
+              ? <button type="button" className="underline" onClick={() => setReactionAttempt(value => value + 1)}>再試行</button>
               : <p>取得できたリアクションを表示しています。</p>}
           </div>}
 
