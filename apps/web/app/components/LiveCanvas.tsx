@@ -39,7 +39,6 @@ interface LiveCanvasProps {
   watchReactions: WatchReactions;
   status: "connecting" | "loading" | "connected" | "error";
   pubkey: string;
-  npub: string | null;
   publishEvent: (event: NostrEvent) => Promise<void>;
   publishedSlotMapRef: React.RefObject<Map<string, string>>;
   /** リアクション送信ハンドラ */
@@ -68,13 +67,17 @@ export function LiveCanvas(props: LiveCanvasProps) {
   return <LiveCanvasSession key={props.pubkey} {...props} />;
 }
 
-function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, nativeUnavailableReason, settingsContent, notes, threadCards, profiles, reactions, watchReactions, status, pubkey, npub, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, nativeUnavailableReason, settingsContent, notes, threadCards, profiles, reactions, watchReactions, status, pubkey, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const [holdSet, setHoldSet] = useState<Set<string>>(() => new Set());
   const [profileModalPubkey, setProfileModalPubkey] = useState<string | null>(null);
   const [hashtagModalTag, setHashtagModalTag] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchProfiles([pubkey]);
+  }, [fetchProfiles, pubkey, status]);
 
   const openHashtagModal = useCallback((tag: string) => {
     // モーダルを重ねずに切り替える。Esc/スクロールロックの競合を避けるため。
@@ -361,7 +364,9 @@ function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, 
         settingsOpen={settingsOpen}
         settingsTrigger={settingsTrigger}
         status={status}
-        npub={npub}
+        pubkey={pubkey}
+        profile={profiles.get(pubkey)}
+        onOpenProfile={() => setProfileModalPubkey(pubkey)}
         onAddDraft={addDraft}
         onLogout={onLogout}
         showSignerControl={showSignerControl}

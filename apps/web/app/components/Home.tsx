@@ -12,7 +12,6 @@ import { LiveCanvas } from "./LiveCanvas";
 export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: boolean }) {
   const {
     pubkey,
-    npub,
     nip07Available,
     autoLoading,
     remoteLoading,
@@ -78,7 +77,6 @@ export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: bool
         watchReactions={watchReactions}
         status={status}
         pubkey={pubkey}
-        npub={npub}
         publishEvent={publishEvent}
         publishedSlotMapRef={publishedSlotMapRef}
         sendReaction={handleSendReaction}
