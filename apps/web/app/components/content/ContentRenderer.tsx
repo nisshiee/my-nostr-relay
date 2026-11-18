@@ -2,6 +2,7 @@
 
 import { parseContent, type ContentNode } from "../../lib/contentParser";
 import { TextNode } from "./TextNode";
+import { VideoNode } from "./VideoNode";
 import { ImageNode } from "./ImageNode";
 import { LinkNode } from "./LinkNode";
 import { LinkPreviewNode } from "./LinkPreviewNode";
@@ -20,6 +21,7 @@ import type { NostrProfile } from "../../lib/types";
 const NODE_RENDERERS: Record<ContentNode["type"], ComponentType<any>> = {
   text: TextNode,
   image: ImageNode,
+  video: VideoNode,
   linkPreview: LinkPreviewNode,
   link: LinkNode,
   quote: QuoteNode,
@@ -65,6 +67,8 @@ export function ContentRenderer({ content, onHold, onRelease, cache, profiles, t
         const extraProps =
           node.type === "image"
             ? { imageUrls, imageIndex: imageIndexMap[index], onHold, onRelease }
+            : node.type === "video"
+              ? { onHold, onRelease }
             : node.type === "quote"
               ? { cache, profiles: profiles ?? new Map<string, NostrProfile>() }
               : node.type === "hashtag"

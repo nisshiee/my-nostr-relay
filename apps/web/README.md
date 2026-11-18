@@ -53,3 +53,20 @@ real keys, signing, or network access.
 This fixes reproducible upstream lifecycle bugs, not a proven diagnosis of every
 remote-signer outage. Real signer approval and response delivery still depend on the
 signer and relays. The app's automatic-restoration timeout remains in place.
+
+### 投稿内の動画リンク
+
+本文中の公開HTTPS MP4/WebMリンクは静止した「動画を再生」ボタンとして表示する。
+クリックするまではvideo要素、poster、動画の先読み、OGP取得を行わない。
+クリック後はCanvas外の通常DOMダイアログでブラウザ標準のcontrolsを使って再生する。
+再生開始がブラウザに拒否された場合はcontrolsから開始できる。閉じる、URL変更、
+カード削除、エラー時は停止してsrcを解除する。URL変更後は新しい動画を自動で開かない。
+動画ダイアログ内にギャラリー切替は設けず、閉じて別のボタンから選択する。
+
+動画はCanvasへ取り込まないためcrossOrigin属性を付けず、CORS許可を再生条件にしない。
+画像のanonymous CORS取得は変更しない。動画配信元には利用者のIPやアクセス時刻が伝わり、
+ブラウザの通常のCookie・Referrerポリシーが適用される。サーバーproxy、認証情報の注入、
+動画URLのHEAD検査やBlobへの全件ダウンロードは行わない。
+URL検査は画像と同じ公開HTTPS hostname境界を利用するが、DNSや転送先の完全な検査ではない。
+拡張子はコーデック対応を保証しない。再生失敗時は元リンクを残す。
+YouTube等のページ埋込、HLS/DASH、カード内再生、動画の自動サムネイル生成は対象外。
