@@ -3,18 +3,19 @@
  * Nostrイベントのcontent文字列を構造化されたノードに分解する
  */
 
+import { isVideoUrl, hasVideoPath } from "./videoPolicy";
 import { extractEventHashtags, findHashtagMatches } from "./hashtags";
 
 /** コンテンツノードの型定義（discriminated union） */
 export type ContentNode =
   | { type: "text"; text: string }
   | { type: "image"; url: string }
+  | { type: "video"; url: string }
   | { type: "linkPreview"; url: string; text: string }
   | { type: "link"; url: string; text: string }
   | { type: "quote"; uri: string }
   | { type: "hashtag"; tag: string; text: string }
   | { type: "emoji"; shortcode: string; url: string };
-// 今後追加予定: | { type: "video"; url: string }
 
 /** 画像URLにマッチする正規表現パターン（パス途中の拡張子誤検出を防ぐため末尾に先読みを追加） */
 const IMAGE_URL_PATTERN =
@@ -136,6 +137,11 @@ function splitTextWithNostrAndLinks(
         ? `${identifier.slice(0, 12)}…${identifier.slice(-4)}`
         : identifier;
       nodes.push({ type: "link", url: `https://njump.me/${identifier}`, text: `@${shortId}` });
+    } else if (isVideoUrl(entry.url)) {
+      nodes.push({ type: "video", url: entry.url });
+    } else if (hasVideoPath(entry.url)) {
+      // 埋め込めない動画候補でも、クリック前のOGP取得は行わない。
+      nodes.push({ type: "link", url: entry.url, text: shortenUrl(entry.url) });
     } else if (!state.linkPreviewUsed) {
       state.linkPreviewUsed = true;
       nodes.push({ type: "linkPreview", url: entry.url, text: shortenUrl(entry.url) });
@@ -310,7 +316,12 @@ export function parseContent(content: string, tags?: string[][]): ContentNode[] 
     }
 
     // 画像ノードを追加
-    nodes.push({ type: "image", url: matchedUrl });
+    // query中の画像拡張子より動画のpathnameを優先する。
+    nodes.push(isVideoUrl(matchedUrl)
+      ? { type: "video", url: matchedUrl }
+      : hasVideoPath(matchedUrl)
+        ? { type: "link", url: matchedUrl, text: shortenUrl(matchedUrl) }
+        : { type: "image", url: matchedUrl });
 
     lastIndex = matchIndex + matchedUrl.length;
   }
