@@ -261,7 +261,12 @@ function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, 
     card: note,
     content: (
       note.type === "yo" ? (
-        <YoCard card={note} profile={profiles.get(note.pubkey)} onOpenProfile={setProfileModalPubkey} />
+        <YoCard
+          card={note}
+          profile={profiles.get(note.pubkey)}
+          onOpenProfile={setProfileModalPubkey}
+          onSendYo={note.pubkey === pubkey ? undefined : sendYo}
+        />
       ) : note.type === "compose" ? (
         <ComposeCard
           slotId={note.slotId}

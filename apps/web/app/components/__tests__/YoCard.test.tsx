@@ -59,4 +59,30 @@ describe("YoCard", () => {
     expect(screen.getByText("Yo")).toBeTruthy();
     expect(container.querySelector("img")).toBeNull();
   });
+
+  it("送信中の連打を防ぎ、成功後はそのカードから再送しない", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const send = vi.fn(() => promise);
+    render(<YoCard card={card} profile={{ name: "相手" }} onOpenProfile={vi.fn()} onSendYo={send} />);
+    const button = screen.getByRole("button", { name: "相手にYoを返す" }) as HTMLButtonElement;
+    fireEvent.click(button);
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    resolve();
+    const sent = await screen.findByRole<HTMLButtonElement>("button", { name: "送信済み" });
+    expect(sent.disabled).toBe(true);
+    fireEvent.click(sent);
+    expect(send).toHaveBeenCalledExactlyOnceWith(card.pubkey);
+  });
+
+  it("送信に失敗したらカードに表示し、同じボタンからやり直せる", async () => {
+    const send = vi.fn().mockRejectedValueOnce(new Error("relay unavailable")).mockResolvedValueOnce(undefined);
+    render(<YoCard card={card} profile={{ name: "相手" }} onOpenProfile={vi.fn()} onSendYo={send} />);
+    fireEvent.click(screen.getByRole("button", { name: "相手にYoを返す" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("送信できませんでした");
+    fireEvent.click(screen.getByRole("button", { name: "相手にYoを返す" }));
+    expect(await screen.findByRole("button", { name: "送信済み" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(send.mock.calls).toEqual([[card.pubkey], [card.pubkey]]);
+  });
 });

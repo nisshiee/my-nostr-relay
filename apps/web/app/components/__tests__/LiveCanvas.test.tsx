@@ -74,15 +74,20 @@ function makeProps(): ComponentProps<typeof LiveCanvas> {
 }
 
 describe("LiveCanvas のカード統合", () => {
-  it("Yoを通常投稿とは別のスロットで描画し、送信者のプロフィールを開ける", () => {
+  it("Yoを通常投稿とは別のスロットで描画し、送信者へ直接返せる", async () => {
     const props = makeProps();
     const sender = "a".repeat(64);
     const note = makeNote();
-    const { container } = render(<LiveCanvas {...props} notes={[note]}
+    const sendYo = vi.fn().mockResolvedValue(undefined);
+    const { container } = render(<LiveCanvas {...props} notes={[note]} sendYo={sendYo}
       profiles={new Map([[sender, { name: "Yo送信者" }]])}
       yoCards={[{ type: "yo", slotId: "yo:unique", eventId: "unique", pubkey: sender, score: 0, created_at: note.created_at }]} />);
     expect(container.querySelectorAll("[data-slot]")).toHaveLength(2);
     expect(container.querySelector('[data-slot="yo:unique"]')?.textContent).toContain("Yo");
+    fireEvent.click(screen.getByRole("button", { name: "Yo送信者にYoを返す" }));
+    expect(sendYo).toHaveBeenCalledExactlyOnceWith(sender);
+    expect(screen.queryByTestId("profile-modal")).toBeNull();
+    expect(await screen.findByRole("button", { name: "送信済み" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Yo送信者のプロフィールを開く" }));
     expect(screen.getByTestId("profile-modal").textContent).toBe(sender);
   });

@@ -11,7 +11,7 @@ import { useYo } from "../useYo";
 vi.mock("../../lib/nostrSigner", () => ({ signEventWithActiveSigner: vi.fn() }));
 const me = generateSecretKey(), other = generateSecretKey();
 const pubkey = getPublicKey(me), otherPubkey = getPublicKey(other);
-const now = Math.floor(Date.now() / 1000);
+const now = 1_795_823_950;
 const profile = (key: Uint8Array, created_at: number) => finalizeEvent({ kind: 0, content: "{}", tags: [], created_at }, key);
 const relays = ["wss://relay.example"];
 const signer = vi.mocked(signEventWithActiveSigner);
@@ -30,8 +30,16 @@ function fixture() {
     { initialProps: { account: pubkey } });
   return { ...hook, callbacks, close, subscribeMany, querySync, fetchProfiles, publishEvent };
 }
-beforeEach(() => { signer.mockReset(); signer.mockImplementation(async event => finalizeEvent(event, me)); });
-afterEach(cleanup);
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(now * 1000);
+  signer.mockReset();
+  signer.mockImplementation(async event => finalizeEvent(event, me));
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("Yoの購読と送信", () => {
   it("タグのない互換Yoを受け付け、リレーの重複は1枚、署名不正・別宛先・通常リアクションは表示しない", () => {
