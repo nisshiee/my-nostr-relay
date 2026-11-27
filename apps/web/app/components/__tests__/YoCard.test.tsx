@@ -29,11 +29,34 @@ describe("YoCard", () => {
     expect(onOpenProfile).toHaveBeenCalledExactlyOnceWith(card.pubkey);
   });
 
-  it("プロフィール未取得でも短縮pubkeyを表示し、Yoを外部画像に依存させない", () => {
+  it("画像URLがなければ固定Yoを表示し、プロフィール未取得でも短縮pubkeyを表示する", () => {
     const { container } = render(<YoCard card={card} onOpenProfile={vi.fn()} />);
 
     expect(screen.getByText("Yo")).toBeTruthy();
     expect(screen.getByRole("button", { name: "12345678…abcdのプロフィールを開く" })).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("読み込めた絵文字を固定Yoの代わりに表示する", () => {
+    const { container } = render(<YoCard card={{ ...card, emojiUrl: "https://example.test/yo.png" }} onOpenProfile={vi.fn()} />);
+    const image = container.querySelector("img")!;
+    expect(image.getAttribute("crossorigin")).toBe("anonymous");
+    expect(image.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(screen.getByText("Yo")).toBeTruthy();
+    fireEvent.load(image);
+    expect(screen.queryByText("Yo")).toBeNull();
+    expect(screen.getByRole("img", { name: "Yo" })).toBe(image);
+  });
+
+  it("読み込み失敗や利用できないURLなら固定Yoを表示する", () => {
+    const onOpenProfile = vi.fn();
+    const { container, rerender } = render(<YoCard card={{ ...card, emojiUrl: "https://example.test/missing.png" }} onOpenProfile={onOpenProfile} />);
+    fireEvent.error(container.querySelector("img")!);
+    expect(screen.getByText("Yo")).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.queryByRole("img")).toBeNull();
+    rerender(<YoCard card={{ ...card, emojiUrl: "https://localhost/yo.png" }} onOpenProfile={onOpenProfile} />);
+    expect(screen.getByText("Yo")).toBeTruthy();
     expect(container.querySelector("img")).toBeNull();
   });
 });

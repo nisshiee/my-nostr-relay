@@ -70,6 +70,7 @@ export interface ThreadCard extends CardBase {
 export interface YoCard extends CardBase {
   type: "yo";
   eventId: string;
+  emojiUrl?: string;
 }
 
 export type Card = NoteCard | ComposeCard | ThreadCard | YoCard;

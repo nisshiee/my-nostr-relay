@@ -1,7 +1,9 @@
 "use client";
 
+import { useState } from "react";
+import { validateCanvasImageSource } from "../lib/canvasImagePolicy";
 import type { NostrProfile, YoCard as YoCardType } from "../lib/types";
-import Image from "./CanvasAwareImage";
+import Image, { MediaImage } from "./CanvasAwareImage";
 import { relativeTime, resolveProfileDisplayName } from "./NoteCardContent";
 
 interface YoCardProps {
@@ -10,14 +12,34 @@ interface YoCardProps {
   onOpenProfile: (pubkey: string) => void;
 }
 
+function YoEmoji({ url }: { url?: string }) {
+  const [status, setStatus] = useState<"pending" | "loaded" | "failed">("pending");
+  const source = url && /^https:\/\//i.test(url) ? validateCanvasImageSource(url) : undefined;
+
+  return (
+    <div className="relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-purple-100 text-sm font-bold text-purple-800 dark:bg-purple-900/60 dark:text-purple-200">
+      {status !== "loaded" && <span>Yo</span>}
+      {source?.allowed && status !== "failed" && (
+        <MediaImage
+          src={source.url}
+          alt="Yo"
+          width={40}
+          height={40}
+          className={`absolute inset-0 h-full w-full object-contain${status === "loaded" ? "" : " invisible"}`}
+          onLoad={() => setStatus("loaded")}
+          onError={() => setStatus("failed")}
+        />
+      )}
+    </div>
+  );
+}
+
 export function YoCard({ card, profile, onOpenProfile }: YoCardProps) {
   const displayName = resolveProfileDisplayName(card.pubkey, profile);
 
   return (
     <div className="flex items-center gap-3 rounded-xl border border-purple-200 bg-white p-4 dark:border-purple-800 dark:bg-gray-800">
-      <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-purple-100 text-sm font-bold text-purple-800 dark:bg-purple-900/60 dark:text-purple-200">
-        Yo
-      </div>
+      <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
       <div className="min-w-0 flex-1">
         <button
           type="button"

@@ -42,6 +42,7 @@ export function useYo({ pubkey, pool, relayUrls, fetchProfiles, publishEvent }: 
         const card: YoCard = {
           type: "yo", slotId: "yo:" + event.id, eventId: event.id, pubkey: event.pubkey,
           created_at: event.created_at, score: 0,
+          emojiUrl: event.tags.find(tag => tag[0] === "emoji" && tag[1] === "yo")?.[2],
         };
         setReceived(previous => {
           const cards = previous?.session === session ? previous.cards : EMPTY;

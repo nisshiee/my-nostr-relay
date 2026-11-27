@@ -45,7 +45,7 @@ describe("Yoの購読と送信", () => {
     const invalidUrl = finalizeEvent({ ...template, tags: template.tags.map(t => t[0] === "emoji" ? ["emoji", "yo", "http://example.test/x"] : t) }, other);
     expect(f.subscribeMany).toHaveBeenCalledWith(relays, { kinds: [7], "#p": [pubkey], "#k": ["0"], limit: 30 }, expect.anything());
     act(() => { for (const event of [legacy, legacy, modified, normal, notForMe, future, invalidUrl]) f.callbacks[0](event); });
-    expect(f.result.current.yoCards).toEqual([expect.objectContaining({ type: "yo", eventId: legacy.id, pubkey: otherPubkey })]);
+    expect(f.result.current.yoCards).toEqual([expect.objectContaining({ type: "yo", eventId: legacy.id, pubkey: otherPubkey, emojiUrl: template.tags.find(tag => tag[0] === "emoji")?.[2] })]);
     expect(f.fetchProfiles).toHaveBeenCalledTimes(1);
     f.rerender({ account: otherPubkey });
     act(() => f.callbacks[0](legacy));
