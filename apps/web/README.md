@@ -12,11 +12,15 @@ Nostrのノート・リポスト・リアクションをライブ表示するNex
 
 ## 開発・検証
 
-Node.js 26 LTS（26.x）を使用する。
+ローカルとFrontend CIで使うNode.js・npmはリポジトリ直下の [mise.toml](../../mise.toml) で固定する。Vercelでは引き続き `package.json` の `engines.node` でNode.jsのメジャーを指定する。
+
+[mise](https://mise.jdx.dev/installing-mise.html) を導入したら、以下を `apps/web` から実行する。`mise trust` はリポジトリの設定内容を確認してから実行する。
 
 ```sh
-npm ci
-npm run dev
+mise trust
+mise install
+mise exec -- npm ci
+mise exec -- npm run dev
 ```
 
 通常の `npm run dev` はアカウントのリレーと公開bootstrapリレーへ接続する。使い捨て鍵による検証は下記の隔離手順を使い、実アカウントでテスト投稿しない。
@@ -24,10 +28,10 @@ npm run dev
 変更後は次のコマンドで確認する。
 
 ```sh
-npm run lint
-npm test
-npx tsc --noEmit --incremental false
-npm run build
+mise exec -- npm run lint
+mise exec -- npm test
+mise exec -- npm exec -- tsc --noEmit --incremental false
+mise exec -- npm run build
 ```
 
 Frontend CIはlint・テスト・buildを実行する。過去のテスト数や警告の記録だけで、現在の変更が検証済みとは扱わない。
