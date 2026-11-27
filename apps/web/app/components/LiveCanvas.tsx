@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { CanvasScene } from "./canvas/CanvasScene";
-import type { Card, CardScoreSource, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions } from "../lib/types";
+import type { Card, CardScoreSource, NoteCard as NoteCardType, ThreadCard as ThreadCardType, NostrProfile, Reactions, YoCard as YoCardType } from "../lib/types";
 import {
   SCORE_UPDATE_INTERVAL,
 } from "../lib/constants";
@@ -21,6 +21,7 @@ import type { Event } from "nostr-tools/core";
 import type { EventCache } from "../hooks/useEventCache";
 import type { CustomEmoji, EmojiSet } from "../hooks/useCustomEmojis";
 import type { RecentEmoji } from "../hooks/useRecentEmojis";
+import { YoCard } from "./YoCard";
 import { UserProfileModal } from "./UserProfileModal";
 import { HashtagModal } from "./HashtagModal";
 
@@ -33,6 +34,8 @@ interface LiveCanvasProps {
   settingsContent?: React.ReactNode;
   notes: NoteCardType[];
   threadCards: ThreadCardType[];
+  yoCards?: YoCardType[];
+  sendYo?: (targetPubkey: string) => Promise<void>;
   profiles: Map<string, NostrProfile>;
   /** リアクション集計: eventId → (絵文字 → 件数) */
   reactions: Reactions;
@@ -67,7 +70,9 @@ export function LiveCanvas(props: LiveCanvasProps) {
   return <LiveCanvasSession key={props.pubkey} {...props} />;
 }
 
-function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, nativeUnavailableReason, settingsContent, notes, threadCards, profiles, reactions, watchReactions, status, pubkey, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
+const NO_YOS: YoCardType[] = [];
+
+function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, nativeUnavailableReason, settingsContent, notes, threadCards, yoCards = NO_YOS, sendYo, profiles, reactions, watchReactions, status, pubkey, publishEvent, publishedSlotMapRef, sendReaction, sendRepost, cache, onLogout, showSignerControl, onManageSigner, isProcessing, recentEmojis, emojiSets, looseEmojis, fetchProfiles, fetchUserRecentNotes, fetchHashtagNotes, isFollowing, follow, unfollow }: LiveCanvasProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsTrigger = useRef<HTMLButtonElement>(null);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
@@ -231,8 +236,8 @@ function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, 
       ...updatedNotes.map(card => ({ card, sourceIds: [card.eventId] })),
       ...mergedThreads.map(card => ({ card, sourceIds: card.eventIds })),
     ], retainedSources);
-    return scoreCards([...draftNotes, ...sourcedCards], pubkey, nowEpoch);
-  }, [notes, publishedNotes, draftNotes, threadCards, pendingNoteReplies, pendingThreadReplies, nowEpoch, pubkey]);
+    return scoreCards([...draftNotes, ...sourcedCards, ...yoCards], pubkey, nowEpoch);
+  }, [notes, publishedNotes, draftNotes, threadCards, yoCards, pendingNoteReplies, pendingThreadReplies, nowEpoch, pubkey]);
 
   // サイズ測定と座標は描画シーンが所有する。既存カードの通知は使用しない。
   const handleHeightChange = useCallback(() => {}, []);
@@ -255,7 +260,9 @@ function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, 
     id: note.slotId,
     card: note,
     content: (
-      note.type === "compose" ? (
+      note.type === "yo" ? (
+        <YoCard card={note} profile={profiles.get(note.pubkey)} onOpenProfile={setProfileModalPubkey} />
+      ) : note.type === "compose" ? (
         <ComposeCard
           slotId={note.slotId}
           pubkey={note.pubkey}
@@ -391,6 +398,7 @@ function LiveCanvasSession({ diagnosticsEnabled = false, nativeEnabled = false, 
         <UserProfileModal
           key={profileModalPubkey}
           pubkey={profileModalPubkey}
+          onSendYo={sendYo}
           reactions={reactions}
           watchReactions={watchReactions}
           sendReaction={sendReaction}

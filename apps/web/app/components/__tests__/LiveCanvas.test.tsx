@@ -74,6 +74,19 @@ function makeProps(): ComponentProps<typeof LiveCanvas> {
 }
 
 describe("LiveCanvas のカード統合", () => {
+  it("Yoを通常投稿とは別のスロットで描画し、送信者のプロフィールを開ける", () => {
+    const props = makeProps();
+    const sender = "a".repeat(64);
+    const note = makeNote();
+    const { container } = render(<LiveCanvas {...props} notes={[note]}
+      profiles={new Map([[sender, { name: "Yo送信者" }]])}
+      yoCards={[{ type: "yo", slotId: "yo:unique", eventId: "unique", pubkey: sender, score: 0, created_at: note.created_at }]} />);
+    expect(container.querySelectorAll("[data-slot]")).toHaveLength(2);
+    expect(container.querySelector('[data-slot="yo:unique"]')?.textContent).toContain("Yo");
+    fireEvent.click(screen.getByRole("button", { name: "Yo送信者のプロフィールを開く" }));
+    expect(screen.getByTestId("profile-modal").textContent).toBe(sender);
+  });
+
   it("自分のプロフィールを取得し、ヘッダーから同じ投稿一覧モーダルを開く", () => {
     const props = makeProps();
     render(<LiveCanvas {...props} />);

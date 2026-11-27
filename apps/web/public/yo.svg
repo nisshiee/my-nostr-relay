@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="Yo!">
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="#5b21b6"/>
+  <text x="64" y="81" text-anchor="middle" font-family="system-ui,sans-serif" font-size="51" font-weight="800" fill="white">Yo!</text>
+</svg>

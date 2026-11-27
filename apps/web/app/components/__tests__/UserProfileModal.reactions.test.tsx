@@ -35,7 +35,7 @@ describe("プロフィール内のリアクション", () => {
     p.sendReaction = vi.fn(() => new Promise<void>((_resolve, r) => { reject = r; }));
     render(<UserProfileModal {...p} />);
     const badge = await screen.findByRole("button", { name: "👍 2件" });
-    expect(p.watchReactions).toHaveBeenCalledWith([note.id], expect.any(Function));
+    await waitFor(() => expect(p.watchReactions).toHaveBeenCalledWith([note.id], expect.any(Function)));
     fireEvent.click(badge); fireEvent.click(badge);
     expect(p.sendReaction).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("button", { name: "リアクションを追加" }).hasAttribute("disabled")).toBe(true);
@@ -125,5 +125,63 @@ describe("プロフィール内のリアクション", () => {
     act(() => vi.advanceTimersByTime(550));
     fireEvent.scroll(screen.getByText("Recent notes").parentElement!.parentElement!);
     expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
+describe("プロフィールからのYo送信", () => {
+  it("送信が利用できなければ表示せず、自分宛ては無効にする", async () => {
+    const p = props();
+    const view = render(<UserProfileModal {...p} />);
+    await screen.findByText("古い投稿");
+    expect(screen.queryByRole("button", { name: "Yoを送る" })).toBeNull();
+
+    const onSendYo = vi.fn(async () => {});
+    view.rerender(<UserProfileModal {...p} pubkey={me} onSendYo={onSendYo} />);
+    const button = screen.getByRole("button", { name: "Yoを送る" });
+    expect(button.hasAttribute("disabled")).toBe(true);
+    fireEvent.click(button);
+    expect(onSendYo).not.toHaveBeenCalled();
+    await act(async () => {});
+  });
+
+  it("対象ユーザーに一度だけ送り、送信中と成功を表示する", async () => {
+    let resolve!: () => void;
+    const onSendYo = vi.fn(() => new Promise<void>(r => { resolve = r; }));
+    const p = props();
+    render(<UserProfileModal {...p} onSendYo={onSendYo} />);
+    const button = screen.getByRole("button", { name: "Yoを送る" });
+
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(onSendYo).toHaveBeenCalledExactlyOnceWith(author);
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("status").textContent).toBe("Yoを送信中…");
+    expect(screen.getByRole("button", { name: "Follow" }).hasAttribute("disabled")).toBe(false);
+
+    await act(async () => resolve());
+    expect(screen.getByRole("status").textContent).toBe("Yoを送りました。");
+    expect(button.hasAttribute("disabled")).toBe(false);
+    expect(p.onClose).not.toHaveBeenCalled();
+  });
+
+  it("送信失敗を別ユーザーに表示せず、元のユーザーに再試行できる", async () => {
+    let reject!: (error: Error) => void;
+    const onSendYo = vi.fn(async () => {}).mockImplementationOnce(
+      () => new Promise<void>((_resolve, r) => { reject = r; }),
+    );
+    const p = props();
+    const view = render(<UserProfileModal {...p} onSendYo={onSendYo} />);
+    fireEvent.click(screen.getByRole("button", { name: "Yoを送る" }));
+    view.rerender(<UserProfileModal {...p} pubkey={"e".repeat(64)} onSendYo={onSendYo} />);
+
+    await act(async () => reject(new Error("Relay error")));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+
+    view.rerender(<UserProfileModal {...p} onSendYo={onSendYo} />);
+    expect(screen.getByRole("alert").textContent).toBe("Yoを送信できませんでした。");
+    fireEvent.click(screen.getByRole("button", { name: "Yoを送る" }));
+    expect(await screen.findByText("Yoを送りました。")).toBeTruthy();
+    expect(onSendYo).toHaveBeenCalledTimes(2);
   });
 });
