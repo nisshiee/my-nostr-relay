@@ -5,11 +5,16 @@ on:
     branches: [main]
     paths:
       - 'apps/web/**'
+      - 'mise.toml'
       - '.github/workflows/ci-frontend.yml'
   pull_request:
     paths:
       - 'apps/web/**'
+      - 'mise.toml'
       - '.github/workflows/ci-frontend.yml'
+
+permissions:
+  contents: read
 
 jobs:
   frontend-ci:
@@ -19,16 +24,26 @@ jobs:
         working-directory: apps/web
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: jdx/mise-action@924e7c586e33d7d4bae9c14e26c5d22e2beb6e78 # v5
         with:
-          node-version: '26'
-          cache: 'npm'
-          cache-dependency-path: apps/web/package-lock.json
+          version: '2026.11.14'
+          log_level: info
+      - name: Webの実行バージョンを確認
+        id: web-toolchain
+        run: |
+          mise exec -- node --version
+          mise exec -- npm --version
+          mise exec -- node -e 'const { engines } = require("./package.json"); const major = process.versions.node.split(".")[0]; if (engines.node !== major + ".x") { console.error("Vercel用の engines.node とCIのNode.jsのメジャーが一致しません。"); process.exit(1); }'
+          echo "npm-cache=$(mise exec -- npm config get cache)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.web-toolchain.outputs.npm-cache }}
+          key: ${{ runner.os }}-${{ runner.arch }}-npm-${{ hashFiles('apps/web/package-lock.json') }}
       - name: 依存関係インストール
-        run: npm ci
+        run: mise exec -- npm ci
       - name: Lint
-        run: npm run lint
+        run: mise exec -- npm run lint
       - name: テスト
-        run: npm test
+        run: mise exec -- npm test
       - name: ビルド
-        run: npm run build
+        run: mise exec -- npm run build
