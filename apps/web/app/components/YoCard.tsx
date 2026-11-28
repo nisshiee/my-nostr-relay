@@ -58,12 +58,12 @@ function YoReply({ sender, name, send }: {
   }
 
   return (
-    <div className="mt-2 flex items-center justify-end gap-2">
+    <div className="flex shrink-0 flex-col items-end gap-0.5 self-end">
       <span role="status" className="sr-only">
         {status === "pending" ? "Yoを送信中" : status === "sent" ? "Yoを送りました" : ""}
       </span>
       {status === "failed" && (
-        <span role="alert" className="min-w-0 text-xs text-red-700 dark:text-red-300">
+        <span role="alert" className="whitespace-nowrap text-xs leading-3 text-red-700 dark:text-red-300">
           送信できませんでした
         </span>
       )}
@@ -72,7 +72,7 @@ function YoReply({ sender, name, send }: {
         onClick={reply}
         disabled={status === "pending" || status === "sent"}
         aria-label={status === "idle" || status === "failed" ? `${name}にYoを返す` : undefined}
-        className="shrink-0 cursor-pointer rounded-full border border-purple-200 px-3 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-purple-500 disabled:cursor-default disabled:opacity-70 dark:border-purple-700 dark:text-purple-200 dark:hover:bg-purple-900/60"
+        className="shrink-0 cursor-pointer rounded-full border border-purple-200 px-3 py-1 text-xs leading-3 font-semibold whitespace-nowrap text-purple-800 hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-purple-500 disabled:cursor-default disabled:opacity-70 dark:border-purple-700 dark:text-purple-200 dark:hover:bg-purple-900/60"
       >
         {status === "pending" ? "送信中…" : status === "sent" ? "送信済み" : "Yoを返す"}
       </button>
@@ -84,35 +84,33 @@ export function YoCard({ card, profile, onOpenProfile, onSendYo }: YoCardProps) 
   const displayName = resolveProfileDisplayName(card.pubkey, profile);
 
   return (
-    <div className="rounded-xl border border-purple-200 bg-white p-4 dark:border-purple-800 dark:bg-gray-800">
-      <div className="flex items-center gap-3">
-        <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
-        <div className="min-w-0 flex-1">
-          <button
-            type="button"
-            onClick={() => onOpenProfile(card.pubkey)}
-            aria-label={`${displayName}のプロフィールを開く`}
-            className="flex max-w-full items-center gap-1.5 rounded-sm text-left text-sm font-semibold text-gray-900 hover:text-purple-700 focus-visible:outline-2 focus-visible:outline-purple-500 dark:text-gray-100 dark:hover:text-purple-300"
-          >
-            {profile?.picture && (
-              <Image
-                src={profile.picture}
-                alt=""
-                width={20}
-                height={20}
-                className="h-5 w-5 shrink-0 rounded-full object-cover"
-                unoptimized
-              />
-            )}
-            <span className="truncate">{displayName}</span>
-          </button>
-          <time
-            dateTime={new Date(card.created_at * 1000).toISOString()}
-            className="block text-xs text-gray-500 dark:text-gray-400"
-          >
-            {relativeTime(card.created_at)}
-          </time>
-        </div>
+    <div className="flex items-center gap-3 rounded-xl border border-purple-200 bg-white p-4 dark:border-purple-800 dark:bg-gray-800">
+      <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
+      <div className="min-w-0 flex-1">
+        <button
+          type="button"
+          onClick={() => onOpenProfile(card.pubkey)}
+          aria-label={`${displayName}のプロフィールを開く`}
+          className="flex max-w-full items-center gap-1.5 rounded-sm text-left text-sm font-semibold text-gray-900 hover:text-purple-700 focus-visible:outline-2 focus-visible:outline-purple-500 dark:text-gray-100 dark:hover:text-purple-300"
+        >
+          {profile?.picture && (
+            <Image
+              src={profile.picture}
+              alt=""
+              width={20}
+              height={20}
+              className="h-5 w-5 shrink-0 rounded-full object-cover"
+              unoptimized
+            />
+          )}
+          <span className="truncate">{displayName}</span>
+        </button>
+        <time
+          dateTime={new Date(card.created_at * 1000).toISOString()}
+          className="block text-xs text-gray-500 dark:text-gray-400"
+        >
+          {relativeTime(card.created_at)}
+        </time>
       </div>
       {onSendYo && <YoReply key={card.eventId} sender={card.pubkey} name={displayName} send={onSendYo} />}
     </div>
