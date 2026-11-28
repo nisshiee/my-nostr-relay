@@ -72,7 +72,7 @@ function YoReply({ sender, name, send }: {
         onClick={reply}
         disabled={status === "pending" || status === "sent"}
         aria-label={status === "idle" || status === "failed" ? `${name}にYoを返す` : undefined}
-        className="shrink-0 cursor-pointer rounded-full border border-purple-200 px-3 py-1 text-xs leading-3 font-semibold whitespace-nowrap text-purple-800 hover:bg-purple-50 focus-visible:outline-2 focus-visible:outline-purple-500 disabled:cursor-default disabled:opacity-70 dark:border-purple-700 dark:text-purple-200 dark:hover:bg-purple-900/60"
+        className="shrink-0 cursor-pointer rounded-full border border-purple-200 px-3 py-1 text-xs leading-3 font-semibold whitespace-nowrap text-purple-800 hover:bg-purple-100 focus-visible:outline-2 focus-visible:outline-purple-500 disabled:cursor-default disabled:opacity-70 dark:border-purple-700 dark:text-purple-200 dark:hover:bg-purple-900/60"
       >
         {status === "pending" ? "送信中…" : status === "sent" ? "送信済み" : "Yoを返す"}
       </button>
@@ -84,7 +84,7 @@ export function YoCard({ card, profile, onOpenProfile, onSendYo }: YoCardProps) 
   const displayName = resolveProfileDisplayName(card.pubkey, profile);
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-purple-200 bg-white p-4 dark:border-purple-800 dark:bg-gray-800">
+    <div className="flex items-center gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-800 dark:bg-[#282039]">
       <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
       <div className="min-w-0 flex-1">
         <button
