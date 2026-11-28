@@ -81,15 +81,32 @@ describe("LiveCanvas のカード統合", () => {
     const sendYo = vi.fn().mockResolvedValue(undefined);
     const { container } = render(<LiveCanvas {...props} notes={[note]} sendYo={sendYo}
       profiles={new Map([[sender, { name: "Yo送信者" }]])}
-      yoCards={[{ type: "yo", slotId: "yo:unique", eventId: "unique", pubkey: sender, score: 0, created_at: note.created_at }]} />);
+      yoCards={[{ type: "yo", direction: "incoming", slotId: "yo:unique", eventId: "unique", pubkey: sender, score: 0, created_at: note.created_at }]} />);
     expect(container.querySelectorAll("[data-slot]")).toHaveLength(2);
     expect(container.querySelector('[data-slot="yo:unique"]')?.textContent).toContain("Yo");
+    expect(screen.queryByRole("img", { name: "送信済み" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Yo送信者にYoを返す" }));
     expect(sendYo).toHaveBeenCalledExactlyOnceWith(sender);
     expect(screen.queryByTestId("profile-modal")).toBeNull();
     expect(await screen.findByRole("button", { name: "送信済み" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Yo送信者のプロフィールを開く" }));
     expect(screen.getByTestId("profile-modal").textContent).toBe(sender);
+  });
+
+  it("送信Yoは宛先を描画して宛先のプロフィールを開き、返信ボタンを出さない", () => {
+    const props = makeProps();
+    const recipient = "a".repeat(64);
+    const sendYo = vi.fn();
+    render(<LiveCanvas {...props} sendYo={sendYo}
+      profiles={new Map([["me", { name: "自分" }], [recipient, { name: "Yoの相手" }]])}
+      yoCards={[{ type: "yo", direction: "outgoing", recipientPubkey: recipient, slotId: "yo:sent",
+        eventId: "sent", pubkey: "me", score: 0, created_at: makeNote().created_at }]} />);
+    expect(screen.getByRole("img", { name: "送信済み" })).toBeTruthy();
+    expect(screen.queryByText("送信")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Yoを返す/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "送信先：Yoの相手のプロフィールを開く" }));
+    expect(screen.getByTestId("profile-modal").textContent).toBe(recipient);
+    expect(sendYo).not.toHaveBeenCalled();
   });
 
   it("自分のプロフィールを取得し、ヘッダーから同じ投稿一覧モーダルを開く", () => {

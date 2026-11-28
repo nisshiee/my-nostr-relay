@@ -7,6 +7,7 @@ import { YoCard } from "../YoCard";
 
 const card: YoCardType = {
   type: "yo",
+  direction: "incoming",
   eventId: "b".repeat(64),
   pubkey: "12345678" + "0".repeat(52) + "abcd",
   slotId: "yo-slot",

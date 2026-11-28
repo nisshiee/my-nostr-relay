@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowUpRight } from "lucide-react";
 import { useRef, useState } from "react";
 import { validateCanvasImageSource } from "../lib/canvasImagePolicy";
 import type { NostrProfile, YoCard as YoCardType } from "../lib/types";
@@ -81,16 +82,29 @@ function YoReply({ sender, name, send }: {
 }
 
 export function YoCard({ card, profile, onOpenProfile, onSendYo }: YoCardProps) {
-  const displayName = resolveProfileDisplayName(card.pubkey, profile);
+  const outgoing = card.direction === "outgoing";
+  const participant = outgoing ? card.recipientPubkey : card.pubkey;
+  const displayName = resolveProfileDisplayName(participant, profile);
 
   return (
     <div className="flex items-center gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-800 dark:bg-[#282039]">
-      <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
+      <div className="relative shrink-0">
+        <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
+        {outgoing && (
+          <span
+            role="img"
+            aria-label="送信済み"
+            className="pointer-events-none absolute -right-1.5 -bottom-0.5 grid size-5 place-items-center rounded-full border-2 border-purple-50 bg-purple-100 text-purple-800 dark:border-[#282039] dark:bg-purple-900 dark:text-purple-200"
+          >
+            <ArrowUpRight aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
+          </span>
+        )}
+      </div>
       <div className="min-w-0 flex-1">
         <button
           type="button"
-          onClick={() => onOpenProfile(card.pubkey)}
-          aria-label={`${displayName}のプロフィールを開く`}
+          onClick={() => onOpenProfile(participant)}
+          aria-label={`${outgoing ? "送信先：" : ""}${displayName}のプロフィールを開く`}
           className="flex max-w-full items-center gap-1.5 rounded-sm text-left text-sm font-semibold text-gray-900 hover:text-purple-700 focus-visible:outline-2 focus-visible:outline-purple-500 dark:text-gray-100 dark:hover:text-purple-300"
         >
           {profile?.picture && (
@@ -112,7 +126,7 @@ export function YoCard({ card, profile, onOpenProfile, onSendYo }: YoCardProps) 
           {relativeTime(card.created_at)}
         </time>
       </div>
-      {onSendYo && <YoReply key={card.eventId} sender={card.pubkey} name={displayName} send={onSendYo} />}
+      {!outgoing && onSendYo && <YoReply key={card.eventId} sender={card.pubkey} name={displayName} send={onSendYo} />}
     </div>
   );
 }

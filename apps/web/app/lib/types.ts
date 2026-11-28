@@ -67,11 +67,14 @@ export interface ThreadCard extends CardBase {
 }
 
 /** キャンバス上に配置されるカード（Discriminated Union） */
-export interface YoCard extends CardBase {
+export type YoCard = CardBase & {
   type: "yo";
   eventId: string;
   emojiUrl?: string;
-}
+} & (
+  | { direction: "incoming" }
+  | { direction: "outgoing"; recipientPubkey: string }
+);
 
 export type Card = NoteCard | ComposeCard | ThreadCard | YoCard;
 
