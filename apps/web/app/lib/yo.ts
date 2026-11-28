@@ -42,6 +42,14 @@ export function isIncomingYo(event: Event, recipient: string, now = Math.floor(D
   return isVerifiedYoEvent(event);
 }
 
+/** 自分が署名した有効なYoから送信先を取り出す。 */
+export function getOutgoingYoRecipient(event: Event, sender: string): string | undefined {
+  if (event?.pubkey !== sender || !Array.isArray(event.tags)) return;
+  const recipient = event.tags.find(tag => Array.isArray(tag) && tag[0] === "p")?.[1];
+  if (typeof recipient !== "string" || !isYoPubkey(recipient) || recipient === sender) return;
+  return isIncomingYo(event, recipient) ? recipient : undefined;
+}
+
 export function newestYoProfile(events: Event[], target: string): Event | undefined {
   return events.filter(event => event.kind === 0 && event.pubkey === target && isVerifiedYoEvent(event))
     .sort((a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id))[0];

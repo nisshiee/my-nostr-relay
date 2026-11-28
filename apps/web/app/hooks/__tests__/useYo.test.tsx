@@ -57,7 +57,7 @@ describe("Yoの購読と送信", () => {
     expect(f.fetchProfiles).toHaveBeenCalledTimes(1);
     f.rerender({ account: otherPubkey });
     act(() => f.callbacks[0](legacy));
-    expect(f.close).toHaveBeenCalledOnce();
+    expect(f.close).toHaveBeenCalledTimes(2);
     expect(f.result.current.yoCards).toEqual([]);
   });
 
@@ -68,12 +68,77 @@ describe("Yoの購読と送信", () => {
     f.querySync.mockResolvedValue([profile(other, now - 60), forged, latest]);
     const first = f.result.current.sendYo(otherPubkey);
     expect(f.result.current.sendYo(otherPubkey)).toBe(first);
-    await first;
+    await act(async () => { await first; });
     expect(signer).toHaveBeenCalledOnce();
     expect(f.publishEvent).toHaveBeenCalledOnce();
     expect(f.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: 7, content: ":yo:", tags: expect.arrayContaining([
       ["e", latest.id, "", otherPubkey], ["p", otherPubkey], ["k", "0"], ["t", "yo"],
     ]) }));
+  });
+
+  it("送信済みYoをリレーから復元し、自分以外の署名や複数宛先、通常リアクションを除外する", () => {
+    const f = fixture();
+    const template = buildYo(profile(other, now), now - 5);
+    const sent = finalizeEvent(template, me);
+    expect(f.subscribeMany).toHaveBeenCalledWith(relays, { kinds: [7], authors: [pubkey], "#k": ["0"], limit: 30 }, expect.anything());
+    act(() => {
+      for (const event of [sent, sent, finalizeEvent({ ...template }, other),
+        { ...sent, id: "0".repeat(64) },
+        finalizeEvent({ ...template, tags: [...template.tags, ["p", pubkey]] }, me),
+        finalizeEvent({ ...template, content: "👍" }, me),
+        finalizeEvent(buildYo(profile(me, now), now), me)]) {
+        f.callbacks[1](event);
+      }
+    });
+    expect(f.result.current.yoCards).toEqual([expect.objectContaining({
+      direction: "outgoing", recipientPubkey: otherPubkey, pubkey, eventId: sent.id, created_at: now - 5,
+    })]);
+    expect(f.fetchProfiles).toHaveBeenCalledExactlyOnceWith([otherPubkey]);
+  });
+
+  it("リレーの受理後にだけ表示し、購読で同じイベントが来ても1枚にする", async () => {
+    const f = fixture();
+    f.querySync.mockResolvedValue([profile(other, now)]);
+    let acknowledge!: () => void;
+    f.publishEvent.mockImplementation(() => new Promise<void>(resolve => { acknowledge = resolve; }));
+    const sending = f.result.current.sendYo(otherPubkey);
+    await vi.waitFor(() => expect(f.publishEvent).toHaveBeenCalledOnce());
+    expect(f.result.current.yoCards).toEqual([]);
+    await act(async () => { acknowledge(); await sending; });
+    const sent = f.publishEvent.mock.calls[0][0] as Event;
+    act(() => f.callbacks[1](sent));
+    expect(f.result.current.yoCards).toEqual([expect.objectContaining({ direction: "outgoing", eventId: sent.id })]);
+    expect(f.fetchProfiles).toHaveBeenCalledExactlyOnceWith([otherPubkey]);
+  });
+
+  it("送信失敗ではカードを作らず、アカウント変更前の送信結果も混ぜない", async () => {
+    const f = fixture();
+    f.querySync.mockResolvedValue([profile(other, now)]);
+    f.publishEvent.mockRejectedValueOnce(new Error("リレーに拒否された"));
+    await expect(f.result.current.sendYo(otherPubkey)).rejects.toThrow("リレーに拒否された");
+    expect(f.result.current.yoCards).toEqual([]);
+    let acknowledge!: () => void;
+    f.publishEvent.mockImplementation(() => new Promise<void>(resolve => { acknowledge = resolve; }));
+    const sending = f.result.current.sendYo(otherPubkey);
+    await vi.waitFor(() => expect(f.publishEvent).toHaveBeenCalledTimes(2));
+    f.rerender({ account: otherPubkey });
+    await act(async () => { acknowledge(); await sending; });
+    expect(f.result.current.yoCards).toEqual([]);
+  });
+
+  it("送信Yoの件数上限で受信Yoが消えない", () => {
+    const f = fixture();
+    const incoming = finalizeEvent(buildYo(profile(me, now), now - 100), other);
+    const target = profile(other, now);
+    act(() => {
+      f.callbacks[0](incoming);
+      for (let offset = 0; offset <= 30; offset++) {
+        f.callbacks[1](finalizeEvent(buildYo(target, now - offset), me));
+      }
+    });
+    expect(f.result.current.yoCards).toHaveLength(31);
+    expect(f.result.current.yoCards.at(-1)?.eventId).toBe(incoming.id);
+    expect(f.result.current.yoCards.some(item => item.created_at === now - 30)).toBe(false);
   });
 
   it("署名器が宛先を書き換えたら、正しく署名されていても送らない", async () => {

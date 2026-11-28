@@ -5,11 +5,11 @@ import { signEventWithActiveSigner } from "../lib/nostrSigner";
 import type { YoCard } from "../lib/types";
 import type { NostrEvent } from "../types/nostr";
 import { BOOTSTRAP_EOSE_TIMEOUT } from "../lib/constants";
-import { buildYo, isExpectedSignedYo, isIncomingYo, isYoPubkey, newestYoProfile } from "../lib/yo";
+import { buildYo, getOutgoingYoRecipient, isExpectedSignedYo, isIncomingYo, isYoPubkey, newestYoProfile } from "../lib/yo";
 
 const MAX_CARDS = 30;
 const EMPTY: YoCard[] = [];
-type Session = { pubkey: string; pool: SimplePool; relayUrls: string[]; pending: Map<string, Promise<void>> };
+type Session = { pubkey: string; pool: SimplePool; relayUrls: string[]; pending: Map<string, Promise<void>>; profilesRequested: Set<string> };
 type Options = {
   pubkey: string | null;
   pool: SimplePool | null;
@@ -20,46 +20,68 @@ type Options = {
 
 export function useYo({ pubkey, pool, relayUrls, fetchProfiles, publishEvent }: Options) {
   const sessionRef = useRef<Session | null>(null);
-  const [received, setReceived] = useState<{ session: Session; cards: YoCard[] } | null>(null);
+  const [timeline, setTimeline] = useState<{ session: Session; cards: YoCard[] } | null>(null);
+
+  const addCard = useCallback((session: Session, event: Event, recipientPubkey?: string) => {
+    if (sessionRef.current !== session) return;
+    const base = {
+      type: "yo" as const, slotId: "yo:" + event.id, eventId: event.id, pubkey: event.pubkey,
+      created_at: event.created_at, score: 0,
+      emojiUrl: event.tags.find(tag => tag[0] === "emoji" && tag[1] === "yo")?.[2],
+    };
+    const card: YoCard = recipientPubkey
+      ? { ...base, direction: "outgoing", recipientPubkey }
+      : { ...base, direction: "incoming" };
+    const participant = recipientPubkey ?? event.pubkey;
+    const requested = session.profilesRequested;
+    if (!requested.has(participant)) {
+      if (requested.size >= MAX_CARDS * 8) requested.delete(requested.values().next().value!);
+      requested.add(participant);
+      fetchProfiles([participant]);
+    }
+    setTimeline(previous => {
+      const cards = previous?.session === session ? previous.cards : EMPTY;
+      if (cards.some(item => item.eventId === card.eventId)) return previous;
+      const sorted = [...cards, card].sort((a, b) => b.created_at - a.created_at || a.eventId.localeCompare(b.eventId));
+      const counts = { incoming: 0, outgoing: 0 };
+      return { session, cards: sorted.filter(item => ++counts[item.direction] <= MAX_CARDS) };
+    });
+  }, [fetchProfiles]);
+
   useEffect(() => {
     if (!pubkey || !pool || relayUrls.length === 0) return;
-    const session: Session = { pubkey, pool, relayUrls, pending: new Map() };
+    const session: Session = { pubkey, pool, relayUrls, pending: new Map(), profilesRequested: new Set() };
     sessionRef.current = session;
     const seen = new Set<string>();
-    const profileAuthors = new Set<string>();
-    const subscription = pool.subscribeMany(relayUrls, {
+    function accept(event: Event, recipientPubkey?: string) {
+      if (seen.size >= MAX_CARDS * 8) seen.delete(seen.values().next().value!);
+      seen.add(event.id);
+      addCard(session, event, recipientPubkey);
+    }
+    const incoming = pool.subscribeMany(relayUrls, {
       kinds: [7], "#p": [pubkey], "#k": ["0"], limit: MAX_CARDS,
     }, {
       onevent(event) {
         if (sessionRef.current !== session || seen.has(event.id) || !isIncomingYo(event, pubkey)) return;
-        if (seen.size >= MAX_CARDS * 4) seen.delete(seen.values().next().value!);
-        seen.add(event.id);
-        if (!profileAuthors.has(event.pubkey)) {
-          if (profileAuthors.size >= MAX_CARDS * 4) profileAuthors.delete(profileAuthors.values().next().value!);
-          profileAuthors.add(event.pubkey);
-          fetchProfiles([event.pubkey]);
-        }
-        const card: YoCard = {
-          type: "yo", slotId: "yo:" + event.id, eventId: event.id, pubkey: event.pubkey,
-          created_at: event.created_at, score: 0,
-          emojiUrl: event.tags.find(tag => tag[0] === "emoji" && tag[1] === "yo")?.[2],
-        };
-        setReceived(previous => {
-          const cards = previous?.session === session ? previous.cards : EMPTY;
-          if (cards.some(item => item.eventId === card.eventId)) return previous;
-          return {
-            session,
-            cards: [...cards, card].sort((a, b) => b.created_at - a.created_at || a.eventId.localeCompare(b.eventId)).slice(0, MAX_CARDS),
-          };
-        });
+        accept(event);
+      },
+    });
+    const outgoing = pool.subscribeMany(relayUrls, {
+      kinds: [7], authors: [pubkey], "#k": ["0"], limit: MAX_CARDS,
+    }, {
+      onevent(event) {
+        if (sessionRef.current !== session || seen.has(event.id)) return;
+        const recipient = getOutgoingYoRecipient(event, pubkey);
+        if (recipient) accept(event, recipient);
       },
     });
     return () => {
       if (sessionRef.current === session) sessionRef.current = null;
       session.pending.clear();
-      subscription.close();
+      incoming.close();
+      outgoing.close();
     };
-  }, [pubkey, pool, relayUrls, fetchProfiles]);
+  }, [pubkey, pool, relayUrls, addCard]);
 
   const sendYo = useCallback((target: string): Promise<void> => {
     const session = sessionRef.current;
@@ -83,13 +105,14 @@ export function useYo({ pubkey, pool, relayUrls, fetchProfiles, publishEvent }: 
         throw new Error("署名結果を確認できないためYoを送信しませんでした。");
       }
       await publishEvent(signed);
+      addCard(session, signed, target);
     })();
     session.pending.set(target, sending);
     const clear = () => { if (session.pending.get(target) === sending) session.pending.delete(target); };
     void sending.then(clear, clear);
     return sending;
-  }, [pubkey, pool, relayUrls, publishEvent]);
+  }, [pubkey, pool, relayUrls, publishEvent, addCard]);
 
-  const current = received?.session;
-  return { yoCards: current?.pubkey === pubkey && current?.pool === pool && current?.relayUrls === relayUrls ? received!.cards : EMPTY, sendYo };
+  const current = timeline?.session;
+  return { yoCards: current?.pubkey === pubkey && current?.pool === pool && current?.relayUrls === relayUrls ? timeline!.cards : EMPTY, sendYo };
 }
