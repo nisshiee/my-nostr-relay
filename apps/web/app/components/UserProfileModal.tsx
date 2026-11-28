@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Image from "./CanvasAwareImage";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
@@ -27,8 +27,11 @@ interface UserProfileModalProps extends ProfileReactionsProps {
   isFollowing: boolean;
   follow: (targetPubkey: string) => Promise<void>;
   unfollow: (targetPubkey: string) => Promise<void>;
+  onSendYo?: (targetPubkey: string) => Promise<void>;
   onHashtagClick?: (tag: string) => void;
 }
+
+type YoSendStatus = "pending" | "sent" | "failed";
 
 const RECENT_NOTES_PANEL_MIN_HEIGHT_CLASS = "min-h-[420px]";
 
@@ -72,6 +75,7 @@ export function UserProfileModal({
   isFollowing,
   follow,
   unfollow,
+  onSendYo,
   onHashtagClick,
   reactions, myPubkey, sendReaction, recentEmojis, emojiSets, looseEmojis, watchReactions,
 }: UserProfileModalProps) {
@@ -87,6 +91,8 @@ export function UserProfileModal({
 
   const [isSubmittingFollow, setIsSubmittingFollow] = useState(false);
   const [followError, setFollowError] = useState<string | null>(null);
+  const pendingYo = useRef(new Set<string>());
+  const [yoStatusByRecipient, setYoStatusByRecipient] = useState<Map<string, YoSendStatus>>(new Map());
 
   useEffect(() => {
     if (!isOpen) return;
@@ -126,6 +132,26 @@ export function UserProfileModal({
   const avatarUrl = profile?.picture;
   const bannerUrl = profile?.banner;
   const npub = encodeNpub(pubkey);
+  const isOwnProfile = pubkey === myPubkey;
+  const yoStatus = yoStatusByRecipient.get(pubkey);
+
+  const handleYoClick = async () => {
+    if (!onSendYo || isOwnProfile || pendingYo.current.has(pubkey)) return;
+
+    pendingYo.current.add(pubkey);
+    const setStatus = (status: YoSendStatus) => {
+      setYoStatusByRecipient(previous => new Map(previous).set(pubkey, status));
+    };
+    setStatus("pending");
+    try {
+      await onSendYo(pubkey);
+      setStatus("sent");
+    } catch {
+      setStatus("failed");
+    } finally {
+      pendingYo.current.delete(pubkey);
+    }
+  };
 
   const handleFollowClick = async () => {
     setIsSubmittingFollow(true);
@@ -294,6 +320,36 @@ export function UserProfileModal({
                   >
                     {followError}
                   </p>
+                )}
+                {onSendYo && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleYoClick}
+                      disabled={isOwnProfile || yoStatus === "pending"}
+                      className={`inline-flex min-w-[112px] cursor-pointer items-center justify-center rounded-full border px-4 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${
+                        bannerUrl
+                          ? "border-white/30 bg-white/10 text-white hover:bg-white/15"
+                          : "border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
+                      }`}
+                    >
+                      Yoを送る
+                    </button>
+                    {!isOwnProfile && yoStatus === "failed" && (
+                      <p role="alert" className={`max-w-[220px] text-right text-xs ${
+                        bannerUrl ? "text-red-100" : "text-red-600 dark:text-red-400"
+                      }`}>
+                        Yoを送信できませんでした。
+                      </p>
+                    )}
+                    {!isOwnProfile && (yoStatus === "pending" || yoStatus === "sent") && (
+                      <p role="status" className={`max-w-[220px] text-right text-xs ${
+                        bannerUrl ? "text-gray-100" : "text-gray-600 dark:text-gray-300"
+                      }`}>
+                        {yoStatus === "pending" ? "Yoを送信中…" : "Yoを送りました。"}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
             </div>

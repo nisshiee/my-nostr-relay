@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title id="title">Yo!</title>
+  <defs>
+    <linearGradient id="badge" x1="13" y1="7" x2="111" y2="124" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7C3AED"/>
+      <stop offset=".62" stop-color="#451B92"/>
+      <stop offset="1" stop-color="#241139"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="16" y1="9" x2="96" y2="124" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C7A6FF"/>
+      <stop offset="1" stop-color="#6E3CAB"/>
+    </linearGradient>
+  </defs>
+  <rect x="3" y="3" width="122" height="122" rx="29" fill="url(#badge)" stroke="url(#edge)" stroke-width="2"/>
+  <path d="M9 98 37 98M14 106h16M90 21h24M101 29h16" fill="none" stroke="#D4B8FF" stroke-opacity=".38" stroke-width="3" stroke-linecap="round"/>
+  <g transform="matrix(1 0 -.16 1 10 0)">
+    <path d="M15 41h13l10 19 10-19h13L44 72v16H32V72Z" fill="#FFF"/>
+    <path d="M71 51c11 0 19 8 19 19s-8 19-19 19-19-8-19-19 8-19 19-19Zm0 10c-5 0-8 4-8 9s3 9 8 9 8-4 8-9-3-9-8-9Z" fill="#FFF" fill-rule="evenodd"/>
+    <path d="M99 41h13l-2 31h-9Z" fill="#CAFF6C"/>
+    <circle cx="105.5" cy="82" r="6" fill="#CAFF6C"/>
+  </g>
+</svg>

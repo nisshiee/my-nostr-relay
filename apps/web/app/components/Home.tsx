@@ -3,6 +3,7 @@
 import { useCallback, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNostrRelay } from "../hooks/useNostrRelay";
+import { useYo } from "../hooks/useYo";
 import { useThreadCards } from "../hooks/useThreadCards";
 import { useRecentEmojis } from "../hooks/useRecentEmojis";
 import { useNativeCanvasCapability } from "./canvas/nativeCanvasCapability";
@@ -50,6 +51,7 @@ export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: bool
     follow,
     unfollow,
   } = useNostrRelay(pubkey, publishedSlotMapRef);
+  const { yoCards, sendYo } = useYo({ pubkey, pool, relayUrls, fetchProfiles, publishEvent });
   const { filteredNotes, threadCards, isProcessing } = useThreadCards(notes, pubkey, relayUrls, pool, status, cache, publishedSlotMapRef);
   const { recentEmojis, addEmoji } = useRecentEmojis(pool, relayUrls, pubkey);
 
@@ -72,6 +74,8 @@ export function Home({ diagnosticsEnabled = false }: { diagnosticsEnabled?: bool
         nativeUnavailableReason={!nativeCapable || manualDOM ? imageReason : undefined}
         notes={filteredNotes}
         threadCards={threadCards}
+        yoCards={yoCards}
+        sendYo={sendYo}
         profiles={profiles}
         reactions={reactions}
         watchReactions={watchReactions}
