@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowUpRight } from "lucide-react";
 import { useRef, useState } from "react";
 import { validateCanvasImageSource } from "../lib/canvasImagePolicy";
 import type { NostrProfile, YoCard as YoCardType } from "../lib/types";
@@ -86,8 +87,19 @@ export function YoCard({ card, profile, onOpenProfile, onSendYo }: YoCardProps) 
   const displayName = resolveProfileDisplayName(participant, profile);
 
   return (
-    <div className={`flex items-center gap-3 rounded-xl border border-purple-200 p-4 dark:border-purple-800 ${outgoing ? "bg-white dark:bg-gray-800" : "bg-purple-50 dark:bg-[#282039]"}`}>
-      <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
+    <div className="flex items-center gap-3 rounded-xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-800 dark:bg-[#282039]">
+      <div className="relative shrink-0">
+        <YoEmoji key={card.emojiUrl} url={card.emojiUrl} />
+        {outgoing && (
+          <span
+            role="img"
+            aria-label="送信済み"
+            className="pointer-events-none absolute -right-1.5 -bottom-0.5 grid size-5 place-items-center rounded-full border-2 border-purple-50 bg-purple-100 text-purple-800 dark:border-[#282039] dark:bg-purple-900 dark:text-purple-200"
+          >
+            <ArrowUpRight aria-hidden="true" className="size-3.5" strokeWidth={2.5} />
+          </span>
+        )}
+      </div>
       <div className="min-w-0 flex-1">
         <button
           type="button"
@@ -111,7 +123,6 @@ export function YoCard({ card, profile, onOpenProfile, onSendYo }: YoCardProps) 
           dateTime={new Date(card.created_at * 1000).toISOString()}
           className="block text-xs text-gray-500 dark:text-gray-400"
         >
-          {outgoing && <span className="mr-1.5 font-semibold text-purple-700 dark:text-purple-300">送信</span>}
           {relativeTime(card.created_at)}
         </time>
       </div>

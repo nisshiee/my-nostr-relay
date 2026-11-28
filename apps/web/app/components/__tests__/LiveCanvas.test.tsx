@@ -84,6 +84,7 @@ describe("LiveCanvas のカード統合", () => {
       yoCards={[{ type: "yo", direction: "incoming", slotId: "yo:unique", eventId: "unique", pubkey: sender, score: 0, created_at: note.created_at }]} />);
     expect(container.querySelectorAll("[data-slot]")).toHaveLength(2);
     expect(container.querySelector('[data-slot="yo:unique"]')?.textContent).toContain("Yo");
+    expect(screen.queryByRole("img", { name: "送信済み" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Yo送信者にYoを返す" }));
     expect(sendYo).toHaveBeenCalledExactlyOnceWith(sender);
     expect(screen.queryByTestId("profile-modal")).toBeNull();
@@ -100,7 +101,8 @@ describe("LiveCanvas のカード統合", () => {
       profiles={new Map([["me", { name: "自分" }], [recipient, { name: "Yoの相手" }]])}
       yoCards={[{ type: "yo", direction: "outgoing", recipientPubkey: recipient, slotId: "yo:sent",
         eventId: "sent", pubkey: "me", score: 0, created_at: makeNote().created_at }]} />);
-    expect(screen.getByText("送信")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "送信済み" })).toBeTruthy();
+    expect(screen.queryByText("送信")).toBeNull();
     expect(screen.queryByRole("button", { name: /Yoを返す/ })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "送信先：Yoの相手のプロフィールを開く" }));
     expect(screen.getByTestId("profile-modal").textContent).toBe(recipient);
